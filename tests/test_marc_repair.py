@@ -436,7 +436,8 @@ class TestFixBadIndicators:
         out = tmp_path / "out.mrc"
         log = tmp_path / "run.log"
         rc = m.main([
-            str(src), "-o", str(out), "--no-strip-invalid-subfield-codes", "--log", str(log),
+            str(src), "-o", str(out), "--no-strip-invalid-subfield-codes",
+            "--log-informational", "--log", str(log),
         ])
         assert rc == 0
         lines = log.read_text(encoding="utf-8").splitlines()
@@ -600,9 +601,10 @@ class TestTranscodeMarc8:
         rc = m.main([str(src), "-o", str(out), "--log", str(log)])
         assert rc == 0
         # transcoding itself runs by default, but isn't logged
-        # per-record unless --log-transcoded-marc8 is also given
-        content = log.read_text(encoding="utf-8")
-        assert "transcoded_marc8" not in content
+        # per-record unless --log-transcoded-marc8 (and --log-informational)
+        # are also given -- with no other loggable entries, no log file
+        # is written at all
+        assert not log.exists()
         results = m.repair_text(m._read_text(str(out)))
         assert results[0].leader[9] == "a"
 
@@ -622,7 +624,10 @@ class TestTranscodeMarc8:
         src.write_bytes(m.assemble_marc(parsed))
         out = tmp_path / "out.mrc"
         log = tmp_path / "run.log"
-        rc = m.main([str(src), "-o", str(out), "--log-transcoded-marc8", "--log", str(log)])
+        rc = m.main([
+            str(src), "-o", str(out), "--log-transcoded-marc8",
+            "--log-informational", "--log", str(log),
+        ])
         assert rc == 0
         content = log.read_text(encoding="utf-8")
         assert "transcoded_marc8" in content
@@ -1047,7 +1052,7 @@ class TestFixInvalidLeaderBytes:
         src.write_bytes(m.assemble_marc(parsed))
         out = tmp_path / "out.mrc"
         log = tmp_path / "run.log"
-        rc = m.main([str(src), "-o", str(out), "--log", str(log)])
+        rc = m.main([str(src), "-o", str(out), "--log-informational", "--log", str(log)])
         assert rc == 0
         content = log.read_text(encoding="utf-8")
         assert "leader_byte_defaulted" in content
@@ -1235,7 +1240,8 @@ class TestLeaderEntryMapCorrection:
         out = tmp_path / "out.mrc"
         log = tmp_path / "run.log"
         rc = m.main([
-            str(src), "-o", str(out), "--log-leader-entry-map-fixed", "--log", str(log),
+            str(src), "-o", str(out), "--log-leader-entry-map-fixed",
+            "--log-informational", "--log", str(log),
         ])
         assert rc == 0
         content = log.read_text(encoding="utf-8")
@@ -1302,7 +1308,7 @@ class TestAddDefault245:
         src.write_bytes(m.assemble_marc(parsed))
         out = tmp_path / "out.mrc"
         log = tmp_path / "run.log"
-        rc = m.main([str(src), "-o", str(out), "--log", str(log)])
+        rc = m.main([str(src), "-o", str(out), "--log-informational", "--log", str(log)])
         assert rc == 0
         content = log.read_text(encoding="utf-8")
         assert "=== INFORMATIONAL: added_default_245 (1) ===" in content
@@ -1381,7 +1387,7 @@ class TestAddDefault008:
         src.write_bytes(m.assemble_marc(parsed))
         out = tmp_path / "out.mrc"
         log = tmp_path / "run.log"
-        rc = m.main([str(src), "-o", str(out), "--log", str(log)])
+        rc = m.main([str(src), "-o", str(out), "--log-informational", "--log", str(log)])
         assert rc == 0
         content = log.read_text(encoding="utf-8")
         assert "=== INFORMATIONAL: added_default_008 (1) ===" in content
@@ -1474,7 +1480,7 @@ class TestFixInvalidTags:
         src.write_bytes(m.assemble_marc(parsed))
         out = tmp_path / "out.mrc"
         log = tmp_path / "run.log"
-        rc = m.main([str(src), "-o", str(out), "--log", str(log)])
+        rc = m.main([str(src), "-o", str(out), "--log-informational", "--log", str(log)])
         assert rc == 0
         content = log.read_text(encoding="utf-8")
         assert "=== INFORMATIONAL: invalid_tag (1) ===" in content
@@ -1626,8 +1632,7 @@ class TestRemap999To945:
         log = tmp_path / "run.log"
         rc = m.main([str(src), "-o", str(out), "--log", str(log)])
         assert rc == 0
-        content = log.read_text(encoding="utf-8")
-        assert "remapped_999_to_945" not in content
+        assert not log.exists()
         results = m.repair_text(m._read_text(str(out)))
         tags = [f.tag for f in results[0].fields]
         assert "999" not in tags
@@ -1648,7 +1653,10 @@ class TestRemap999To945:
         src.write_bytes(m.assemble_marc(parsed))
         out = tmp_path / "out.mrc"
         log = tmp_path / "run.log"
-        rc = m.main([str(src), "-o", str(out), "--log-999-to-945", "--log", str(log)])
+        rc = m.main([
+            str(src), "-o", str(out), "--log-999-to-945",
+            "--log-informational", "--log", str(log),
+        ])
         assert rc == 0
         content = log.read_text(encoding="utf-8")
         assert "remapped_999_to_945" in content
@@ -1723,7 +1731,7 @@ class TestNormalizeSubfield9To0:
         src.write_bytes(m.assemble_marc(parsed))
         out = tmp_path / "out.mrc"
         log = tmp_path / "run.log"
-        rc = m.main([str(src), "-o", str(out), "--log", str(log)])
+        rc = m.main([str(src), "-o", str(out), "--log-informational", "--log", str(log)])
         assert rc == 0
         content = log.read_text(encoding="utf-8")
         assert "normalized_subfield_9_to_0" in content
@@ -1797,7 +1805,7 @@ class TestNormalizeSmartCharacters:
         m.normalize_smart_characters(parsed)
         assert parsed.fields[0].subfields == [("a", "a bc")]
 
-    def test_main_end_to_end_logs_as_fixed(self, tmp_path):
+    def test_runs_by_default_via_cli_but_is_not_logged(self, tmp_path):
         parsed = m.ParsedRecord(
             leader=_SYNTHETIC_LEADER,
             entries=[],
@@ -1811,6 +1819,33 @@ class TestNormalizeSmartCharacters:
         out = tmp_path / "out.mrc"
         log = tmp_path / "run.log"
         rc = m.main([str(src), "-o", str(out), "--log", str(log)])
+        assert rc == 0
+        # normalization itself runs by default, but isn't logged
+        # per-record unless --log-normalized-smart-characters (and
+        # --log-informational) are also given -- with no other loggable
+        # entries, no log file is written at all
+        assert not log.exists()
+        results = m.repair_text(m._read_text(str(out)))
+        title_field = next(f for f in results[0].fields if f.tag == "520")
+        assert title_field.subfields == [("a", "It's great.")]
+
+    def test_log_normalized_smart_characters_flag_enables_logging(self, tmp_path):
+        parsed = m.ParsedRecord(
+            leader=_SYNTHETIC_LEADER,
+            entries=[],
+            fields=[
+                m.Field_("008", None, None, content="x" * 40),
+                m.Field_("520", "  ", [("a", "It’s great.")]),
+            ],
+        )
+        src = tmp_path / "smart.mrc"
+        src.write_bytes(m.assemble_marc(parsed))
+        out = tmp_path / "out.mrc"
+        log = tmp_path / "run.log"
+        rc = m.main([
+            str(src), "-o", str(out), "--log-normalized-smart-characters",
+            "--log-informational", "--log", str(log),
+        ])
         assert rc == 0
         content = log.read_text(encoding="utf-8")
         assert "normalized_smart_characters" in content
@@ -1908,7 +1943,7 @@ class TestFindAndFixMojibake:
         src.write_bytes(m.assemble_marc(parsed))
         out = tmp_path / "out.mrc"
         log = tmp_path / "run.log"
-        rc = m.main([str(src), "-o", str(out), "--log", str(log)])
+        rc = m.main([str(src), "-o", str(out), "--log-informational", "--log", str(log)])
         assert rc == 0
         content = log.read_text(encoding="utf-8")
         assert "=== INFORMATIONAL: fixed_mojibake (1) ===" in content
@@ -2343,11 +2378,11 @@ class TestFindInvalidIsbnIssnChecksums:
 
 
 # ---------------------------------------------------------------------------
-# --no-log-informational
+# --log-informational
 # ---------------------------------------------------------------------------
 
-class TestNoLogInformational:
-    def test_omits_informational_section_by_default_included(self, tmp_path):
+class TestLogInformational:
+    def test_omits_informational_section_by_default(self, tmp_path):
         parsed = m.ParsedRecord(
             leader=_SYNTHETIC_LEADER,
             entries=[],
@@ -2362,9 +2397,15 @@ class TestNoLogInformational:
         log = tmp_path / "run.log"
         rc = m.main([str(src), "-o", str(out), "--log", str(log)])
         assert rc == 0
-        assert "INFORMATIONAL" in log.read_text(encoding="utf-8")
+        # every entry for this record is informational-only, so once
+        # filtered out there's nothing left to log at all -- no file
+        assert not log.exists()
+        # the fix itself still ran, even though it's not in the log
+        results = m.repair_text(m._read_text(str(out)))
+        field = next(f for f in results[0].fields if f.tag == "520")
+        assert field.subfields == [("a", "It's great.")]
 
-    def test_no_log_informational_omits_the_section(self, tmp_path):
+    def test_log_informational_flag_includes_the_section(self, tmp_path):
         parsed = m.ParsedRecord(
             leader=_SYNTHETIC_LEADER,
             entries=[],
@@ -2377,15 +2418,9 @@ class TestNoLogInformational:
         src.write_bytes(m.assemble_marc(parsed))
         out = tmp_path / "out.mrc"
         log = tmp_path / "run.log"
-        rc = m.main([str(src), "-o", str(out), "--no-log-informational", "--log", str(log)])
+        rc = m.main([str(src), "-o", str(out), "--log-informational", "--log", str(log)])
         assert rc == 0
-        # every entry for this record is informational-only, so once
-        # filtered out there's nothing left to log at all -- no file
-        assert not log.exists()
-        # the fix itself still ran, even though it's not in the log
-        results = m.repair_text(m._read_text(str(out)))
-        field = next(f for f in results[0].fields if f.tag == "520")
-        assert field.subfields == [("a", "It's great.")]
+        assert "INFORMATIONAL" in log.read_text(encoding="utf-8")
 
 
 class TestNonNumericTagRoundTrip:
@@ -2775,6 +2810,7 @@ class TestCLIHelpers:
         title_fields = [f for f in results[0].fields if f.tag == "245"]
         assert len(title_fields) == 1
         assert title_fields[0].subfields == [("a", "No title"), ("h", "[electronic resource]")]
-        content = log.read_text(encoding="utf-8")
-        assert "removed_missing_a" not in content
-        assert "added_default_245" in content
+        # both the patched 245 and the missing-008 default are logged as
+        # added_default_245/added_default_008, both INFORMATIONAL and
+        # off by default -- nothing else fired, so no log file at all
+        assert not log.exists()

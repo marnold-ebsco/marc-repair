@@ -2798,14 +2798,14 @@ def main(argv: list[str] | None = None) -> int:
         "double-encoded",
     )
     parser.add_argument(
-        "--no-log-informational",
+        "--log-informational",
         dest="log_informational",
-        action="store_false",
-        default=True,
-        help="omit the INFORMATIONAL section entirely from the log "
-        "file. On by default -- these are typically the highest-volume "
-        "categories (e.g. every MARC-8 record transcoded), so this is "
-        "for a leaner log when you don't need that detail; the "
+        action="store_true",
+        default=False,
+        help="include the INFORMATIONAL section in the log file. Off "
+        "by default -- these are typically the highest-volume "
+        "categories (e.g. every MARC-8 record transcoded), so this "
+        "keeps the log lean unless you actually need that detail; the "
         "underlying fixes/detections still run and affect the output "
         "either way, only the log content changes",
     )
@@ -2932,6 +2932,15 @@ def main(argv: list[str] | None = None) -> int:
         "--no-transcode-marc8). Off by default since this can be "
         "nearly every record in a legacy file, which would otherwise "
         "dominate the log",
+    )
+    parser.add_argument(
+        "--log-normalized-smart-characters",
+        action="store_true",
+        help="log each individual smart-character normalization (see "
+        "--no-normalize-smart-characters). Off by default since this "
+        "can be nearly every record in a file with typographic "
+        "punctuation, which would otherwise dominate the log; the fix "
+        "itself always runs regardless of this flag",
     )
     parser.add_argument(
         "--no-normalize-subfield-9",
@@ -3146,8 +3155,10 @@ def main(argv: list[str] | None = None) -> int:
                         log("normalized_subfield_9_to_0", True, i, rec_id, detail)
                 if args.normalize_smart_characters:
                     rec_id = record_identifier(parsed)
-                    for detail in normalize_smart_characters(parsed):
-                        log("normalized_smart_characters", True, i, rec_id, detail)
+                    details = normalize_smart_characters(parsed)
+                    if args.log_normalized_smart_characters:
+                        for detail in details:
+                            log("normalized_smart_characters", True, i, rec_id, detail)
                 if args.strip_invalid_subfield_codes:
                     rec_id = record_identifier(parsed)
                     for detail in strip_invalid_subfield_codes(parsed):

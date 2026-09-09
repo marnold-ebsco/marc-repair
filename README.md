@@ -98,7 +98,7 @@ ten million.
 | Data field with 0 or 1 indicator characters instead of 2 | Padded with spaces by default; `--no-fix-bad-indicators` to leave it instead (such a field then fails Mode 1 and falls back to Mode 2/UNRESOLVED); logged as `padded_indicators` (INFORMATIONAL) |
 | `999` fields (Sierra's internal item-linking field, not part of MARC21) | Retagged to `945` with indicators `ff` by default; `--no-remap-999-to-945` to leave as-is. Not logged by default (a record can carry many 999s) — pass `--log-999-to-945` to log each one as `remapped_999_to_945` (INFORMATIONAL) |
 | `$9` subfields (legacy/local stand-in for `$0`) | Rewritten to `$0` by default; `--no-normalize-subfield-9` to leave as-is; logged as `normalized_subfield_9_to_0` (INFORMATIONAL) |
-| Typographic "smart" Unicode punctuation (curly quotes, em/en dashes, ellipsis — see table below) | Normalized to plain ASCII by default; `--no-normalize-smart-characters` to leave as-is; logged as `normalized_smart_characters` (INFORMATIONAL) |
+| Typographic "smart" Unicode punctuation (curly quotes, em/en dashes, ellipsis — see table below) | Normalized to plain ASCII by default; `--no-normalize-smart-characters` to leave as-is. Not logged per-record by default (this can be nearly every record in a file with typographic punctuation) — pass `--log-normalized-smart-characters` to log each one as `normalized_smart_characters` (INFORMATIONAL) |
 | Legacy MARC-8/ANSEL encoding | Converted to UTF-8 by default (requires `pymarc`; the run fails loudly if it's missing, rather than silently leaving non-UTF-8 output — install it, or pass `--no-transcode-marc8` if you explicitly want non-UTF-8 records left as-is). Not logged per-record by default (this can be nearly every record in a legacy file) — pass `--log-transcoded-marc8` to log each one as `transcoded_marc8` (INFORMATIONAL) |
 | A tag that isn't 3 numeric digits (e.g. `24A` from directory corruption) | Renamed to an unused tag in the 900-999 locally-defined range by default, picked from tags seen during the normal single pass (no extra full pass — only the rare record needing this gets a second, targeted look afterward); `--no-fix-invalid-tags` to leave it as-is instead; logged as `invalid_tag` (INFORMATIONAL) |
 | Doubled proxy URLs, duplicate record identifiers | Always detected and logged (NOT FIXED / DUPLICATE RECORDS), never auto-fixed — no safe correction to guess |
@@ -181,18 +181,21 @@ which bucket a given fix fell into:
    indicators padded with spaces), or a detect-only finding not urgent
    enough for NOT FIXED (an indicator value outside `[0-9 ]`, leader
    byte 07 outside its valid code set, a dangling 880 `$6` link, an
-   ISBN/ISSN with a bad check digit). Pass `--no-log-informational` to
-   omit this entire section from the log file (the underlying
-   fixes/detections still run either way — only what gets written to
-   the log changes; useful since this is typically the highest-volume
-   section, e.g. every MARC-8 record transcoded)
+   ISBN/ISSN with a bad check digit). **Off by default** — the
+   underlying fixes/detections still run either way, only the log
+   content changes — pass `--log-informational` to include this
+   section, since it's typically the highest-volume one (e.g. every
+   MARC-8 record transcoded)
 
-Two of the highest-volume fixes are off by default even within that
-section — the fix always runs, only the per-record log line doesn't —
-since either one can otherwise be the majority of a real file's log:
-`--log-transcoded-marc8` (every MARC-8 record converted) and
+Four of the highest-volume fixes need their own flag in addition to
+`--log-informational` before they're logged at all — the fix always
+runs, only the per-record log line doesn't — since any one of these can
+otherwise be the majority of a real file's log:
+`--log-transcoded-marc8` (every MARC-8 record converted),
 `--log-leader-entry-map-fixed` (every record with a corrupted
-entry-map byte).
+entry-map byte), `--log-999-to-945` (every Sierra `999` remapped), and
+`--log-normalized-smart-characters` (every typographic-punctuation
+substitution).
 
 ...and by category within each section, with a header and count, so e.g.
 all 375 missing-008 findings sit together instead of scattered by record
