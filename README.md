@@ -99,9 +99,10 @@ ten million.
 | `999` fields (Sierra's internal item-linking field, not part of MARC21) | Retagged to `945` with indicators `ff` by default; `--no-remap-999-to-945` to leave as-is. Not logged by default (a record can carry many 999s) — pass `--log-999-to-945` to log each one |
 | `$9` subfields (legacy/local stand-in for `$0`) | Rewritten to `$0` by default; `--no-normalize-subfield-9` to leave as-is; logged |
 | Typographic "smart" Unicode punctuation (curly quotes, em/en dashes, ellipsis) | Normalized to plain ASCII by default; `--no-normalize-smart-characters` to leave as-is; logged |
-| Legacy MARC-8/ANSEL encoding | `--transcode-marc8` (opt-in; requires `pymarc`) |
+| Legacy MARC-8/ANSEL encoding | Converted to UTF-8 by default (requires `pymarc`; the run fails loudly if it's missing, rather than silently leaving non-UTF-8 output — install it, or pass `--no-transcode-marc8` if you explicitly want non-UTF-8 records left as-is) |
 | A tag that isn't 3 numeric digits (e.g. `24A` from directory corruption) | Renamed to an unused tag in the 900-999 locally-defined range by default, picked from tags seen during the normal single pass (no extra full pass — only the rare record needing this gets a second, targeted look afterward); `--no-fix-invalid-tags` to leave it as-is instead; logged |
 | Doubled proxy URLs, duplicate record identifiers | Always detected and logged, never auto-fixed — no safe correction to guess |
+| A single Hebrew/Arabic/Cyrillic/Greek/CJK character welded directly between two ASCII letters with no word boundary (e.g. real data found: "Schr" + one CJK character + "inger", almost certainly a miskeyed "ö") | Always detected and logged as `suspect_marc8_escape`, never auto-fixed — there's no safe way to guess the intended character; flag this to the source system/cataloger to correct |
 | Leader bytes 05/06/08/17 (record status, type of record, type of control, encoding level) outside their valid MARC21 code set | Defaulted (05→`c`, 06→`a`, 08/17→blank) by default; `--no-fix-invalid-leader-bytes` to leave as-is; logged |
 | A record that can't be auto-repaired by either mode at all | Passed through to the output unchanged (never dropped), logged as `UNRESOLVED` |
 

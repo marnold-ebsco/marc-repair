@@ -451,6 +451,55 @@ class TestFixBadIndicators:
 # transcode_marc8_to_utf8 -- ANSEL diacritics -> Unicode
 # ---------------------------------------------------------------------------
 
+class TestFindSuspectMarc8Escapes:
+    def _record(self, raw_a):
+        leader = list(_SYNTHETIC_LEADER)
+        leader[9] = " "  # declare MARC-8
+        return m.ParsedRecord(
+            leader="".join(leader),
+            entries=[],
+            fields=[m.Field_("880", "10", [("a", raw_a)])],
+        )
+
+    def test_flags_single_cjk_char_welded_to_ascii_letters(self):
+        # Real production example: "Schr" + <CJK escape, 1 char> +
+        # "inger" -- a miskeyed "ö" in "Schrödinger", not real Chinese.
+        parsed = self._record("Schr\x1b$1)36\x1b(Binger")
+        findings = m.find_suspect_marc8_escapes(parsed)
+        assert len(findings) == 1
+        category, detail = findings[0]
+        assert category == "suspect_marc8_escape"
+        assert "CJK" in detail
+
+    def test_flags_single_cyrillic_char_welded_to_ascii_letters(self):
+        # Real production example: "who" + <Cyrillic escape, 1 char> +
+        # "s ever" -- a miskeyed apostrophe in "who's".
+        parsed = self._record("who\x1b(QS\x1b(Bs ever")
+        findings = m.find_suspect_marc8_escapes(parsed)
+        assert len(findings) == 1
+        assert "Cyrillic" in findings[0][1]
+
+    def test_does_not_flag_genuine_multi_character_cjk(self):
+        # Real production example: a genuine parallel Chinese title,
+        # several characters long -- not a mistake.
+        parsed = self._record("\x1b$1!04!7o!V1KWF\x1b(B")
+        assert m.find_suspect_marc8_escapes(parsed) == []
+
+    def test_does_not_flag_when_not_welded_to_letters(self):
+        # Surrounded by spaces/punctuation, not letters -- looks like
+        # deliberately embedded content, not a stray mis-keyed escape.
+        parsed = self._record("see also \x1b(2k\x1b(B (in Hebrew)")
+        assert m.find_suspect_marc8_escapes(parsed) == []
+
+    def test_no_op_when_already_unicode(self):
+        parsed = m.ParsedRecord(
+            leader=_SYNTHETIC_LEADER,  # leader[9] == "a" already
+            entries=[],
+            fields=[m.Field_("880", "10", [("a", "Schr\x1b$1)36\x1b(Binger")])],
+        )
+        assert m.find_suspect_marc8_escapes(parsed) == []
+
+
 class TestTranscodeMarc8:
     def test_converts_combining_diacritics_and_flips_leader_byte(self):
         pytest.importorskip("pymarc")
@@ -497,6 +546,207 @@ class TestTranscodeMarc8:
         assert parsed.leader[9] == "a"
         raw = m.assemble_marc(parsed)
         raw.decode("utf-8")  # must not raise -- proves it's valid UTF-8 now
+
+    def test_charset_switching_escape_is_honored_not_passed_through(self):
+        # Real bug found via a real Hebrew 880 field in production data:
+        # pymarc's marc8_to_unicode detects charset-switching escapes
+        # (Hebrew, Arabic, Cyrillic, Greek, CJK/EACC, super/subscripts)
+        # by comparing byte slices against byte literals, which is
+        # always False when given a Python str -- so passing `text`
+        # directly (instead of `text.encode("latin-1")`, which recovers
+        # the exact original MARC-8 bytes) silently skipped ALL escape
+        # recognition. Plain ANSEL diacritics (no escape needed) still
+        # worked, which is why this wasn't caught by the fixture-based
+        # test above. ESC ( 2 designates Basic Hebrew.
+        pytest.importorskip("pymarc")
+        leader = list(_SYNTHETIC_LEADER)
+        leader[9] = " "  # declare MARC-8
+        hebrew_marc8 = "\x1b(2kz`a `lgbd\x1b(B"
+        parsed = m.ParsedRecord(
+            leader="".join(leader),
+            entries=[],
+            fields=[
+                m.Field_("001", None, None, content="u508261"),
+                m.Field_("880", "10", [("6", "240-01/(2/r"), ("a", hebrew_marc8)]),
+            ],
+        )
+        m.transcode_marc8_to_utf8(parsed)
+        field880 = next(f for f in parsed.fields if f.tag == "880")
+        converted = dict(field880.subfields)["a"]
+        assert converted == "כתאב אלחגה"
+        assert "\x1b" not in converted  # no leftover raw escape byte
+
+    def test_runs_by_default_via_cli(self, tmp_path):
+        pytest.importorskip("pymarc")
+        leader = list(_SYNTHETIC_LEADER)
+        leader[9] = " "
+        parsed = m.ParsedRecord(
+            leader="".join(leader),
+            entries=[],
+            fields=[
+                m.Field_("008", None, None, content="x" * 40),
+                m.Field_("100", "1 ", [("a", "Bal\xe5asim, \xf2Hasan.")]),
+            ],
+        )
+        src = tmp_path / "marc8.mrc"
+        src.write_bytes(m.assemble_marc(parsed))
+        out = tmp_path / "out.mrc"
+        log = tmp_path / "run.log"
+        rc = m.main([str(src), "-o", str(out), "--log", str(log)])
+        assert rc == 0
+        content = log.read_text(encoding="utf-8")
+        assert "transcoded_marc8" in content
+        results = m.repair_text(m._read_text(str(out)))
+        assert results[0].leader[9] == "a"
+
+    def test_no_transcode_marc8_flag_leaves_it_as_marc8(self, tmp_path):
+        leader = list(_SYNTHETIC_LEADER)
+        leader[9] = " "
+        parsed = m.ParsedRecord(
+            leader="".join(leader),
+            entries=[],
+            fields=[
+                m.Field_("008", None, None, content="x" * 40),
+                m.Field_("100", "1 ", [("a", "Bal\xe5asim, \xf2Hasan.")]),
+            ],
+        )
+        src = tmp_path / "marc8.mrc"
+        src.write_bytes(m.assemble_marc(parsed))
+        out = tmp_path / "out.mrc"
+        rc = m.main([str(src), "-o", str(out), "--no-transcode-marc8"])
+        assert rc == 0
+        results = m.repair_text(m._read_text(str(out)))
+        assert results[0].leader[9] == " "
+
+    def test_atomic_on_failure_partway_through_record(self, monkeypatch):
+        # A field partway through a record failing to convert must not
+        # leave the record in a mixed state (some fields converted,
+        # some not, leader never flipped) -- transcode_marc8_to_utf8
+        # computes every field's new value before mutating anything, so
+        # a failure on the second field must leave the first field's
+        # original (unconverted) value in place too, and the leader
+        # untouched.
+        pytest.importorskip("pymarc")
+        import pymarc.marc8
+
+        calls = []
+
+        def fake_marc8_to_unicode(data, hide_utf8_warnings=False):
+            calls.append(data)
+            if len(calls) == 2:
+                raise UnicodeDecodeError("marc8_to_unicode", data, 0, len(data), "boom")
+            return "CONVERTED"
+
+        monkeypatch.setattr(pymarc.marc8, "marc8_to_unicode", fake_marc8_to_unicode)
+
+        leader = list(_SYNTHETIC_LEADER)
+        leader[9] = " "
+        parsed = m.ParsedRecord(
+            leader="".join(leader),
+            entries=[],
+            # non-ASCII (\xe5) so these hit the slow path this test is
+            # exercising, rather than the ASCII/no-escape fast path
+            fields=[
+                m.Field_("100", "1 ", [("a", "F\xe5rst")]),
+                m.Field_("245", "00", [("a", "S\xe5cond")]),
+            ],
+        )
+        with pytest.raises(UnicodeDecodeError):
+            m.transcode_marc8_to_utf8(parsed)
+        # nothing changed -- not even the first field, which would have
+        # "succeeded" if fields were converted one at a time
+        assert parsed.fields[0].subfields == [("a", "F\xe5rst")]
+        assert parsed.fields[1].subfields == [("a", "S\xe5cond")]
+        assert parsed.leader[9] == " "
+
+    def test_main_falls_back_gracefully_on_transcode_failure(self, tmp_path, monkeypatch):
+        pytest.importorskip("pymarc")
+        import pymarc.marc8
+
+        def failing_marc8_to_unicode(data, hide_utf8_warnings=False):
+            raise UnicodeDecodeError("marc8_to_unicode", data, 0, len(data), "boom")
+
+        monkeypatch.setattr(pymarc.marc8, "marc8_to_unicode", failing_marc8_to_unicode)
+
+        leader = list(_SYNTHETIC_LEADER)
+        leader[9] = " "
+        parsed = m.ParsedRecord(
+            leader="".join(leader),
+            entries=[],
+            # non-ASCII (\xe5) so this hits the slow path being tested
+            fields=[
+                m.Field_("008", None, None, content="x" * 40),
+                m.Field_("245", "00", [("a", "Titl\xe5.")]),
+            ],
+        )
+        src = tmp_path / "bad_marc8.mrc"
+        src.write_bytes(m.assemble_marc(parsed))
+        out = tmp_path / "out.mrc"
+        log = tmp_path / "run.log"
+        rc = m.main([str(src), "-o", str(out), "--log", str(log)])
+        assert rc == 0  # must not crash the whole run
+        content = log.read_text(encoding="utf-8")
+        assert "=== NOT FIXED: transcode_marc8_failed (1) ===" in content
+        results = m.repair_text(m._read_text(str(out)))
+        assert results[0].leader[9] == " "  # left declaring MARC-8
+
+    def test_missing_pymarc_fails_the_run_by_default(self, tmp_path, monkeypatch):
+        # UTF-8 output is a hard requirement -- silently skipping
+        # transcoding because pymarc isn't installed would leave
+        # non-conformant output without the user ever choosing that,
+        # so this must fail loudly instead of just warning and
+        # continuing.
+        import builtins
+
+        real_import = builtins.__import__
+
+        def fake_import(name, *args, **kwargs):
+            if name == "pymarc.marc8" or name == "pymarc":
+                raise ImportError("simulated missing pymarc")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", fake_import)
+
+        leader = list(_SYNTHETIC_LEADER)
+        leader[9] = " "
+        parsed = m.ParsedRecord(
+            leader="".join(leader),
+            entries=[],
+            fields=[m.Field_("008", None, None, content="x" * 40)],
+        )
+        src = tmp_path / "marc8.mrc"
+        src.write_bytes(m.assemble_marc(parsed))
+        out = tmp_path / "out.mrc"
+        rc = m.main([str(src), "-o", str(out)])
+        assert rc != 0
+        assert not out.exists()
+
+    def test_missing_pymarc_is_fine_with_explicit_no_transcode(self, tmp_path, monkeypatch):
+        import builtins
+
+        real_import = builtins.__import__
+
+        def fake_import(name, *args, **kwargs):
+            if name == "pymarc.marc8" or name == "pymarc":
+                raise ImportError("simulated missing pymarc")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", fake_import)
+
+        leader = list(_SYNTHETIC_LEADER)
+        leader[9] = " "
+        parsed = m.ParsedRecord(
+            leader="".join(leader),
+            entries=[],
+            fields=[m.Field_("008", None, None, content="x" * 40)],
+        )
+        src = tmp_path / "marc8.mrc"
+        src.write_bytes(m.assemble_marc(parsed))
+        out = tmp_path / "out.mrc"
+        rc = m.main([str(src), "-o", str(out), "--no-transcode-marc8"])
+        assert rc == 0
+        results = m.repair_text(m._read_text(str(out)))
+        assert results[0].leader[9] == " "  # left as MARC-8, explicitly requested
 
 
 class TestRecordIdentifier:
