@@ -1919,6 +1919,65 @@ class TestStripDuplicateNonRepeatableFields:
         assert m.strip_duplicate_non_repeatable_fields(parsed, {"245"}) == []
         assert len(parsed.fields) == 2
 
+    def test_sirsi_duplicate_001_keeps_the_one_starting_with_u(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[
+                m.Field_("001", None, None, content="ocm12345678"),
+                m.Field_("003", None, None, content="SIRSI"),
+                m.Field_("001", None, None, content="u508261"),
+            ],
+        )
+        details = m.strip_duplicate_non_repeatable_fields(parsed, {"001"})
+        assert len(details) == 1
+        assert "ocm12345678" in details[0]
+        remaining = [f for f in parsed.fields if f.tag == "001"]
+        assert len(remaining) == 1
+        assert remaining[0].content == "u508261"
+
+    def test_sirsi_check_is_case_insensitive(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[
+                m.Field_("001", None, None, content="ocm12345678"),
+                m.Field_("003", None, None, content="sirsi"),
+                m.Field_("001", None, None, content="U508261"),
+            ],
+        )
+        m.strip_duplicate_non_repeatable_fields(parsed, {"001"})
+        remaining = [f for f in parsed.fields if f.tag == "001"]
+        assert remaining[0].content == "U508261"
+
+    def test_non_sirsi_duplicate_001_keeps_first_as_usual(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[
+                m.Field_("001", None, None, content="ocm12345678"),
+                m.Field_("003", None, None, content="OCoLC"),
+                m.Field_("001", None, None, content="u508261"),
+            ],
+        )
+        m.strip_duplicate_non_repeatable_fields(parsed, {"001"})
+        remaining = [f for f in parsed.fields if f.tag == "001"]
+        assert remaining[0].content == "ocm12345678"
+
+    def test_sirsi_but_none_start_with_u_falls_back_to_first(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[
+                m.Field_("001", None, None, content="ocm12345678"),
+                m.Field_("003", None, None, content="SIRSI"),
+                m.Field_("001", None, None, content="ocm99999999"),
+            ],
+        )
+        m.strip_duplicate_non_repeatable_fields(parsed, {"001"})
+        remaining = [f for f in parsed.fields if f.tag == "001"]
+        assert remaining[0].content == "ocm12345678"
+
     def test_runs_by_default_via_cli_logged_as_fixed_requires_attention(self, tmp_path):
         parsed = m.ParsedRecord(
             leader=_SYNTHETIC_LEADER,

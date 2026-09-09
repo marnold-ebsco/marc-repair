@@ -17,6 +17,11 @@
 # listed here by mistake would cause real data loss.
 
 # Control fields
+#
+# 001: on Sierra/Symphony records (003 = SIRSI, case-insensitive), a
+# duplicate 001 is kept as whichever occurrence starts with "u" (that
+# system's real bib-id convention, e.g. "u508261") rather than just the
+# first -- see strip_duplicate_non_repeatable_fields.
 001
 003
 005

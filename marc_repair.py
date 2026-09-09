@@ -1985,8 +1985,17 @@ def strip_duplicate_non_repeatable_fields(
     MARC21 designates some fields Not Repeatable (see
     non_repeatable_tags.txt), and a second occurrence of one (e.g. two
     245s) is exactly the kind of thing a strict importer like FOLIO can
-    reject outright or handle unpredictably. Keeps the FIRST occurrence
-    of each tag in `non_repeatable_tags`, removes every later one.
+    reject outright or handle unpredictably. Keeps one occurrence of
+    each tag in `non_repeatable_tags`, removes every other one.
+
+    Which occurrence is kept is normally just the first, with one
+    exception: a duplicated 001 in a Sierra/Symphony-sourced record
+    (003 content "SIRSI", case-insensitive) keeps whichever occurrence
+    starts with "u" -- that's this system's own real bib-id convention
+    (e.g. "u508261"), so a duplicate 001 there is far more likely to be
+    a stray *other* identifier (an OCLC number, a barcode) that ended
+    up in 001 by mistake than the record's actual id. Falls back to
+    the first occurrence if none of them start with "u".
 
     This discards real data, so unlike this tool's routine removals
     (an empty field, an unusable subfield code) it's deliberately NOT
@@ -1997,21 +2006,46 @@ def strip_duplicate_non_repeatable_fields(
     $a "2nd ed." -- almost certainly a mistagged 250, not a genuine
     second title).
     """
-    details = []
-    seen: set[str] = set()
-    kept = []
+    occurrences: dict[str, list[Field_]] = {}
     for f in parsed.fields:
         if f.tag in non_repeatable_tags:
-            if f.tag in seen:
+            occurrences.setdefault(f.tag, []).append(f)
+
+    is_sirsi = any(
+        f.tag == "003" and f.content and f.content.strip().lower() == "sirsi"
+        for f in parsed.fields
+    )
+    keep: dict[str, Field_] = {}
+    for tag, fields_for_tag in occurrences.items():
+        if len(fields_for_tag) <= 1:
+            continue
+        chosen = fields_for_tag[0]
+        if tag == "001" and is_sirsi:
+            preferred = next(
+                (f for f in fields_for_tag
+                 if f.content and f.content.strip().lower().startswith("u")),
+                None,
+            )
+            if preferred is not None:
+                chosen = preferred
+        keep[tag] = chosen
+
+    details = []
+    kept_fields = []
+    for f in parsed.fields:
+        duplicates = occurrences.get(f.tag)
+        if duplicates and len(duplicates) > 1:
+            if f is keep[f.tag]:
+                kept_fields.append(f)
+            else:
                 if f.is_control():
                     body = f.content or ""
                 else:
                     body = f.indicators + "".join(f"${c}{d}" for c, d in f.subfields)
                 details.append(f"removed duplicate ={f.tag}  {body}\t(non-repeatable field)")
-                continue
-            seen.add(f.tag)
-        kept.append(f)
-    parsed.fields = kept
+            continue
+        kept_fields.append(f)
+    parsed.fields = kept_fields
     return details
 
 
