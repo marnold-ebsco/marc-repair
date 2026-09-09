@@ -1978,6 +1978,61 @@ DEFAULT_NON_REPEATABLE_TAGS_FILE = os.path.join(
 )
 
 
+def _choose_kept_001(fields_for_tag: list[Field_], is_sirsi: bool) -> Field_:
+    """A duplicated 001 in a Sierra/Symphony-sourced record (003
+    content "SIRSI", case-insensitive) keeps whichever occurrence
+    starts with "u" -- that's this system's own real bib-id convention
+    (e.g. "u508261"), so a duplicate 001 there is far more likely to be
+    a stray *other* identifier (an OCLC number, a barcode) that ended
+    up in 001 by mistake than the record's actual id. Falls back to
+    the first occurrence if not SIRSI, or if none of them start with
+    "u"."""
+    if is_sirsi:
+        preferred = next(
+            (f for f in fields_for_tag
+             if f.content and f.content.strip().lower().startswith("u")),
+            None,
+        )
+        if preferred is not None:
+            return preferred
+    return fields_for_tag[0]
+
+
+def _choose_kept_005(fields_for_tag: list[Field_], is_sirsi: bool) -> Field_:
+    """005 (date/time of latest transaction) is a fixed-width,
+    zero-padded YYYYMMDDHHMMSS.F string with a 4-digit year, so plain
+    string comparison IS chronological comparison, no parsing needed.
+    Keeps the most recent; ties keep the first occurrence."""
+    best = fields_for_tag[0]
+    for f in fields_for_tag[1:]:
+        if (f.content or "") > (best.content or ""):
+            best = f
+    return best
+
+
+def _choose_kept_008(fields_for_tag: list[Field_], is_sirsi: bool) -> Field_:
+    """008 bytes 0-5 (date entered on file, YYMMDD) compared as a
+    plain string -- keeps the most recent; ties keep the first
+    occurrence."""
+    best = fields_for_tag[0]
+    best_key = (best.content or "")[:6]
+    for f in fields_for_tag[1:]:
+        key = (f.content or "")[:6]
+        if key > best_key:
+            best, best_key = f, key
+    return best
+
+
+#: Per-tag tiebreakers for which occurrence of a duplicated
+#: non-repeatable field to keep -- anything not listed here just keeps
+#: the first occurrence (see `strip_duplicate_non_repeatable_fields`).
+_DUPLICATE_FIELD_RESOLVERS = {
+    "001": _choose_kept_001,
+    "005": _choose_kept_005,
+    "008": _choose_kept_008,
+}
+
+
 def strip_duplicate_non_repeatable_fields(
     parsed: ParsedRecord, non_repeatable_tags: set[str]
 ) -> list[str]:
@@ -1988,14 +2043,10 @@ def strip_duplicate_non_repeatable_fields(
     reject outright or handle unpredictably. Keeps one occurrence of
     each tag in `non_repeatable_tags`, removes every other one.
 
-    Which occurrence is kept is normally just the first, with one
-    exception: a duplicated 001 in a Sierra/Symphony-sourced record
-    (003 content "SIRSI", case-insensitive) keeps whichever occurrence
-    starts with "u" -- that's this system's own real bib-id convention
-    (e.g. "u508261"), so a duplicate 001 there is far more likely to be
-    a stray *other* identifier (an OCLC number, a barcode) that ended
-    up in 001 by mistake than the record's actual id. Falls back to
-    the first occurrence if none of them start with "u".
+    Which occurrence is kept is normally just the first, with tag-
+    specific exceptions in `_DUPLICATE_FIELD_RESOLVERS`: 001 prefers a
+    "u"-prefixed value on Sierra/Symphony records, 005 and 008 keep
+    the most recent by date.
 
     This discards real data, so unlike this tool's routine removals
     (an empty field, an unusable subfield code) it's deliberately NOT
@@ -2019,16 +2070,8 @@ def strip_duplicate_non_repeatable_fields(
     for tag, fields_for_tag in occurrences.items():
         if len(fields_for_tag) <= 1:
             continue
-        chosen = fields_for_tag[0]
-        if tag == "001" and is_sirsi:
-            preferred = next(
-                (f for f in fields_for_tag
-                 if f.content and f.content.strip().lower().startswith("u")),
-                None,
-            )
-            if preferred is not None:
-                chosen = preferred
-        keep[tag] = chosen
+        resolver = _DUPLICATE_FIELD_RESOLVERS.get(tag)
+        keep[tag] = resolver(fields_for_tag, is_sirsi) if resolver else fields_for_tag[0]
 
     details = []
     kept_fields = []
@@ -2494,7 +2537,7 @@ _FIXED_REQUIRES_ATTENTION = {
 }
 
 _DEDICATED_SECTIONS: dict[str, tuple[int, str]] = {
-    "duplicate_identifier": (2, "DUPLICATE RECORDS"),
+    "duplicate_identifier": (3, "DUPLICATE RECORDS"),
     "added_default_008": (4, "INFORMATIONAL"),
     "leader_byte_defaulted": (4, "INFORMATIONAL"),
     "leader_entry_map_fixed": (4, "INFORMATIONAL"),
@@ -2514,18 +2557,19 @@ del _cat
 
 def _section_for(entry: LogEntry) -> tuple[int, str]:
     """(sort_order, section_label) for `entry` -- NOT FIXED, then
-    FIXED/REQUIRES ATTENTION, then any other dedicated sections (see
-    `_DEDICATED_SECTIONS`), then FIXED, then INFORMATIONAL."""
+    FIXED/REQUIRES ATTENTION, then FIXED, then any other dedicated
+    sections (see `_DEDICATED_SECTIONS`) like DUPLICATE RECORDS, then
+    INFORMATIONAL."""
     dedicated = _DEDICATED_SECTIONS.get(entry.category)
     if dedicated is not None:
         return dedicated
-    return (3, "FIXED") if entry.fixed else (0, "NOT FIXED")
+    return (2, "FIXED") if entry.fixed else (0, "NOT FIXED")
 
 
 def write_log(path: str, entries: list[LogEntry]) -> None:
     """Write `entries` grouped into sections -- NOT FIXED, then FIXED/
-    REQUIRES ATTENTION, then any other dedicated sections like DUPLICATE
-    RECORDS, then FIXED, then INFORMATIONAL at the bottom -- see
+    REQUIRES ATTENTION, then FIXED, then any other dedicated sections
+    like DUPLICATE RECORDS, then INFORMATIONAL at the bottom -- see
     `_section_for`) and then by category within each, with a header per
     group -- so a run with (say) 375 missing-008 warnings and 7
     doubled-proxy-URL warnings shows them as two clearly labeled,
@@ -2856,6 +2900,23 @@ def main(argv: list[str] | None = None) -> int:
         "record, which would otherwise dominate the log",
     )
     parser.add_argument(
+        "--log-leader-entry-map-fixed",
+        action="store_true",
+        help="log each individual leader entry-map correction (bytes "
+        "20-23 forced back to the fixed constant '4500'). Off by "
+        "default since this can be nearly every record in a file with "
+        "this specific corruption, which would otherwise dominate the "
+        "log; the fix itself always runs regardless of this flag",
+    )
+    parser.add_argument(
+        "--log-transcoded-marc8",
+        action="store_true",
+        help="log each individual MARC-8-to-UTF-8 transcoding (see "
+        "--no-transcode-marc8). Off by default since this can be "
+        "nearly every record in a legacy file, which would otherwise "
+        "dominate the log",
+    )
+    parser.add_argument(
         "--no-normalize-subfield-9",
         dest="normalize_subfield_9",
         action="store_false",
@@ -2891,10 +2952,12 @@ def main(argv: list[str] | None = None) -> int:
         help="do NOT convert MARC-8/ANSEL encoded records to UTF-8. By "
         "default such records ARE converted (leader's encoding byte "
         "flipped accordingly; records already declaring Unicode are "
-        "left alone) and logged (see --log). Requires pymarc (pip "
-        "install -r requirements.txt) -- if it's not installed, this "
-        "default is skipped with a warning rather than failing the "
-        "whole run; pass this flag to skip it deliberately instead",
+        "left alone); not logged per-record by default (see "
+        "--log-transcoded-marc8) since this can be nearly every record "
+        "in a legacy file. Requires pymarc (pip install -r "
+        "requirements.txt) -- if it's not installed, the run fails "
+        "immediately rather than silently producing non-UTF-8 output; "
+        "pass this flag to skip transcoding deliberately instead",
     )
     args = parser.parse_args(argv)
 
@@ -3043,7 +3106,7 @@ def main(argv: list[str] | None = None) -> int:
                             f"could not transcode MARC-8 -> UTF-8: {exc}",
                         )
                     else:
-                        if transcoded:
+                        if transcoded and args.log_transcoded_marc8:
                             rec_id = record_identifier(parsed)
                             log("transcoded_marc8", True, i, rec_id, "transcoded MARC-8 -> UTF-8")
                 if args.fix_mojibake:
@@ -3118,7 +3181,7 @@ def main(argv: list[str] | None = None) -> int:
                         continue
                     rec_id = record_identifier(parsed)
                     log(category, False, i, rec_id, detail)
-                if parsed.leader[20:24] != "4500":
+                if parsed.leader[20:24] != "4500" and args.log_leader_entry_map_fixed:
                     rec_id = record_identifier(parsed)
                     log(
                         "leader_entry_map_fixed", True, i, rec_id,

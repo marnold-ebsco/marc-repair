@@ -599,10 +599,33 @@ class TestTranscodeMarc8:
         log = tmp_path / "run.log"
         rc = m.main([str(src), "-o", str(out), "--log", str(log)])
         assert rc == 0
+        # transcoding itself runs by default, but isn't logged
+        # per-record unless --log-transcoded-marc8 is also given
         content = log.read_text(encoding="utf-8")
-        assert "transcoded_marc8" in content
+        assert "transcoded_marc8" not in content
         results = m.repair_text(m._read_text(str(out)))
         assert results[0].leader[9] == "a"
+
+    def test_log_transcoded_marc8_flag_enables_logging(self, tmp_path):
+        pytest.importorskip("pymarc")
+        leader = list(_SYNTHETIC_LEADER)
+        leader[9] = " "
+        parsed = m.ParsedRecord(
+            leader="".join(leader),
+            entries=[],
+            fields=[
+                m.Field_("008", None, None, content="x" * 40),
+                m.Field_("100", "1 ", [("a", "Bal\xe5asim, \xf2Hasan.")]),
+            ],
+        )
+        src = tmp_path / "marc8.mrc"
+        src.write_bytes(m.assemble_marc(parsed))
+        out = tmp_path / "out.mrc"
+        log = tmp_path / "run.log"
+        rc = m.main([str(src), "-o", str(out), "--log-transcoded-marc8", "--log", str(log)])
+        assert rc == 0
+        content = log.read_text(encoding="utf-8")
+        assert "transcoded_marc8" in content
 
     def test_no_transcode_marc8_flag_leaves_it_as_marc8(self, tmp_path):
         leader = list(_SYNTHETIC_LEADER)
@@ -1180,6 +1203,43 @@ class TestLeaderEntryMapCorrection:
         parsed = m.repair_text(text)[0]
         raw = m.assemble_marc(parsed)
         assert raw[20:24] == b"4500"
+
+    def _corrupted_entry_map_bytes(self):
+        # assemble_marc always force-corrects bytes 20-23 itself, so
+        # building the test's *input* file with it would immediately
+        # "fix" the very corruption being injected -- splice it into
+        # the raw bytes afterward instead, bypassing that correction.
+        parsed = m.ParsedRecord(
+            leader=_SYNTHETIC_LEADER,
+            entries=[],
+            fields=[m.Field_("008", None, None, content="x" * 40)],
+        )
+        raw = bytearray(m.assemble_marc(parsed))
+        raw[20:24] = b"45x0"
+        return bytes(raw)
+
+    def test_fix_runs_by_default_but_not_logged_unless_flagged(self, tmp_path):
+        src = tmp_path / "badmap.mrc"
+        src.write_bytes(self._corrupted_entry_map_bytes())
+        out = tmp_path / "out.mrc"
+        log = tmp_path / "run.log"
+        rc = m.main([str(src), "-o", str(out), "--log", str(log)])
+        assert rc == 0
+        content = log.read_text(encoding="utf-8") if log.exists() else ""
+        assert "leader_entry_map_fixed" not in content
+        assert m.assemble_marc(m.repair_text(m._read_text(str(out)))[0])[20:24] == b"4500"
+
+    def test_log_leader_entry_map_fixed_flag_enables_logging(self, tmp_path):
+        src = tmp_path / "badmap.mrc"
+        src.write_bytes(self._corrupted_entry_map_bytes())
+        out = tmp_path / "out.mrc"
+        log = tmp_path / "run.log"
+        rc = m.main([
+            str(src), "-o", str(out), "--log-leader-entry-map-fixed", "--log", str(log),
+        ])
+        assert rc == 0
+        content = log.read_text(encoding="utf-8")
+        assert "leader_entry_map_fixed" in content
 
 
 # ---------------------------------------------------------------------------
@@ -1964,6 +2024,62 @@ class TestStripDuplicateNonRepeatableFields:
         remaining = [f for f in parsed.fields if f.tag == "001"]
         assert remaining[0].content == "ocm12345678"
 
+    def test_duplicate_005_keeps_most_recent(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[
+                m.Field_("005", None, None, content="20200101120000.0"),
+                m.Field_("005", None, None, content="20240615093000.0"),
+            ],
+        )
+        details = m.strip_duplicate_non_repeatable_fields(parsed, {"005"})
+        assert len(details) == 1
+        assert "20200101120000.0" in details[0]
+        remaining = [f for f in parsed.fields if f.tag == "005"]
+        assert remaining[0].content == "20240615093000.0"
+
+    def test_duplicate_005_tie_keeps_first(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[
+                m.Field_("005", None, None, content="20240615093000.0"),
+                m.Field_("005", None, None, content="20240615093000.0"),
+            ],
+        )
+        m.strip_duplicate_non_repeatable_fields(parsed, {"005"})
+        remaining = [f for f in parsed.fields if f.tag == "005"]
+        assert len(remaining) == 1
+
+    def test_duplicate_008_keeps_most_recent_by_date_entered(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[
+                m.Field_("008", None, None, content="000101s2000    xxu           000 0 eng d"),
+                m.Field_("008", None, None, content="240615s2024    xxu           000 0 eng d"),
+            ],
+        )
+        details = m.strip_duplicate_non_repeatable_fields(parsed, {"008"})
+        assert len(details) == 1
+        remaining = [f for f in parsed.fields if f.tag == "008"]
+        assert remaining[0].content.startswith("240615")
+
+    def test_duplicate_008_tie_keeps_first(self):
+        content = "240615s2024    xxu           000 0 eng d"
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[
+                m.Field_("008", None, None, content=content),
+                m.Field_("008", None, None, content=content),
+            ],
+        )
+        m.strip_duplicate_non_repeatable_fields(parsed, {"008"})
+        remaining = [f for f in parsed.fields if f.tag == "008"]
+        assert len(remaining) == 1
+
     def test_sirsi_but_none_start_with_u_falls_back_to_first(self):
         parsed = m.ParsedRecord(
             leader="0" * 24,
@@ -2489,7 +2605,7 @@ class TestWriteLog:
         assert "first" in content
         assert "second" in content
 
-    def test_duplicate_records_section_sits_between_not_fixed_and_fixed(self, tmp_path):
+    def test_duplicate_records_section_sits_after_fixed(self, tmp_path):
         entries = [
             m.LogEntry("added_field", True, "t1", 0, "u1", "added 245"),
             m.LogEntry("missing_008", False, "t2", 1, "u2", "no 008"),
@@ -2500,9 +2616,9 @@ class TestWriteLog:
         lines = log_path.read_text(encoding="utf-8").splitlines()
 
         not_fixed_header = next(i for i, ln in enumerate(lines) if ln.startswith("=== NOT FIXED"))
-        dup_header = next(i for i, ln in enumerate(lines) if ln.startswith("=== DUPLICATE"))
         fixed_header = next(i for i, ln in enumerate(lines) if ln.startswith("=== FIXED"))
-        assert not_fixed_header < dup_header < fixed_header
+        dup_header = next(i for i, ln in enumerate(lines) if ln.startswith("=== DUPLICATE"))
+        assert not_fixed_header < fixed_header < dup_header
         # the duplicate entry's own line is tagged with its section, not
         # generically "NOT FIXED", even though .fixed is False
         dup_line = next(ln for ln in lines if "dup" in ln and not ln.startswith("==="))
@@ -2523,13 +2639,13 @@ class TestWriteLog:
         lines = log_path.read_text(encoding="utf-8").splitlines()
 
         not_fixed_header = next(i for i, ln in enumerate(lines) if ln.startswith("=== NOT FIXED"))
-        dup_header = next(i for i, ln in enumerate(lines) if ln.startswith("=== DUPLICATE"))
         fixed_header = next(i for i, ln in enumerate(lines) if ln.startswith("=== FIXED"))
+        dup_header = next(i for i, ln in enumerate(lines) if ln.startswith("=== DUPLICATE"))
         informational_headers = [
             i for i, ln in enumerate(lines) if ln.startswith("=== INFORMATIONAL")
         ]
         assert len(informational_headers) == 4
-        assert not_fixed_header < dup_header < fixed_header < min(informational_headers)
+        assert not_fixed_header < fixed_header < dup_header < min(informational_headers)
         info_lines = [ln for ln in lines if ln.startswith("[INFORMATIONAL]")]
         assert len(info_lines) == 4
 

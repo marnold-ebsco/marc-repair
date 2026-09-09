@@ -99,7 +99,7 @@ ten million.
 | `999` fields (Sierra's internal item-linking field, not part of MARC21) | Retagged to `945` with indicators `ff` by default; `--no-remap-999-to-945` to leave as-is. Not logged by default (a record can carry many 999s) — pass `--log-999-to-945` to log each one |
 | `$9` subfields (legacy/local stand-in for `$0`) | Rewritten to `$0` by default; `--no-normalize-subfield-9` to leave as-is; logged |
 | Typographic "smart" Unicode punctuation (curly quotes, em/en dashes, ellipsis — see table below) | Normalized to plain ASCII by default; `--no-normalize-smart-characters` to leave as-is; logged as `normalized_smart_characters` (INFORMATIONAL) |
-| Legacy MARC-8/ANSEL encoding | Converted to UTF-8 by default (requires `pymarc`; the run fails loudly if it's missing, rather than silently leaving non-UTF-8 output — install it, or pass `--no-transcode-marc8` if you explicitly want non-UTF-8 records left as-is); logged as `transcoded_marc8` (INFORMATIONAL) |
+| Legacy MARC-8/ANSEL encoding | Converted to UTF-8 by default (requires `pymarc`; the run fails loudly if it's missing, rather than silently leaving non-UTF-8 output — install it, or pass `--no-transcode-marc8` if you explicitly want non-UTF-8 records left as-is). Not logged per-record by default (this can be nearly every record in a legacy file) — pass `--log-transcoded-marc8` to log each one |
 | A tag that isn't 3 numeric digits (e.g. `24A` from directory corruption) | Renamed to an unused tag in the 900-999 locally-defined range by default, picked from tags seen during the normal single pass (no extra full pass — only the rare record needing this gets a second, targeted look afterward); `--no-fix-invalid-tags` to leave it as-is instead; logged |
 | Doubled proxy URLs, duplicate record identifiers | Always detected and logged, never auto-fixed — no safe correction to guess |
 | A single Hebrew/Arabic/Cyrillic/Greek/CJK character welded directly between two ASCII letters with no word boundary (e.g. real data found: "Schr" + one CJK character + "inger", almost certainly a miskeyed "ö") | Always detected and logged as `suspect_marc8_escape`, never auto-fixed — there's no safe way to guess the intended character; flag this to the source system/cataloger to correct |
@@ -161,10 +161,10 @@ Entries are grouped into sections, in this order:
    content). The goal throughout this tool is a MARC file that's
    always loadable, even when that requires discarding something —
    but that loss is always surfaced here, never silent.
-3. **DUPLICATE RECORDS** — the same identifier (`001`, or `907$a` if it
-   looks like a Sierra bib number) used on more than one record
-4. **FIXED** — actively repaired this run, reconstructed from the
+3. **FIXED** — actively repaired this run, reconstructed from the
    record's own data
+4. **DUPLICATE RECORDS** — the same identifier (`001`, or `907$a` if it
+   looks like a Sierra bib number) used on more than one record
 5. **INFORMATIONAL** — either fixed via a fixed default/constant rather
    than recovered from the record itself (a placeholder 008, a leader
    byte reset to a default code, the leader's entry-map constant
@@ -178,6 +178,13 @@ Entries are grouped into sections, in this order:
    still run either way — only what gets written to the log changes;
    useful since this is typically the highest-volume section, e.g.
    every MARC-8 record transcoded)
+
+Two of the highest-volume fixes are off by default even within that
+section — the fix always runs, only the per-record log line doesn't —
+since either one can otherwise be the majority of a real file's log:
+`--log-transcoded-marc8` (every MARC-8 record converted) and
+`--log-leader-entry-map-fixed` (every record with a corrupted
+entry-map byte).
 
 ...and by category within each section, with a header and count, so e.g.
 all 375 missing-008 findings sit together instead of scattered by record
