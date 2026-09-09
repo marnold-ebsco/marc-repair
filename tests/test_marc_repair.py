@@ -1594,12 +1594,11 @@ class TestFixInvalidTags:
         src.write_bytes(m.assemble_marc(rec1) + m.assemble_marc(rec2))
         out = tmp_path / "out.mrc"
         log = tmp_path / "run.log"
-        # --no-remap-999-to-945: without it, the default 999->945 remap
-        # would retag the filler "999" field, freeing a slot and
-        # defeating this test's "every 9XX slot taken" setup.
-        rc = m.main([
-            str(src), "-o", str(out), "--no-remap-999-to-945", "--log", str(log),
-        ])
+        # 999->945 remapping is off by default (see TestRemap999To945),
+        # so the filler "999" field here keeps its slot taken without
+        # needing any extra flag, satisfying this test's "every 9XX
+        # slot taken" setup.
+        rc = m.main([str(src), "-o", str(out), "--log", str(log)])
         assert rc == 0
         content = log.read_text(encoding="utf-8")
         assert "=== NOT FIXED: non_numeric_tag (1) ===" in content
@@ -1645,7 +1644,27 @@ class TestRemap999To945:
         assert details == []
         assert parsed.fields[0].tag == "650"
 
-    def test_runs_by_default_via_cli_but_is_not_logged(self, tmp_path):
+    def test_off_by_default_via_cli(self, tmp_path):
+        parsed = m.ParsedRecord(
+            leader=_SYNTHETIC_LEADER,
+            entries=[],
+            fields=[
+                m.Field_("008", None, None, content="x" * 40),
+                m.Field_("999", "  ", [("i", "12345")]),
+            ],
+        )
+        src = tmp_path / "s999.mrc"
+        src.write_bytes(m.assemble_marc(parsed))
+        out = tmp_path / "out.mrc"
+        log = tmp_path / "run.log"
+        rc = m.main([str(src), "-o", str(out), "--log", str(log)])
+        assert rc == 0
+        results = m.repair_text(m._read_text(str(out)))
+        tags = [f.tag for f in results[0].fields]
+        assert "999" in tags
+        assert "945" not in tags
+
+    def test_remap_999_to_945_flag_enables_it(self, tmp_path):
         parsed = m.ParsedRecord(
             leader=_SYNTHETIC_LEADER,
             entries=[],
@@ -1658,9 +1677,9 @@ class TestRemap999To945:
         src.write_bytes(m.assemble_marc(parsed))
         out = tmp_path / "out.mrc"
         log = tmp_path / "run.log"
-        rc = m.main([str(src), "-o", str(out), "--log", str(log)])
+        rc = m.main([str(src), "-o", str(out), "--remap-999-to-945", "--log", str(log)])
         assert rc == 0
-        assert not log.exists()
+        assert not log.exists()  # runs, but not logged unless --log-999-to-945 too
         results = m.repair_text(m._read_text(str(out)))
         tags = [f.tag for f in results[0].fields]
         assert "999" not in tags
@@ -1682,34 +1701,12 @@ class TestRemap999To945:
         out = tmp_path / "out.mrc"
         log = tmp_path / "run.log"
         rc = m.main([
-            str(src), "-o", str(out), "--log-999-to-945",
+            str(src), "-o", str(out), "--remap-999-to-945", "--log-999-to-945",
             "--log-informational", "--log", str(log),
         ])
         assert rc == 0
         content = log.read_text(encoding="utf-8")
         assert "remapped_999_to_945" in content
-
-    def test_no_remap_999_to_945_flag_skips_it(self, tmp_path):
-        parsed = m.ParsedRecord(
-            leader=_SYNTHETIC_LEADER,
-            entries=[],
-            fields=[
-                m.Field_("008", None, None, content="x" * 40),
-                m.Field_("999", "  ", [("i", "12345")]),
-            ],
-        )
-        src = tmp_path / "s999.mrc"
-        src.write_bytes(m.assemble_marc(parsed))
-        out = tmp_path / "out.mrc"
-        log = tmp_path / "run.log"
-        rc = m.main([
-            str(src), "-o", str(out), "--no-remap-999-to-945", "--log", str(log),
-        ])
-        assert rc == 0
-        results = m.repair_text(m._read_text(str(out)))
-        tags = [f.tag for f in results[0].fields]
-        assert "999" in tags
-        assert "945" not in tags
 
 
 # ---------------------------------------------------------------------------

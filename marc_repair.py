@@ -2926,22 +2926,24 @@ def main(argv: list[str] | None = None) -> int:
         "tag (rare) get a second, targeted look afterward",
     )
     parser.add_argument(
-        "--no-remap-999-to-945",
+        "--remap-999-to-945",
         dest="remap_999_to_945",
-        action="store_false",
-        default=True,
-        help="do NOT retag 999 fields to 945 (indicators forced to \"ff\"). "
-        "By default every 999 (Sierra's internal item-linking field, not "
-        "part of MARC21) is retagged to 945, a locally-defined field other "
-        "systems will actually accept; pass this flag to leave 999 fields "
-        "as-is instead. Not logged unless --log-999-to-945 is also given "
-        "(this remap is typically extremely high-volume -- multiple 999s "
-        "per record -- so it's excluded from the log by default)",
+        action="store_true",
+        default=False,
+        help="retag 999 fields to 945 (indicators forced to \"ff\"). "
+        "999 (Sierra's internal item-linking field, not part of MARC21) "
+        "is left as-is by default; pass this flag to have every one "
+        "retagged instead to 945, a locally-defined field other "
+        "systems will actually accept. Off by default since it's not a "
+        "structural defect and not every source is Sierra-originated. "
+        "Not logged unless --log-999-to-945 is also given (this remap "
+        "is typically extremely high-volume -- multiple 999s per "
+        "record -- so it's excluded from the log by default)",
     )
     parser.add_argument(
         "--log-999-to-945",
         action="store_true",
-        help="log each individual 999-to-945 remap (see --no-remap-999-to-945). "
+        help="log each individual 999-to-945 remap (see --remap-999-to-945). "
         "Off by default since a real file can have many 999 fields per "
         "record, which would otherwise dominate the log",
     )
