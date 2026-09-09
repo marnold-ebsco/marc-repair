@@ -1034,6 +1034,22 @@ def detect_encoding(path: str, probe_size: int = 4 * 1024 * 1024) -> str:
         return "latin-1"
 
 
+def count_records(path: str, chunk_size: int = 16 * 1024 * 1024) -> int:
+    """Count the records in a MARC file as fast as possible: stream it in
+    big raw binary chunks and count the record-terminator byte (0x1D),
+    one per record, with no decoding or parsing at all. 0x1D can't occur
+    as a UTF-8 continuation byte (those are always >= 0x80) and Latin-1
+    maps bytes 1:1, so this is exact for any encoding this tool handles.
+    """
+    total = 0
+    with open(path, "rb") as fh:
+        while True:
+            chunk = fh.read(chunk_size)
+            if not chunk:
+                return total
+            total += chunk.count(b"\x1d")
+
+
 def iter_repair_stream(
     path: str,
     overrides: dict[int, OverridesByField] | None = None,
@@ -2716,6 +2732,14 @@ def main(argv: list[str] | None = None) -> int:
         "-o", "--out", help="output .mrc file (default: INPUT_fixed.mrc next to the input)"
     )
     parser.add_argument(
+        "--count",
+        action="store_true",
+        help="print the number of records in the input file and exit "
+        "immediately -- counts raw record-terminator (0x1D) bytes in "
+        "big binary chunks without parsing or repairing anything, for "
+        "speed on large files. No output file is written",
+    )
+    parser.add_argument(
         "--mrk",
         nargs="?",
         const="",
@@ -2986,6 +3010,10 @@ def main(argv: list[str] | None = None) -> int:
         "pass this flag to skip transcoding deliberately instead",
     )
     args = parser.parse_args(argv)
+
+    if args.count:
+        print(f"{count_records(args.input)} record(s) in {args.input}")
+        return 0
 
     if args.transcode_marc8:
         try:

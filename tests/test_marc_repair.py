@@ -2814,3 +2814,63 @@ class TestCLIHelpers:
         # added_default_245/added_default_008, both INFORMATIONAL and
         # off by default -- nothing else fired, so no log file at all
         assert not log.exists()
+
+
+# ---------------------------------------------------------------------------
+# count_records / --count -- fast record count, no parsing
+# ---------------------------------------------------------------------------
+
+class TestCountRecords:
+    def test_counts_one_record(self, tmp_path):
+        parsed = m.ParsedRecord(
+            leader=_SYNTHETIC_LEADER,
+            entries=[],
+            fields=[m.Field_("245", "00", [("a", "Title.")])],
+        )
+        src = tmp_path / "one.mrc"
+        src.write_bytes(m.assemble_marc(parsed))
+        assert m.count_records(str(src)) == 1
+
+    def test_counts_multiple_records(self, tmp_path):
+        parsed = m.ParsedRecord(
+            leader=_SYNTHETIC_LEADER,
+            entries=[],
+            fields=[m.Field_("245", "00", [("a", "Title.")])],
+        )
+        raw = m.assemble_marc(parsed) * 5
+        src = tmp_path / "five.mrc"
+        src.write_bytes(raw)
+        assert m.count_records(str(src)) == 5
+
+    def test_counts_across_chunk_boundaries(self, tmp_path):
+        parsed = m.ParsedRecord(
+            leader=_SYNTHETIC_LEADER,
+            entries=[],
+            fields=[m.Field_("500", "  ", [("a", "x" * 500)])],
+        )
+        raw = m.assemble_marc(parsed) * 20
+        src = tmp_path / "chunked.mrc"
+        src.write_bytes(raw)
+        # force many small reads so a record terminator landing exactly
+        # on a chunk boundary is still counted correctly
+        assert m.count_records(str(src), chunk_size=17) == 20
+
+    def test_empty_file_counts_zero(self, tmp_path):
+        src = tmp_path / "empty.mrc"
+        src.write_bytes(b"")
+        assert m.count_records(str(src)) == 0
+
+    def test_main_count_flag_prints_count_and_writes_no_output(self, tmp_path, capsys):
+        parsed = m.ParsedRecord(
+            leader=_SYNTHETIC_LEADER,
+            entries=[],
+            fields=[m.Field_("245", "00", [("a", "Title.")])],
+        )
+        raw = m.assemble_marc(parsed) * 3
+        src = tmp_path / "three.mrc"
+        src.write_bytes(raw)
+        rc = m.main([str(src), "--count"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "3" in out
+        assert not (tmp_path / "three_fixed.mrc").exists()
