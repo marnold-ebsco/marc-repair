@@ -236,6 +236,34 @@ class TestModeIntactDelimiters:
         assert results[1].unresolved == []
         assert results[1].fields[0].content == "rec2"
 
+    def test_numeric_001_right_after_directory_does_not_break_parsing(self):
+        # Regression test: a real 2.6GB/706K-record export hit this on a
+        # record whose 001 content was "on1000049630" (an OCLC number).
+        # The real directory terminator (0x1E) immediately followed by
+        # that numeric-looking field data forms one more 12-char chunk
+        # that also happens to look like a valid directory entry by
+        # coincidence ("\x1eon100004963" -- tag "\x1eon", length/start
+        # portion all digits). parse_directory used to greedily grab that
+        # bogus extra entry, fail its whole-list cumulative-length check,
+        # and discard the (perfectly valid) real entries along with it --
+        # bailing this genuinely intact record all the way to
+        # UNRESOLVED. It must parse cleanly via Mode 1 instead.
+        parsed = m.ParsedRecord(
+            leader=_SYNTHETIC_LEADER,
+            entries=[],
+            fields=[
+                m.Field_("001", None, None, content="on1000049630"),
+                m.Field_("008", None, None, content="x" * 40),
+                m.Field_("245", "00", [("a", "Title.")]),
+            ],
+        )
+        text = m.assemble_marc(parsed).decode("utf-8")
+        results = m.repair_text(text)
+        assert len(results) == 1
+        assert results[0].unresolved == []
+        field001 = next(f for f in results[0].fields if f.tag == "001")
+        assert field001.content == "on1000049630"
+
 
 # ---------------------------------------------------------------------------
 # ensure_field -- patch in a missing required field

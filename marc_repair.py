@@ -408,40 +408,45 @@ def parse_directory(rest: str) -> tuple[int, list[DirEntry]]:
     this function think the directory ended early right before it (which
     would misparse everything from that field onward). The tag's numeric
     validity is checked and fixed separately -- see `fix_invalid_tags`.
+
+    The start/length cumulative check is applied as each chunk is read,
+    not after greedily grabbing every digit-shaped chunk first -- a real
+    directory terminator (0x1E) followed by a numeric-looking field (e.g.
+    001 content like "on1000049630") can otherwise look like one more
+    valid 12-char entry purely by digit-shape coincidence, silently
+    swallowing the real terminator and its first field's data into a
+    bogus final entry. Checking the cumulative math immediately stops
+    there instead, keeping the genuinely consistent entries found so far
+    rather than discarding all of them over one coincidental false match.
     """
     best = None
     for skip in range(0, 4):
         chunk_stream = rest[skip:]
         pos = 0
         entries: list[DirEntry] = []
+        cum = 0
         while True:
             chunk = chunk_stream[pos:pos + 12]
             if len(chunk) < 12 or not chunk[3:12].isdigit():
                 break
-            entries.append(DirEntry(chunk[0:3], int(chunk[3:7]), int(chunk[7:12])))
+            length, start = int(chunk[3:7]), int(chunk[7:12])
+            if start != cum:
+                break
+            entries.append(DirEntry(chunk[0:3], length, start))
+            cum += length
             pos += 12
         if not entries:
             continue
-        # sanity: starts should be strictly increasing and match cumulative lengths
-        cum = 0
-        ok = True
-        for e in entries:
-            if e.start != cum:
-                ok = False
-                break
-            cum += e.length
-        if ok:
-            if best is None or len(entries) > len(best[1]):
-                best = (skip, entries)
-            # a clean parse -- the entries ended exactly at the real
-            # directory terminator, meaning there's no stray/mangled byte
-            # anywhere in the directory for a larger skip to route around
-            # -- means no other skip can ever do better, so skip trying
-            # them. This is the common case (most records aren't
-            # corrupted at all); the full 4-skip search only matters when
-            # this fails.
-            if chunk_stream[pos:pos + 1] == FIELDTERM:
-                break
+        if best is None or len(entries) > len(best[1]):
+            best = (skip, entries)
+        # a clean parse -- the entries ended exactly at the real
+        # directory terminator, meaning there's no stray/mangled byte
+        # anywhere in the directory for a larger skip to route around --
+        # means no other skip can ever do better, so skip trying them.
+        # This is the common case (most records aren't corrupted at
+        # all); the full 4-skip search only matters when this fails.
+        if chunk_stream[pos:pos + 1] == FIELDTERM:
+            break
     if best is None:
         raise RepairError("could not locate a consistent directory after the leader")
     return best
