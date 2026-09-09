@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Virtual environments
+venv/
+venv2/
+
+# Real MARC data and run artifacts (large, generated, not source) --
+# only the specific small fixtures the test suite actually reads are
+# checked in as exceptions below.
+*.mrc
+*.mrk
+*_log_*.log
+!tests/fixtures/bad_length_bib_nashvillestate_bibs_202693_me.mrc
+!tests/fixtures/bad_missing245_bib_nashvillestate_bibs_202693_me.mrc
+!tests/fixtures/bad_bib_mandatoryfieldsnashvillestate_bibs_202693_me.mrc
+!tests/fixtures/nscc_bad_bib_badescape.mrc
+archive/
+split/

@@ -1,0 +1,247 @@
+# marc_repair
+
+A general-purpose tool for repairing broken MARC21 (ISO 2709) files and
+patching common missing/invalid fields — without silently guessing at data
+it can't be sure about.
+
+Handles everything from a single record pasted into a chat box that lost
+its control characters, to a multi-gigabyte, multi-million-record export
+with scattered corruption, in one pass with bounded memory.
+
+## The problem
+
+MARC21 binary records (`.mrc`) are notoriously easy to corrupt in ways that
+break most tools outright:
+
+- A leader or directory byte gets mangled (e.g. the entry-map field that
+  should always read `4500` becomes `45x0`), so the declared record length
+  or field offsets no longer match reality.
+- A record gets copy/pasted through something that can't carry raw control
+  bytes (a chat box, an email client, a spreadsheet cell) and silently
+  drops every `0x1E`/`0x1F`/`0x1D` delimiter.
+- Individual fields are missing required subfields, have invalid subfield
+  codes, wrong indicator counts, or the record is missing 008 entirely.
+- A record is legitimately encoded in legacy MARC-8/ANSEL, not UTF-8.
+- The same identifier is reused across multiple, genuinely different
+  records.
+- A record is too large for ISO 2709's fixed-width length fields to
+  represent at all.
+
+Most of these either crash a naive parser or get silently mis-parsed. This
+tool is built around one rule: **never silently guess**. Where a fix is
+unambiguous, it's applied and logged. Where it's genuinely ambiguous, the
+tool says so instead of picking an answer.
+
+## How it works
+
+### Two repair modes, auto-detected per record
+
+**Mode 1 — intact delimiters, corrupted leader/directory.** This is the
+common real-world case: some byte(s) in the leader or directory got
+mangled, so the declared length or field offsets are wrong, but the actual
+field data still has its real `0x1E`/`0x1F` bytes. This mode ignores the
+stale declared lengths entirely and re-derives every field's true
+boundaries from those real delimiters, then rebuilds a correct leader and
+directory around them. Fast and deterministic — no guessing involved.
+
+**Mode 2 — delimiters are just gone.** For text that's been stripped of
+its control bytes entirely (e.g. pasted through a chat box). This mode
+falls back to the still-intact *directory* — plain digits, never binary,
+so paste-proof — as ground truth, and does a whole-record backtracking
+search for the unique way to re-insert delimiters that makes every field's
+reconstructed length match what the directory declares. When more than one
+insertion is possible, or the search runs out of its work budget, the
+field is reported `UNRESOLVED` and needs a manual override rather than
+being guessed. (A long free-text field whose valid subfield codes include
+common English letters — a title's `$a`/`$b`/`$c`, say — can genuinely have
+several structurally-valid splits that only human judgment can
+disambiguate; that's a property of the missing information, not a bug.)
+
+For each record, Mode 1 is tried first; Mode 2 only kicks in when the data
+doesn't actually have real delimiters to trust.
+
+### Self-determining record boundaries
+
+Record boundaries are *not* found by scanning for the next record's leader
+up front. Instead, each record determines its own true end from its own
+content — real delimiters for Mode 1, directory-length arithmetic for Mode
+2 — and the next record picks up exactly where the previous one ended.
+This matters because a corrupted entry-map field makes the *next* leader
+undetectable by pattern-matching; a naive "slice up front, then parse each
+slice" approach would silently merge that record's bytes into the
+previous one and lose it. (This was a real bug found and fixed during
+development — it was silently dropping ~18% of records from a 91MB real
+file before the self-determining redesign.)
+
+### Streaming, not whole-file-in-memory
+
+The CLI always reads the input incrementally in chunks (default 32MB)
+rather than loading the whole file into memory, and writes each record out
+immediately after processing rather than collecting them all first. Memory
+use stays bounded by roughly one chunk plus one record's worth of parsed
+data at a time, regardless of whether the input has a thousand records or
+ten million.
+
+### What gets fixed automatically vs. flagged
+
+| Issue | Behavior |
+|---|---|
+| Corrupted leader/directory (Mode 1) | Fixed automatically — no flag needed |
+| Record too large for the leader's 5-digit length field | Fixed automatically, using MARC21's own documented sentinel (`99999`); nothing is lost since the real end is always found from the terminator |
+| Single field or base address too large to represent at all | Not fixable — no sentinel exists for these; record passed through unchanged, logged |
+| Missing 245, or a 245 present but missing $a | Placeholder `$aNo title` added by default — many real-world imports reject a record with no title at all — either as a new field or, if a 245 already exists (e.g. one with only `$h[electronic resource]`), patched into the existing field alongside its other subfields, not stripped and rebuilt; `--ensure-field "245:..."` takes priority per-record if supplied; `--no-add-default-245` to leave such records untouched instead; logged |
+| Missing any other field | `--ensure-field` (opt-in; you supply the content) |
+| Missing 008 | Placeholder inserted by default (a fixed, material-type-agnostic default — real content still needs `--ensure-field "008:..."`, which takes priority per-record); `--no-add-default-008` to leave such records with no 008 instead; logged |
+| Fields missing a required `$a` | Removed by default (see `required_a_tags.txt`, editable) and logged; `--no-strip-missing-required-a` to leave them instead |
+| Invalid subfield codes (not `[a-z0-9]`) | Removed by default and logged; `--no-strip-invalid-subfield-codes` to leave them instead |
+| A field where every subfield's data is empty (any tag) | Removed by default (not logged since nothing is discarded); `--no-strip-empty-fields` to leave them instead |
+| Data field with 0 or 1 indicator characters instead of 2 | Padded with spaces by default and logged; `--no-fix-bad-indicators` to leave it instead (such a field then fails Mode 1 and falls back to Mode 2/UNRESOLVED) |
+| `999` fields (Sierra's internal item-linking field, not part of MARC21) | Retagged to `945` with indicators `ff` by default; `--no-remap-999-to-945` to leave as-is. Not logged by default (a record can carry many 999s) — pass `--log-999-to-945` to log each one |
+| `$9` subfields (legacy/local stand-in for `$0`) | Rewritten to `$0` by default; `--no-normalize-subfield-9` to leave as-is; logged |
+| Typographic "smart" Unicode punctuation (curly quotes, em/en dashes, ellipsis) | Normalized to plain ASCII by default; `--no-normalize-smart-characters` to leave as-is; logged |
+| Legacy MARC-8/ANSEL encoding | `--transcode-marc8` (opt-in; requires `pymarc`) |
+| A tag that isn't 3 numeric digits (e.g. `24A` from directory corruption) | Renamed to an unused tag in the 900-999 locally-defined range by default, picked from tags seen during the normal single pass (no extra full pass — only the rare record needing this gets a second, targeted look afterward); `--no-fix-invalid-tags` to leave it as-is instead; logged |
+| Doubled proxy URLs, duplicate record identifiers | Always detected and logged, never auto-fixed — no safe correction to guess |
+| Leader bytes 05/06/08/17 (record status, type of record, type of control, encoding level) outside their valid MARC21 code set | Defaulted (05→`c`, 06→`a`, 08/17→blank) by default; `--no-fix-invalid-leader-bytes` to leave as-is; logged |
+| A record that can't be auto-repaired by either mode at all | Passed through to the output unchanged (never dropped), logged as `UNRESOLVED` |
+
+The output file always has the same number of records as the input.
+
+### Logging
+
+Every run that changes or flags anything writes one combined,
+timestamped log file (default `OUTPUT_log_TIMESTAMP.log`, see `--log`).
+Entries are grouped into sections, in this order:
+
+1. **NOT FIXED** — still needs your attention (warnings, unresolved
+   passthroughs, unfixable oversized records)
+2. **DUPLICATE RECORDS** — the same identifier (`001`, or `907$a` if it
+   looks like a Sierra bib number) used on more than one record
+3. **FIXED** — actively repaired this run, reconstructed from the
+   record's own data
+4. **INFORMATIONAL** — also actively fixed this run, but via a fixed
+   default/constant rather than recovered from the record itself: a
+   placeholder 008 (`added_default_008`), a leader byte reset to a
+   default code (`leader_byte_defaulted`), the leader's entry-map
+   constant restored (`leader_entry_map_fixed`), or `$9` promoted to `$0`
+   (`normalized_subfield_9_to_0`)
+
+...and by category within each section, with a header and count, so e.g.
+all 375 missing-008 findings sit together instead of scattered by record
+order.
+
+## Installation
+
+Requires **Python 3.12+**. The core tool is pure Python (standard library
+only) — nothing to install for repairing structural corruption, missing
+fields, invalid subfields, or bad indicators.
+
+```bash
+git clone <this repo>   # or just copy marc_repair.py + required_a_tags.txt
+cd marc_repair
+```
+
+Only `--transcode-marc8` (converting legacy MARC-8/ANSEL to UTF-8) needs a
+dependency, since accurately reimplementing MARC-8's full character-set
+mapping tables from scratch would be error-prone — this defers to
+`pymarc`'s LC-authoritative tables instead:
+
+```bash
+python3 -m venv venv
+./venv/bin/pip install -r requirements.txt   # only needed for --transcode-marc8
+```
+
+Everything else runs with a plain `python3 marc_repair.py ...` — no venv
+or install step required.
+
+## Usage
+
+```bash
+# Fix a file with a corrupted leader/directory. Output defaults to
+# INPUT_fixed.mrc next to the input.
+python3 marc_repair.py bad_length_bib.mrc
+
+# Pick the output path explicitly and also dump a human-readable .mrk
+# version for review.
+python3 marc_repair.py bad_length_bib.mrc -o out.mrc --mrk out.mrk
+
+# A record missing 245 or 008 gets a placeholder by default (245: 00
+# $aNo title; 008: a fixed generic default), logged either way. Supply
+# real content per-record instead with --ensure-field (which takes
+# priority over the placeholder); each spec is TAG:INDICATORS:CODE=VALUE,
+# or TAG:CONTENT for a control field.
+python3 marc_repair.py bad_missing245_bib.mrc --ensure-field "245:00:a=Real title"
+python3 marc_repair.py bad_bib.mrc \
+    --ensure-field "008:780615s19uu    xx a                    d"
+
+# Some fields require a non-empty $a to mean anything (e.g. 650 with no $a
+# is just a bare subject subdivision, not a subject) -- by default such
+# fields are removed and logged (see required_a_tags.txt, editable --
+# see its header comment for exceptions like 505). A subfield code that
+# isn't a lowercase letter or digit, a data field with 0 or 1 indicator
+# characters instead of 2, and a field with no non-empty subfields at all
+# are also fixed by default. All of the above run automatically --
+# nothing extra to pass:
+python3 marc_repair.py bad_bib_mandatoryfields.mrc
+
+# Turn any of the above off if you'd rather see them flagged (or left
+# alone) instead of fixed:
+python3 marc_repair.py bad_bib.mrc \
+    --no-strip-missing-required-a \
+    --no-strip-invalid-subfield-codes \
+    --no-fix-bad-indicators \
+    --no-strip-empty-fields
+
+# A record legitimately declares legacy MARC-8/ANSEL encoding. Convert it
+# to UTF-8 and flip the leader byte accordingly. Requires pymarc.
+python3 marc_repair.py bad_bib_badescape.mrc --transcode-marc8
+
+# Repair text that lost ALL its delimiters (Mode 2), and supply an
+# override for a field the automatic solver flagged as ambiguous.
+python3 marc_repair.py pasted_records.txt --overrides overrides.json
+
+# A file too large to comfortably hold in memory as a single string (many
+# millions of records) -- streamed automatically, no flag needed.
+python3 marc_repair.py huge_export.mrc
+```
+
+Run `python3 marc_repair.py --help` for the full flag reference — the
+module docstring at the top of `marc_repair.py` has the same content plus
+more detail on each mode.
+
+### Overrides file (Mode 2 only)
+
+If a record falls back to Mode 2 and a field's subfield split is
+genuinely ambiguous, it's reported `UNRESOLVED` on stderr with the tag and
+raw text still needing a split. Supply the correct split via a JSON file:
+
+```json
+{
+  "<record_index>": {
+    "<field_index>": {"indicators": "  ", "subfields": [["a", "..."], ["b", "..."]]}
+  }
+}
+```
+
+Both indices are 0-based, in the order records/fields appear. Run once
+without `--overrides` first, then fill this in from the stderr output and
+re-run with `--overrides overrides.json`.
+
+## Files
+
+| File | Purpose |
+|---|---|
+| `marc_repair.py` | The tool |
+| `required_a_tags.txt` | Editable tag list for `--strip-missing-required-a` — deliberately external, since which fields truly require `$a` is a cataloging-practice judgment call, not something to hardcode |
+| `requirements.txt` | Only `pymarc`, only needed for `--transcode-marc8` |
+| `tests/test_marc_repair.py` | pytest suite |
+| `tests/fixtures/` | Real (anonymized) MARC extracts exercising each defect class |
+
+## Testing
+
+```bash
+python3 -m venv venv
+./venv/bin/pip install pytest flake8 pymarc
+./venv/bin/python -m pytest tests/ -v
+./venv/bin/python -m flake8 --max-line-length=100 marc_repair.py
+```

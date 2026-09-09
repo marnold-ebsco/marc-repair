@@ -1,0 +1,44 @@
+# Tags where subfield $a is treated as required by --strip-missing-required-a.
+#
+# One tag per line. Blank lines and lines starting with # are ignored.
+#
+# This list is NOT part of the MARC21 standard -- LOC's own field
+# definitions (https://www.loc.gov/marc/bibliographic/) never mark a
+# subfield "mandatory," only Repeatable (R) / Not-Repeatable (NR). $a being
+# "required" is a cataloging convention that holds for heading fields (name
+# and subject added/main entries, where $a IS the entry element and the
+# field is meaningless without it) but does NOT hold everywhere.
+#
+# Narrowed to this specific set on request -- 240/630/653/654/655/730 and
+# the whole 8XX (series added entry) block are deliberately left off, not
+# just 505/260/264 (see below). Add tags back here if your cataloging
+# practice disagrees.
+#
+#   505 (Formatted Contents Note) officially supports an "enhanced" form
+#   using $t/$g/$r with no $a at all -- that's valid, not a defect.
+#
+#   260/264 (Publication, Distribution, etc.) commonly and validly omit $a
+#   (place of publication) while keeping $b/$c when the place is unknown.
+
+# 1XX -- main entry headings
+100
+110
+111
+130
+
+# 245 is deliberately NOT here: unlike a heading field, 245 is itself
+# mandatory in every MARC21 record, so a 245 missing $a is patched in
+# place (see add_default_245) rather than stripped and replaced -- see
+# its docstring.
+
+# 6XX -- subject added entries
+600
+610
+611
+650
+651
+
+# 7XX -- added entry headings
+700
+710
+711

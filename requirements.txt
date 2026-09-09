@@ -1,0 +1,3 @@
+# Only needed for --transcode-marc8 (MARC-8/ANSEL -> UTF-8 conversion).
+# Everything else in marc_repair.py is pure Python / stdlib only.
+pymarc>=5,<6
