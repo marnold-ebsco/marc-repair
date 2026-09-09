@@ -1,0 +1,39 @@
+# Tags treated as Not Repeatable (NR) by strip_duplicate_non_repeatable_fields.
+#
+# One tag per line. Blank lines and lines starting with # are ignored.
+#
+# A record with a second occurrence of one of these is genuinely broken
+# (MARC21 itself says only one may exist), and a strict downstream
+# importer -- FOLIO among them -- can reject the record outright or
+# handle the duplicate unpredictably. When this happens, the FIRST
+# occurrence is kept and every later one is removed and logged in full
+# (see FIXED/REQUIRES ATTENTION in the log) so a human can check whether
+# the removed content actually belonged under a different tag instead.
+#
+# This list is deliberately conservative -- only tags whose NR status is
+# well-established per LC's MARC21 Bibliographic field list
+# (https://www.loc.gov/marc/bibliographic/) are included. Extend it if
+# you find more in your own data; a tag that's genuinely repeatable but
+# listed here by mistake would cause real data loss.
+
+# Control fields
+001
+003
+005
+008
+
+# Numbers and codes
+010
+040
+
+# Main entry headings -- only one of 100/110/111 can legitimately be
+# present at all, but each is individually NR too
+100
+110
+111
+
+# Title fields
+130
+240
+245
+250

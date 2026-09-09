@@ -12,7 +12,7 @@ venv2/
 # checked in as exceptions below.
 *.mrc
 *.mrk
-*_log_*.log
+*.log
 !tests/fixtures/bad_length_bib_nashvillestate_bibs_202693_me.mrc
 !tests/fixtures/bad_missing245_bib_nashvillestate_bibs_202693_me.mrc
 !tests/fixtures/bad_bib_mandatoryfieldsnashvillestate_bibs_202693_me.mrc

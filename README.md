@@ -104,6 +104,13 @@ ten million.
 | Doubled proxy URLs, duplicate record identifiers | Always detected and logged, never auto-fixed — no safe correction to guess |
 | A single Hebrew/Arabic/Cyrillic/Greek/CJK character welded directly between two ASCII letters with no word boundary (e.g. real data found: "Schr" + one CJK character + "inger", almost certainly a miskeyed "ö") | Always detected and logged as `suspect_marc8_escape`, never auto-fixed — there's no safe way to guess the intended character; flag this to the source system/cataloger to correct |
 | Leader bytes 05/06/08/17 (record status, type of record, type of control, encoding level) outside their valid MARC21 code set | Defaulted (05→`c`, 06→`a`, 08/17→blank) by default; `--no-fix-invalid-leader-bytes` to leave as-is; logged |
+| Double-encoded UTF-8 ("mojibake" — see table below) in a record already declaring UTF-8 | Fixed by default (only when re-decoding as UTF-8 actually succeeds, which is effectively impossible by coincidence for text that wasn't really double-encoded); `--no-fix-mojibake` to leave as-is; logged as `fixed_mojibake` |
+| A Not-Repeatable field appears more than once (see `non_repeatable_tags.txt`, editable — e.g. two `245`s; real data found: a second "245" containing only `$a "2nd ed."`, almost certainly a mistagged `250`) | The first occurrence is kept, every later one removed by default so the record is loadable — a strict importer like FOLIO can reject or mishandle the duplicate otherwise; `--no-strip-duplicate-non-repeatable-fields` to leave as-is; the exact removed content is logged in full as `removed_non_repeatable_duplicate` under **FIXED/REQUIRES ATTENTION** (see Logging below) since real data was discarded |
+| 008 not exactly 40 characters | Padded with trailing spaces or truncated to 40 by default — a wrong-length 008 can make a record unloadable; `--no-fix-008-length` to leave as-is; the original content is logged in full as `fixed_008_length` under **FIXED/REQUIRES ATTENTION** |
+| A data field indicator character that isn't a digit or blank | Always detected and logged as `invalid_indicator_value` (INFORMATIONAL), never auto-fixed — no safe correction to guess |
+| Leader byte 07 (bibliographic level) outside its valid MARC21 code set | Always detected and logged as `invalid_bibliographic_level` (INFORMATIONAL), never auto-fixed |
+| An 880 field's `$6` linking subfield references a tag that doesn't exist elsewhere in the record | Always detected and logged as `dangling_880_link` (INFORMATIONAL), never auto-fixed — breaks the record's own romanized/original-script pairing |
+| A 020 (ISBN) or 022 (ISSN) `$a` whose check digit fails the standard checksum for its length | Always detected and logged as `invalid_isbn_issn_checksum` (INFORMATIONAL), never auto-fixed — no safe way to know which digit was wrong |
 | A record that can't be auto-repaired by either mode at all | Passed through to the output unchanged (never dropped), logged as `UNRESOLVED` |
 
 The output file always has the same number of records as the input.
@@ -145,18 +152,32 @@ Entries are grouped into sections, in this order:
 
 1. **NOT FIXED** — still needs your attention (warnings, unresolved
    passthroughs, unfixable oversized records)
-2. **DUPLICATE RECORDS** — the same identifier (`001`, or `907$a` if it
+2. **FIXED/REQUIRES ATTENTION** — the record is now loadable, but real
+   data was discarded or altered to get there, so it's worth a second
+   look even though nothing is technically broken anymore: a duplicate
+   Not-Repeatable field removed (`removed_non_repeatable_duplicate`,
+   with the exact removed content) or an 008 padded/truncated to the
+   required 40 characters (`fixed_008_length`, with the original
+   content). The goal throughout this tool is a MARC file that's
+   always loadable, even when that requires discarding something —
+   but that loss is always surfaced here, never silent.
+3. **DUPLICATE RECORDS** — the same identifier (`001`, or `907$a` if it
    looks like a Sierra bib number) used on more than one record
-3. **FIXED** — actively repaired this run, reconstructed from the
+4. **FIXED** — actively repaired this run, reconstructed from the
    record's own data
-4. **INFORMATIONAL** — also actively fixed this run, but via a fixed
-   default/constant rather than recovered from the record itself: a
-   placeholder 008 (`added_default_008`), a leader byte reset to a
-   default code (`leader_byte_defaulted`), the leader's entry-map
-   constant restored (`leader_entry_map_fixed`), `$9` promoted to `$0`
-   (`normalized_subfield_9_to_0`), typographic punctuation flattened
-   to plain ASCII (`normalized_smart_characters`), or a record
-   transcoded MARC-8 → UTF-8 (`transcoded_marc8`)
+5. **INFORMATIONAL** — either fixed via a fixed default/constant rather
+   than recovered from the record itself (a placeholder 008, a leader
+   byte reset to a default code, the leader's entry-map constant
+   restored, `$9` promoted to `$0`, typographic punctuation flattened,
+   a record transcoded MARC-8 → UTF-8, an unparseable tag renamed to
+   an unused 9XX slot), or a detect-only finding not urgent enough for
+   NOT FIXED (an indicator value outside `[0-9 ]`, leader byte 07
+   outside its valid code set, a dangling 880 `$6` link, an ISBN/ISSN
+   with a bad check digit). Pass `--no-log-informational` to omit this
+   entire section from the log file (the underlying fixes/detections
+   still run either way — only what gets written to the log changes;
+   useful since this is typically the highest-volume section, e.g.
+   every MARC-8 record transcoded)
 
 ...and by category within each section, with a header and count, so e.g.
 all 375 missing-008 findings sit together instead of scattered by record
@@ -265,6 +286,7 @@ re-run with `--overrides overrides.json`.
 |---|---|
 | `marc_repair.py` | The tool |
 | `required_a_tags.txt` | Editable tag list for `--strip-missing-required-a` — deliberately external, since which fields truly require `$a` is a cataloging-practice judgment call, not something to hardcode |
+| `non_repeatable_tags.txt` | Editable tag list for `--strip-duplicate-non-repeatable-fields` — deliberately conservative (only tags whose Not-Repeatable status is well-established); extend it if you find more in your own data |
 | `requirements.txt` | Only `pymarc`, only needed for `--transcode-marc8` |
 | `tests/test_marc_repair.py` | pytest suite |
 | `tests/fixtures/` | Real (anonymized) MARC extracts exercising each defect class |

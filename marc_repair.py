@@ -1289,8 +1289,16 @@ VALID_SUBFIELD_CODE_CHARS = set("abcdefghijklmnopqrstuvwxyz0123456789")
 # defaults applied to invalid values in each.
 LEADER_05_RECORD_STATUS_VALID = set("acdnp")
 LEADER_06_TYPE_OF_RECORD_VALID = set("acdefgijkmoprtzuvxy")
+LEADER_07_BIBLIOGRAPHIC_LEVEL_VALID = set("abcdims")
 LEADER_08_TYPE_OF_CONTROL_VALID = set("a ")
 LEADER_17_ENCODING_LEVEL_VALID = set("12345 78uz")
+
+#: A data field's indicators are almost universally either a digit
+#: (0-9) or blank across the whole MARC21 Bibliographic format -- this
+#: is a broad, format-wide rule rather than a per-tag table, so it
+#: generalizes across any file without needing an exhaustive per-field
+#: indicator-value reference. See `find_invalid_indicator_values`.
+VALID_INDICATOR_CHARS = set("0123456789 ")
 
 
 def fix_invalid_leader_bytes(parsed: ParsedRecord) -> list[str]:
@@ -1390,6 +1398,169 @@ def find_suspicious_fields(parsed: ParsedRecord) -> list[tuple[str, str]]:
                     f"tag {f.tag} has invalid subfield code {code!r}",
                 ))
     return warnings
+
+
+def find_invalid_indicator_values(parsed: ParsedRecord) -> list[tuple[str, str]]:
+    """Flag a data field indicator character that isn't a digit or
+    blank (see `VALID_INDICATOR_CHARS`). Skips the 900-999 locally-
+    defined range entirely -- MARC21 doesn't prescribe indicator
+    meanings there at all, so a local field's own convention (e.g.
+    this tool's own `remap_999_to_945` intentionally sets indicators
+    "ff" on 945, which isn't a digit/blank but also isn't wrong) can't
+    be judged against the standard fields' rule. Detect-only -- there's
+    no safe way to guess the intended value, and unlike a missing
+    indicator (see --fix-bad-indicators), a *present but wrong*
+    character isn't even structurally broken, just semantically
+    suspect. category: "invalid_indicator_value"."""
+    findings = []
+    for f in parsed.fields:
+        if f.is_control() or (f.tag.isdigit() and 900 <= int(f.tag) <= 999):
+            continue
+        for pos, ch in enumerate(f.indicators, start=1):
+            if ch not in VALID_INDICATOR_CHARS:
+                findings.append((
+                    "invalid_indicator_value",
+                    f"tag {f.tag} indicator {pos} is {ch!r}, not a digit or blank",
+                ))
+    return findings
+
+
+def find_invalid_bibliographic_level(parsed: ParsedRecord) -> list[tuple[str, str]]:
+    """Flag leader byte 07 (bibliographic level) outside its valid
+    MARC21 code set (see `LEADER_07_BIBLIOGRAPHIC_LEVEL_VALID`).
+    Detect-only, unlike the byte 05/06/08/17 checks in
+    `fix_invalid_leader_bytes` -- logged separately as informational
+    rather than defaulted. category: "invalid_bibliographic_level"."""
+    leader = parsed.leader
+    if len(leader) >= 8 and leader[7] not in LEADER_07_BIBLIOGRAPHIC_LEVEL_VALID:
+        return [(
+            "invalid_bibliographic_level",
+            f"leader byte 07 (bibliographic level) is {leader[7]!r}, not one "
+            f"of {sorted(LEADER_07_BIBLIOGRAPHIC_LEVEL_VALID)!r}",
+        )]
+    return []
+
+
+def find_dangling_880_links(parsed: ParsedRecord) -> list[tuple[str, str]]:
+    """Flag an 880 (Alternate Graphic Representation) field whose $6
+    linking subfield references a tag that doesn't exist anywhere else
+    in the record (e.g. $6 "245-01" but there's no 245). A dangling
+    link breaks the record's own romanized/original-script pairing --
+    detect-only, since there's no way to know what the correct link
+    should have been. category: "dangling_880_link"."""
+    findings = []
+    tags_present = {f.tag for f in parsed.fields}
+    for f in parsed.fields:
+        if f.tag != "880" or f.is_control():
+            continue
+        for code, data in f.subfields:
+            if code != "6":
+                continue
+            ref_tag = data[:3]
+            if ref_tag and ref_tag not in tags_present:
+                findings.append((
+                    "dangling_880_link",
+                    f"880 $6 references ={ref_tag}, but no field with that "
+                    f"tag exists in this record: {data!r}",
+                ))
+    return findings
+
+
+def _isbn10_checksum_valid(digits: str) -> bool:
+    if len(digits) != 10:
+        return False
+    total = 0
+    for i, ch in enumerate(digits):
+        if ch == "X" and i == 9:
+            value = 10
+        elif ch.isdigit():
+            value = int(ch)
+        else:
+            return False
+        total += (10 - i) * value
+    return total % 11 == 0
+
+
+def _isbn13_checksum_valid(digits: str) -> bool:
+    if len(digits) != 13 or not digits.isdigit():
+        return False
+    total = sum((1 if i % 2 == 0 else 3) * int(ch) for i, ch in enumerate(digits))
+    return total % 10 == 0
+
+
+def _issn_checksum_valid(digits: str) -> bool:
+    if len(digits) != 8:
+        return False
+    if not digits[:7].isdigit():
+        return False
+    total = sum((8 - i) * int(ch) for i, ch in enumerate(digits[:7]))
+    check = digits[7]
+    check_value = 10 if check == "X" else (int(check) if check.isdigit() else None)
+    if check_value is None:
+        return False
+    return (total + check_value) % 11 == 0
+
+
+def find_invalid_isbn_issn_checksums(parsed: ParsedRecord) -> list[tuple[str, str]]:
+    """Flag a 020 $a (ISBN) or 022 $a (ISSN) whose check digit doesn't
+    match the standard checksum algorithm for its length (ISBN-10:
+    mod-11 weighted 10..1, 'X' = 10; ISBN-13: mod-10 weighted 1/3
+    alternating; ISSN: mod-11 weighted 8..2 over 8 digits). A single
+    mis-keyed or corrupted digit is exactly what this catches. Ignores
+    values whose cleaned length doesn't match a known ISBN/ISSN form at
+    all (e.g. a qualifier-only $a) rather than guessing. Detect-only --
+    there's no safe way to know which digit was wrong. category:
+    "invalid_isbn_issn_checksum"."""
+    findings = []
+    for f in parsed.fields:
+        if f.is_control():
+            continue
+        if f.tag not in ("020", "022"):
+            continue
+        for code, data in f.subfields:
+            if code != "a":
+                continue
+            cleaned = re.sub(r"[^0-9Xx]", "", data).upper()
+            if f.tag == "020":
+                if len(cleaned) == 10 and not _isbn10_checksum_valid(cleaned):
+                    findings.append((
+                        "invalid_isbn_issn_checksum",
+                        f"020 $a {data!r}: ISBN-10 checksum invalid",
+                    ))
+                elif len(cleaned) == 13 and not _isbn13_checksum_valid(cleaned):
+                    findings.append((
+                        "invalid_isbn_issn_checksum",
+                        f"020 $a {data!r}: ISBN-13 checksum invalid",
+                    ))
+            elif len(cleaned) == 8 and not _issn_checksum_valid(cleaned):
+                findings.append((
+                    "invalid_isbn_issn_checksum",
+                    f"022 $a {data!r}: ISSN checksum invalid",
+                ))
+    return findings
+
+
+def fix_008_length(parsed: ParsedRecord) -> list[str]:
+    """008 must always be exactly 40 characters -- pad a too-short one
+    with trailing spaces (the generic "not specified" filler used
+    throughout 008's own byte positions) or truncate a too-long one.
+    This makes the record loadable (a strict importer like FOLIO can
+    reject a wrong-length 008 outright) but is still a real content
+    change worth a second look -- logged under FIXED/REQUIRES
+    ATTENTION (category "fixed_008_length"), with the original content
+    included in full, rather than as an ordinary fixed entry.
+    """
+    details = []
+    for f in parsed.fields:
+        if f.tag == "008" and f.content is not None and len(f.content) != 40:
+            original = f.content
+            f.content = original.ljust(40)[:40]
+            action = "padded" if len(original) < 40 else "truncated"
+            details.append(
+                f"008 was {len(original)} bytes (must be exactly 40); "
+                f"{action} to 40; original content: {original!r}"
+            )
+    return details
 
 
 # ---------------------------------------------------------------------------
@@ -1802,13 +1973,55 @@ DEFAULT_REQUIRED_A_TAGS_FILE = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "required_a_tags.txt"
 )
 
+DEFAULT_NON_REPEATABLE_TAGS_FILE = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "non_repeatable_tags.txt"
+)
 
-def load_required_a_tags(path: str) -> set[str]:
-    """Load the tag list for `strip_missing_required_a` from an external file
-    (one tag per line; blank lines and lines starting with # are ignored).
-    Kept outside the script on purpose -- which fields truly require $a is a
-    cataloging-practice judgment call, not something to hardcode; see
-    required_a_tags.txt for the reasoning and known exceptions (505, 260/264)."""
+
+def strip_duplicate_non_repeatable_fields(
+    parsed: ParsedRecord, non_repeatable_tags: set[str]
+) -> list[str]:
+    """A record must be loadable even when it's genuinely broken --
+    MARC21 designates some fields Not Repeatable (see
+    non_repeatable_tags.txt), and a second occurrence of one (e.g. two
+    245s) is exactly the kind of thing a strict importer like FOLIO can
+    reject outright or handle unpredictably. Keeps the FIRST occurrence
+    of each tag in `non_repeatable_tags`, removes every later one.
+
+    This discards real data, so unlike this tool's routine removals
+    (an empty field, an unusable subfield code) it's deliberately NOT
+    filed as an ordinary "fixed" entry -- see FIXED/REQUIRES ATTENTION
+    in `main`, which logs the exact removed field content so a human
+    can decide whether it needed to go somewhere else instead (real
+    example found in production data: a second "245" containing only
+    $a "2nd ed." -- almost certainly a mistagged 250, not a genuine
+    second title).
+    """
+    details = []
+    seen: set[str] = set()
+    kept = []
+    for f in parsed.fields:
+        if f.tag in non_repeatable_tags:
+            if f.tag in seen:
+                if f.is_control():
+                    body = f.content or ""
+                else:
+                    body = f.indicators + "".join(f"${c}{d}" for c, d in f.subfields)
+                details.append(f"removed duplicate ={f.tag}  {body}\t(non-repeatable field)")
+                continue
+            seen.add(f.tag)
+        kept.append(f)
+    parsed.fields = kept
+    return details
+
+
+def load_tag_list(path: str) -> set[str]:
+    """Load a tag list from an external file (one tag per line; blank
+    lines and lines starting with # are ignored) -- used for both
+    `strip_missing_required_a` (see required_a_tags.txt) and
+    `strip_duplicate_non_repeatable_fields` (see
+    non_repeatable_tags.txt). Kept outside the script on purpose --
+    both lists involve some judgment call, not something to hardcode."""
     tags = set()
     with open(path, encoding="utf-8") as fh:
         for line in fh:
@@ -2050,6 +2263,81 @@ def normalize_smart_characters(parsed: ParsedRecord) -> list[str]:
     return details
 
 
+#: Telltale characters produced when correctly-decoded UTF-8 text gets
+#: re-interpreted a second time as Latin-1/Windows-1252 and re-encoded
+#: (a common real-world corruption from Excel/CSV round-trips and some
+#: legacy export pipelines) -- e.g. "e" (U+00E9, 2 UTF-8 bytes C3 A9)
+#: becomes "Ã©" once those 2 bytes are misread as 2 separate Latin-1
+#: characters. "Ã" (U+00C3) is by far the most common marker since it's
+#: the lead byte for most accented Latin letters' UTF-8 encoding; "Â"
+#: and "â€" cover the rest of the common cases (nbsp/symbols, smart
+#: quotes/dashes). See `_fix_mojibake`.
+_MOJIBAKE_MARKERS = ("Ã", "Â", "â€")
+
+
+def _fix_mojibake(text: str) -> str | None:
+    """Return the corrected text if `text` looks like it was UTF-8 that
+    got double-encoded, or None if not (leave it alone). Re-encoding as
+    cp1252 (Windows-1252) recovers the original bytes 1:1 -- cp1252
+    rather than strict latin-1, since real-world mojibake overwhelmingly
+    comes from Windows "ANSI" tools (Excel, legacy exports) that use
+    cp1252's byte assignments for 0x80-0x9F (e.g. byte 0x9F is 'Y with
+    diaeresis' in cp1252 vs. an unprintable C1 control code in strict
+    latin-1); cp1252 is identical to latin-1 everywhere else, so this
+    is strictly more capable, never less. Decoding those bytes as
+    UTF-8 only succeeds if they were genuinely valid UTF-8 to begin
+    with -- an essentially impossible coincidence for text that wasn't
+    actually double-encoded, so a successful round-trip is strong
+    confirmation, not a guess."""
+    if not any(marker in text for marker in _MOJIBAKE_MARKERS):
+        return None
+    try:
+        candidate = text.encode("cp1252").decode("utf-8")
+    except (UnicodeDecodeError, UnicodeEncodeError):
+        return None
+    return candidate if candidate != text else None
+
+
+def find_and_fix_mojibake(parsed: ParsedRecord) -> list[str]:
+    """Fix double-encoded UTF-8 (see `_fix_mojibake`) in every subfield
+    and control field. Only meaningful for text that's actually meant
+    to be UTF-8 already -- skipped entirely for a record still
+    declaring MARC-8, where the same marker bytes can legitimately
+    appear as raw ANSEL diacritic codes and "fixing" them would corrupt
+    real content. Logged (category "fixed_mojibake") since it changes
+    real content, but this is a genuine, verified recovery of the
+    record's own original text (not a placeholder), so it's an
+    ordinary FIXED entry, not FIXED/REQUIRES ATTENTION.
+    """
+    if parsed.leader[9:10] != UNICODE_ENCODING_BYTE:
+        return []
+    details = []
+    for f in parsed.fields:
+        if f.is_control():
+            if f.content:
+                fixed = _fix_mojibake(f.content)
+                if fixed is not None:
+                    details.append(
+                        f"fixed double-encoded UTF-8 in ={f.tag}: {f.content!r} -> {fixed!r}"
+                    )
+                    f.content = fixed
+        else:
+            new_subfields = []
+            changed_codes = []
+            for code, data in f.subfields:
+                fixed = _fix_mojibake(data)
+                if fixed is not None:
+                    changed_codes.append(code)
+                    new_subfields.append((code, fixed))
+                else:
+                    new_subfields.append((code, data))
+            if changed_codes:
+                f.subfields = new_subfields
+                codes = ",".join(f"${c}" for c in changed_codes)
+                details.append(f"fixed double-encoded UTF-8 in ={f.tag} {codes}")
+    return details
+
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
@@ -2160,33 +2448,52 @@ class LogEntry:
 #: out separately from fixes that reconstructed the record's own
 #: original content field-by-field rather than applying a systematic,
 #: file-wide transformation.
-_DEDICATED_SECTIONS: dict[str, tuple[int, str]] = {
-    "duplicate_identifier": (1, "DUPLICATE RECORDS"),
-    "added_default_008": (3, "INFORMATIONAL"),
-    "leader_byte_defaulted": (3, "INFORMATIONAL"),
-    "leader_entry_map_fixed": (3, "INFORMATIONAL"),
-    "normalized_subfield_9_to_0": (3, "INFORMATIONAL"),
-    "invalid_tag": (3, "INFORMATIONAL"),
-    "normalized_smart_characters": (3, "INFORMATIONAL"),
-    "transcoded_marc8": (3, "INFORMATIONAL"),
+#: Categories that are both auto-fixed AND still worth a human's
+#: attention -- unlike ordinary FIXED entries, these discard or alter
+#: enough that the original (bad) data is worth a second look, even
+#: though the record is now loadable. Sits right below NOT FIXED: not
+#: as urgent as something left broken, but more urgent than a routine
+#: fix.
+_FIXED_REQUIRES_ATTENTION = {
+    "removed_non_repeatable_duplicate",
+    "fixed_008_length",
 }
+
+_DEDICATED_SECTIONS: dict[str, tuple[int, str]] = {
+    "duplicate_identifier": (2, "DUPLICATE RECORDS"),
+    "added_default_008": (4, "INFORMATIONAL"),
+    "leader_byte_defaulted": (4, "INFORMATIONAL"),
+    "leader_entry_map_fixed": (4, "INFORMATIONAL"),
+    "normalized_subfield_9_to_0": (4, "INFORMATIONAL"),
+    "invalid_tag": (4, "INFORMATIONAL"),
+    "normalized_smart_characters": (4, "INFORMATIONAL"),
+    "transcoded_marc8": (4, "INFORMATIONAL"),
+    "invalid_indicator_value": (4, "INFORMATIONAL"),
+    "invalid_bibliographic_level": (4, "INFORMATIONAL"),
+    "dangling_880_link": (4, "INFORMATIONAL"),
+    "invalid_isbn_issn_checksum": (4, "INFORMATIONAL"),
+}
+for _cat in _FIXED_REQUIRES_ATTENTION:
+    _DEDICATED_SECTIONS[_cat] = (1, "FIXED/REQUIRES ATTENTION")
+del _cat
 
 
 def _section_for(entry: LogEntry) -> tuple[int, str]:
-    """(sort_order, section_label) for `entry` -- NOT FIXED, then any
-    dedicated sections (see `_DEDICATED_SECTIONS`), then FIXED, then
-    INFORMATIONAL."""
+    """(sort_order, section_label) for `entry` -- NOT FIXED, then
+    FIXED/REQUIRES ATTENTION, then any other dedicated sections (see
+    `_DEDICATED_SECTIONS`), then FIXED, then INFORMATIONAL."""
     dedicated = _DEDICATED_SECTIONS.get(entry.category)
     if dedicated is not None:
         return dedicated
-    return (2, "FIXED") if entry.fixed else (0, "NOT FIXED")
+    return (3, "FIXED") if entry.fixed else (0, "NOT FIXED")
 
 
 def write_log(path: str, entries: list[LogEntry]) -> None:
-    """Write `entries` grouped into sections (NOT FIXED, then any dedicated
-    sections like DUPLICATE RECORDS, then FIXED, then INFORMATIONAL at the
-    bottom -- see `_section_for`) and then by category within each, with a
-    header per group -- so a run with (say) 375 missing-008 warnings and 7
+    """Write `entries` grouped into sections -- NOT FIXED, then FIXED/
+    REQUIRES ATTENTION, then any other dedicated sections like DUPLICATE
+    RECORDS, then FIXED, then INFORMATIONAL at the bottom -- see
+    `_section_for`) and then by category within each, with a header per
+    group -- so a run with (say) 375 missing-008 warnings and 7
     doubled-proxy-URL warnings shows them as two clearly labeled,
     contiguous blocks instead of interleaved in whatever order the
     records happened to come in."""
@@ -2351,6 +2658,61 @@ def main(argv: list[str] | None = None) -> int:
         help=f"tag list for the default $a-required-fields removal (see "
         f"--no-strip-missing-required-a), one tag per line "
         f"(default: {DEFAULT_REQUIRED_A_TAGS_FILE})",
+    )
+    parser.add_argument(
+        "--no-strip-duplicate-non-repeatable-fields",
+        dest="strip_duplicate_non_repeatable_fields",
+        action="store_false",
+        default=True,
+        help="do NOT remove later occurrences of a Not-Repeatable field "
+        "(from the tag list in --non-repeatable-tags-file, e.g. a "
+        "second 245) that appears more than once. By default all but "
+        "the first occurrence ARE removed -- a strict importer like "
+        "FOLIO can reject or mishandle the duplicate otherwise -- and "
+        "every removed field's exact content is logged in full under "
+        "FIXED/REQUIRES ATTENTION (see --log)",
+    )
+    parser.add_argument(
+        "--non-repeatable-tags-file",
+        default=DEFAULT_NON_REPEATABLE_TAGS_FILE,
+        help=f"tag list for the default duplicate-non-repeatable-field "
+        f"removal (see --no-strip-duplicate-non-repeatable-fields), one "
+        f"tag per line (default: {DEFAULT_NON_REPEATABLE_TAGS_FILE})",
+    )
+    parser.add_argument(
+        "--no-fix-008-length",
+        dest="fix_008_length",
+        action="store_false",
+        default=True,
+        help="do NOT pad/truncate an 008 field that isn't exactly 40 "
+        "characters. By default this IS done -- a wrong-length 008 "
+        "can make a record unloadable in strict importers -- and "
+        "logged in full under FIXED/REQUIRES ATTENTION (see --log)",
+    )
+    parser.add_argument(
+        "--no-fix-mojibake",
+        dest="fix_mojibake",
+        action="store_false",
+        default=True,
+        help="do NOT fix double-encoded UTF-8 (\"mojibake\", e.g. text "
+        "read once as UTF-8 then mis-read again as Latin-1) in "
+        "records already declaring UTF-8. By default this IS fixed "
+        "and logged (see --log); only applied when re-decoding the "
+        "text as UTF-8 actually succeeds, which is effectively "
+        "impossible by coincidence for text that wasn't genuinely "
+        "double-encoded",
+    )
+    parser.add_argument(
+        "--no-log-informational",
+        dest="log_informational",
+        action="store_false",
+        default=True,
+        help="omit the INFORMATIONAL section entirely from the log "
+        "file. On by default -- these are typically the highest-volume "
+        "categories (e.g. every MARC-8 record transcoded), so this is "
+        "for a leaner log when you don't need that detail; the "
+        "underlying fixes/detections still run and affect the output "
+        "either way, only the log content changes",
     )
     parser.add_argument(
         "--no-strip-invalid-subfield-codes",
@@ -2527,8 +2889,13 @@ def main(argv: list[str] | None = None) -> int:
     out_path = args.out or _default_output_path(args.input)
     run_ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     required_a_tags = (
-        load_required_a_tags(args.required_a_tags_file)
+        load_tag_list(args.required_a_tags_file)
         if args.strip_missing_required_a
+        else set()
+    )
+    non_repeatable_tags = (
+        load_tag_list(args.non_repeatable_tags_file)
+        if args.strip_duplicate_non_repeatable_fields
         else set()
     )
     ensure_specs = [parse_ensure_field_spec(s) for s in args.ensure_field]
@@ -2645,6 +3012,10 @@ def main(argv: list[str] | None = None) -> int:
                         if transcoded:
                             rec_id = record_identifier(parsed)
                             log("transcoded_marc8", True, i, rec_id, "transcoded MARC-8 -> UTF-8")
+                if args.fix_mojibake:
+                    rec_id = record_identifier(parsed)
+                    for detail in find_and_fix_mojibake(parsed):
+                        log("fixed_mojibake", True, i, rec_id, detail)
                 if args.fix_invalid_leader_bytes:
                     rec_id = record_identifier(parsed)
                     for detail in fix_invalid_leader_bytes(parsed):
@@ -2673,6 +3044,12 @@ def main(argv: list[str] | None = None) -> int:
                         log("removed_missing_a", True, i, rec_id, detail)
                 if args.strip_empty_fields:
                     strip_empty_fields(parsed)
+                if args.strip_duplicate_non_repeatable_fields:
+                    rec_id = record_identifier(parsed)
+                    for detail in strip_duplicate_non_repeatable_fields(
+                        parsed, non_repeatable_tags
+                    ):
+                        log("removed_non_repeatable_duplicate", True, i, rec_id, detail)
                 for tag, indicators, subfields in ensure_specs:
                     if ensure_field(parsed, tag, indicators, subfields):
                         rec_id = record_identifier(parsed)
@@ -2685,6 +3062,18 @@ def main(argv: list[str] | None = None) -> int:
                     rec_id = record_identifier(parsed)
                     for detail in add_default_008(parsed):
                         log("added_default_008", True, i, rec_id, detail)
+                if args.fix_008_length:
+                    rec_id = record_identifier(parsed)
+                    for detail in fix_008_length(parsed):
+                        log("fixed_008_length", True, i, rec_id, detail)
+                for category, detail in (
+                    find_invalid_indicator_values(parsed)
+                    + find_invalid_bibliographic_level(parsed)
+                    + find_dangling_880_links(parsed)
+                    + find_invalid_isbn_issn_checksums(parsed)
+                ):
+                    rec_id = record_identifier(parsed)
+                    log(category, False, i, rec_id, detail)
                 for category, detail in find_suspicious_fields(parsed):
                     # non_numeric_tag is suppressed here when
                     # --fix-invalid-tags is on (the default): it's
@@ -2788,6 +3177,13 @@ def main(argv: list[str] | None = None) -> int:
     dup_ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     log_entries.extend(find_duplicate_identifiers(id_records, dup_ts))
 
+    if not args.log_informational:
+        # --no-log-informational: the underlying fixes/detections still
+        # ran and affected the output regardless -- this only trims
+        # what gets written to the log file, typically the
+        # highest-volume section (e.g. every MARC-8 record transcoded).
+        log_entries = [e for e in log_entries if _section_for(e)[1] != "INFORMATIONAL"]
+
     n_log_lines = len(log_entries)
     if n_log_lines:
         # Not-fixable/not-fixed-in-this-run issues first (still need your
@@ -2796,7 +3192,12 @@ def main(argv: list[str] | None = None) -> int:
         # findings sit together instead of scattered by record order.
         log_path = args.log or os.path.splitext(out_path)[0] + f"_log_{run_ts}.log"
         write_log(log_path, log_entries)
-        n_not_fixed = sum(1 for e in log_entries if not e.fixed)
+        # Based on which section an entry actually lands in, not the
+        # raw `fixed` flag -- INFORMATIONAL can now include detect-only
+        # findings (e.g. invalid_indicator_value) logged with
+        # fixed=False for correct section placement, which would
+        # otherwise inflate this "not fixed" count.
+        n_not_fixed = sum(1 for e in log_entries if _section_for(e)[1] == "NOT FIXED")
         n_fixed = n_log_lines - n_not_fixed
         print(
             f"{n_log_lines} log line(s) written to {log_path} "

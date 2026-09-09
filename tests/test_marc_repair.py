@@ -819,7 +819,7 @@ class TestRecordIdentifier:
 
 class TestStripMissingRequiredA:
     def test_default_tag_list_excludes_505_and_260(self):
-        tags = m.load_required_a_tags(m.DEFAULT_REQUIRED_A_TAGS_FILE)
+        tags = m.load_tag_list(m.DEFAULT_REQUIRED_A_TAGS_FILE)
         assert "505" not in tags
         assert "260" not in tags
         assert "264" not in tags
@@ -871,7 +871,7 @@ class TestStripMissingRequiredA:
     def test_real_fixture_505_and_260_survive(self):
         text = _read("bad_bib_mandatoryfieldsnashvillestate_bibs_202693_me.mrc")
         results = m.repair_text(text)
-        required_a_tags = m.load_required_a_tags(m.DEFAULT_REQUIRED_A_TAGS_FILE)
+        required_a_tags = m.load_tag_list(m.DEFAULT_REQUIRED_A_TAGS_FILE)
         for parsed in results:
             m.strip_missing_required_a(parsed, required_a_tags)
         all_tags = {f.tag for parsed in results for f in parsed.fields}
@@ -1358,13 +1358,13 @@ class TestAddDefault008:
         out = tmp_path / "out.mrc"
         log = tmp_path / "run.log"
         rc = m.main([
-            str(src), "-o", str(out), "--ensure-field", "008:realcontent" + "x" * 30,
+            str(src), "-o", str(out), "--ensure-field", "008:realcontent" + "x" * 29,
             "--log", str(log),
         ])
         assert rc == 0
         results = m.repair_text(m._read_text(str(out)))
         field008 = next(f for f in results[0].fields if f.tag == "008")
-        assert field008.content == "realcontent" + "x" * 30
+        assert field008.content == "realcontent" + "x" * 29
 
 
 # ---------------------------------------------------------------------------
@@ -1778,6 +1778,437 @@ class TestNormalizeSmartCharacters:
         results = m.repair_text(m._read_text(str(out)))
         title_field = next(f for f in results[0].fields if f.tag == "520")
         assert title_field.subfields == [("a", "It’s great.")]
+
+
+# ---------------------------------------------------------------------------
+# find_and_fix_mojibake -- double-encoded UTF-8
+# ---------------------------------------------------------------------------
+
+class TestFindAndFixMojibake:
+    def _record(self, data, leader9="a"):
+        leader = list(_SYNTHETIC_LEADER)
+        leader[9] = leader9
+        return m.ParsedRecord(
+            leader="".join(leader),
+            entries=[],
+            fields=[m.Field_("500", "  ", [("a", data)])],
+        )
+
+    def test_fixes_double_encoded_copyright_symbol(self):
+        # "©2024" (U+00A9, U+00E9 doesn't apply here) double-encoded:
+        # © is UTF-8 bytes 0xC2 0xA9, mis-read as cp1252 gives "Â©"
+        parsed = self._record("Â©2024")
+        details = m.find_and_fix_mojibake(parsed)
+        assert len(details) == 1
+        assert parsed.fields[0].subfields == [("a", "©2024")]
+
+    def test_fixes_double_encoded_eszett(self):
+        # "Großbritannien" -- ß is UTF-8 bytes 0xC3 0x9F; mis-read as
+        # cp1252 (not strict latin-1, where 0x9F is an unprintable
+        # control code) gives "GroÃŸbritannien" with a capital Y-with-
+        # diaeresis standing in for ß. This is why cp1252, not latin-1,
+        # is used for the reverse re-encode in _fix_mojibake.
+        parsed = self._record("GroÃŸbritannien")
+        details = m.find_and_fix_mojibake(parsed)
+        assert len(details) == 1
+        assert parsed.fields[0].subfields == [("a", "Großbritannien")]
+
+    def test_leaves_normal_text_untouched(self):
+        parsed = self._record("Ordinary title with no issues.")
+        assert m.find_and_fix_mojibake(parsed) == []
+
+    def test_skips_records_still_declaring_marc8(self):
+        # the marker characters can legitimately appear as raw ANSEL
+        # byte values in real MARC-8 -- must not be "fixed" there
+        parsed = self._record("GroÃŸbritannien", leader9=" ")
+        assert m.find_and_fix_mojibake(parsed) == []
+        assert parsed.fields[0].subfields == [("a", "GroÃŸbritannien")]
+
+    def test_control_field_mojibake(self):
+        leader = list(_SYNTHETIC_LEADER)
+        parsed = m.ParsedRecord(
+            leader="".join(leader),
+            entries=[],
+            fields=[m.Field_("500", None, None, content="GroÃŸbritannien")],
+        )
+        details = m.find_and_fix_mojibake(parsed)
+        assert len(details) == 1
+        assert parsed.fields[0].content == "Großbritannien"
+
+    def test_runs_by_default_via_cli(self, tmp_path):
+        parsed = m.ParsedRecord(
+            leader=_SYNTHETIC_LEADER,
+            entries=[],
+            fields=[
+                m.Field_("008", None, None, content="x" * 40),
+                m.Field_("500", "  ", [("a", "GroÃŸbritannien")]),
+            ],
+        )
+        src = tmp_path / "moji.mrc"
+        src.write_bytes(m.assemble_marc(parsed))
+        out = tmp_path / "out.mrc"
+        log = tmp_path / "run.log"
+        rc = m.main([str(src), "-o", str(out), "--log", str(log)])
+        assert rc == 0
+        content = log.read_text(encoding="utf-8")
+        assert "=== FIXED: fixed_mojibake (1) ===" in content
+        results = m.repair_text(m._read_text(str(out)))
+        field = next(f for f in results[0].fields if f.tag == "500")
+        assert field.subfields == [("a", "Großbritannien")]
+
+    def test_no_fix_mojibake_flag_skips_it(self, tmp_path):
+        parsed = m.ParsedRecord(
+            leader=_SYNTHETIC_LEADER,
+            entries=[],
+            fields=[
+                m.Field_("008", None, None, content="x" * 40),
+                m.Field_("500", "  ", [("a", "GroÃŸbritannien")]),
+            ],
+        )
+        src = tmp_path / "moji.mrc"
+        src.write_bytes(m.assemble_marc(parsed))
+        out = tmp_path / "out.mrc"
+        rc = m.main([str(src), "-o", str(out), "--no-fix-mojibake"])
+        assert rc == 0
+        results = m.repair_text(m._read_text(str(out)))
+        field = next(f for f in results[0].fields if f.tag == "500")
+        assert field.subfields == [("a", "GroÃŸbritannien")]
+
+
+# ---------------------------------------------------------------------------
+# strip_duplicate_non_repeatable_fields
+# ---------------------------------------------------------------------------
+
+class TestStripDuplicateNonRepeatableFields:
+    def test_removes_second_245_keeps_first(self):
+        # real production example: record u52599, a second "245"
+        # containing only an edition statement (should have been 250)
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[
+                m.Field_("245", "14", [("a", "The geology of Nashville /")]),
+                m.Field_("245", "  ", [("a", "2nd ed.")]),
+            ],
+        )
+        details = m.strip_duplicate_non_repeatable_fields(parsed, {"245"})
+        assert len(details) == 1
+        assert "2nd ed." in details[0]
+        remaining = [f for f in parsed.fields if f.tag == "245"]
+        assert len(remaining) == 1
+        assert remaining[0].subfields == [("a", "The geology of Nashville /")]
+
+    def test_leaves_single_occurrence_alone(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[m.Field_("245", "00", [("a", "Title.")])],
+        )
+        assert m.strip_duplicate_non_repeatable_fields(parsed, {"245"}) == []
+        assert len(parsed.fields) == 1
+
+    def test_leaves_tags_not_in_the_list_alone(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[
+                m.Field_("650", " 0", [("a", "Subject one")]),
+                m.Field_("650", " 0", [("a", "Subject two")]),
+            ],
+        )
+        assert m.strip_duplicate_non_repeatable_fields(parsed, {"245"}) == []
+        assert len(parsed.fields) == 2
+
+    def test_runs_by_default_via_cli_logged_as_fixed_requires_attention(self, tmp_path):
+        parsed = m.ParsedRecord(
+            leader=_SYNTHETIC_LEADER,
+            entries=[],
+            fields=[
+                m.Field_("008", None, None, content="x" * 40),
+                m.Field_("245", "14", [("a", "Real title /")]),
+                m.Field_("245", "  ", [("a", "2nd ed.")]),
+            ],
+        )
+        src = tmp_path / "dup245.mrc"
+        src.write_bytes(m.assemble_marc(parsed))
+        out = tmp_path / "out.mrc"
+        log = tmp_path / "run.log"
+        rc = m.main([str(src), "-o", str(out), "--log", str(log)])
+        assert rc == 0
+        content = log.read_text(encoding="utf-8")
+        assert "=== FIXED/REQUIRES ATTENTION: removed_non_repeatable_duplicate (1) ===" in content
+        assert "2nd ed." in content
+        results = m.repair_text(m._read_text(str(out)))
+        remaining = [f for f in results[0].fields if f.tag == "245"]
+        assert len(remaining) == 1
+
+    def test_no_strip_flag_leaves_duplicates(self, tmp_path):
+        parsed = m.ParsedRecord(
+            leader=_SYNTHETIC_LEADER,
+            entries=[],
+            fields=[
+                m.Field_("008", None, None, content="x" * 40),
+                m.Field_("245", "14", [("a", "Real title /")]),
+                m.Field_("245", "  ", [("a", "2nd ed.")]),
+            ],
+        )
+        src = tmp_path / "dup245.mrc"
+        src.write_bytes(m.assemble_marc(parsed))
+        out = tmp_path / "out.mrc"
+        rc = m.main([
+            str(src), "-o", str(out), "--no-strip-duplicate-non-repeatable-fields",
+        ])
+        assert rc == 0
+        results = m.repair_text(m._read_text(str(out)))
+        remaining = [f for f in results[0].fields if f.tag == "245"]
+        assert len(remaining) == 2
+
+
+# ---------------------------------------------------------------------------
+# fix_008_length
+# ---------------------------------------------------------------------------
+
+class TestFix008Length:
+    def test_pads_short_008(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[m.Field_("008", None, None, content="x" * 30)],
+        )
+        details = m.fix_008_length(parsed)
+        assert len(details) == 1
+        assert "padded" in details[0]
+        field008 = parsed.fields[0]
+        assert len(field008.content) == 40
+        assert field008.content == "x" * 30 + " " * 10
+
+    def test_truncates_long_008(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[m.Field_("008", None, None, content="x" * 45)],
+        )
+        details = m.fix_008_length(parsed)
+        assert len(details) == 1
+        assert "truncated" in details[0]
+        assert parsed.fields[0].content == "x" * 40
+
+    def test_leaves_correct_length_alone(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[m.Field_("008", None, None, content="x" * 40)],
+        )
+        assert m.fix_008_length(parsed) == []
+
+    def test_runs_by_default_via_cli_logged_as_fixed_requires_attention(self, tmp_path):
+        parsed = m.ParsedRecord(
+            leader=_SYNTHETIC_LEADER,
+            entries=[],
+            fields=[
+                m.Field_("008", None, None, content="x" * 35),
+                m.Field_("245", "00", [("a", "Title.")]),
+            ],
+        )
+        src = tmp_path / "short008.mrc"
+        src.write_bytes(m.assemble_marc(parsed))
+        out = tmp_path / "out.mrc"
+        log = tmp_path / "run.log"
+        rc = m.main([str(src), "-o", str(out), "--log", str(log)])
+        assert rc == 0
+        content = log.read_text(encoding="utf-8")
+        assert "=== FIXED/REQUIRES ATTENTION: fixed_008_length (1) ===" in content
+        results = m.repair_text(m._read_text(str(out)))
+        field008 = next(f for f in results[0].fields if f.tag == "008")
+        assert len(field008.content) == 40
+
+
+# ---------------------------------------------------------------------------
+# find_invalid_indicator_values
+# ---------------------------------------------------------------------------
+
+class TestFindInvalidIndicatorValues:
+    def test_flags_non_digit_non_blank_indicator(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[m.Field_("245", "X0", [("a", "Title.")])],
+        )
+        findings = m.find_invalid_indicator_values(parsed)
+        assert len(findings) == 1
+        assert findings[0][0] == "invalid_indicator_value"
+
+    def test_does_not_flag_digits_or_blanks(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[m.Field_("650", " 0", [("a", "Subject")])],
+        )
+        assert m.find_invalid_indicator_values(parsed) == []
+
+    def test_does_not_flag_locally_defined_9xx_fields(self):
+        # real false-positive found: this tool's own remap_999_to_945
+        # sets indicators "ff" on 945, which isn't a digit/blank but
+        # also isn't wrong -- MARC21 doesn't define indicator meanings
+        # for the 900-999 locally-defined range at all.
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[m.Field_("945", "ff", [("i", "12345")])],
+        )
+        assert m.find_invalid_indicator_values(parsed) == []
+
+    def test_control_fields_are_skipped(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[m.Field_("008", None, None, content="x" * 40)],
+        )
+        assert m.find_invalid_indicator_values(parsed) == []
+
+
+# ---------------------------------------------------------------------------
+# find_invalid_bibliographic_level
+# ---------------------------------------------------------------------------
+
+class TestFindInvalidBibliographicLevel:
+    def test_flags_invalid_byte_07(self):
+        leader = _VALID_LEADER[:7] + "9" + _VALID_LEADER[8:]
+        parsed = m.ParsedRecord(leader=leader, entries=[], fields=[])
+        findings = m.find_invalid_bibliographic_level(parsed)
+        assert len(findings) == 1
+        assert findings[0][0] == "invalid_bibliographic_level"
+
+    def test_valid_byte_07_not_flagged(self):
+        parsed = m.ParsedRecord(leader=_VALID_LEADER, entries=[], fields=[])
+        assert m.find_invalid_bibliographic_level(parsed) == []
+
+
+# ---------------------------------------------------------------------------
+# find_dangling_880_links
+# ---------------------------------------------------------------------------
+
+class TestFindDangling880Links:
+    def test_flags_reference_to_missing_field(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[m.Field_("880", "1 ", [("6", "245-01"), ("a", "Some title")])],
+        )
+        findings = m.find_dangling_880_links(parsed)
+        assert len(findings) == 1
+        assert findings[0][0] == "dangling_880_link"
+
+    def test_does_not_flag_valid_reference(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[
+                m.Field_("245", "00", [("a", "Title.")]),
+                m.Field_("880", "1 ", [("6", "245-01"), ("a", "Some title")]),
+            ],
+        )
+        assert m.find_dangling_880_links(parsed) == []
+
+
+# ---------------------------------------------------------------------------
+# find_invalid_isbn_issn_checksums
+# ---------------------------------------------------------------------------
+
+class TestFindInvalidIsbnIssnChecksums:
+    def test_flags_bad_isbn10_checksum(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[m.Field_("020", "  ", [("a", "0596000271")])],  # wrong check digit
+        )
+        findings = m.find_invalid_isbn_issn_checksums(parsed)
+        assert len(findings) == 1
+
+    def test_valid_isbn10_not_flagged(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[m.Field_("020", "  ", [("a", "0596000278")])],
+        )
+        assert m.find_invalid_isbn_issn_checksums(parsed) == []
+
+    def test_valid_isbn13_not_flagged(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[m.Field_("020", "  ", [("a", "9780596000271")])],
+        )
+        assert m.find_invalid_isbn_issn_checksums(parsed) == []
+
+    def test_flags_bad_issn_checksum(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[m.Field_("022", "  ", [("a", "03785956")])],  # wrong check digit
+        )
+        findings = m.find_invalid_isbn_issn_checksums(parsed)
+        assert len(findings) == 1
+
+    def test_valid_issn_not_flagged(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[m.Field_("022", "  ", [("a", "0378-5955")])],  # real ISSN
+        )
+        assert m.find_invalid_isbn_issn_checksums(parsed) == []
+
+    def test_ignores_non_isbn_length_values(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[m.Field_("020", "  ", [("z", "cancelled, no valid form")])],
+        )
+        assert m.find_invalid_isbn_issn_checksums(parsed) == []
+
+
+# ---------------------------------------------------------------------------
+# --no-log-informational
+# ---------------------------------------------------------------------------
+
+class TestNoLogInformational:
+    def test_omits_informational_section_by_default_included(self, tmp_path):
+        parsed = m.ParsedRecord(
+            leader=_SYNTHETIC_LEADER,
+            entries=[],
+            fields=[
+                m.Field_("008", None, None, content="x" * 40),
+                m.Field_("520", "  ", [("a", "It’s great.")]),
+            ],
+        )
+        src = tmp_path / "rec.mrc"
+        src.write_bytes(m.assemble_marc(parsed))
+        out = tmp_path / "out.mrc"
+        log = tmp_path / "run.log"
+        rc = m.main([str(src), "-o", str(out), "--log", str(log)])
+        assert rc == 0
+        assert "INFORMATIONAL" in log.read_text(encoding="utf-8")
+
+    def test_no_log_informational_omits_the_section(self, tmp_path):
+        parsed = m.ParsedRecord(
+            leader=_SYNTHETIC_LEADER,
+            entries=[],
+            fields=[
+                m.Field_("008", None, None, content="x" * 40),
+                m.Field_("520", "  ", [("a", "It’s great.")]),
+            ],
+        )
+        src = tmp_path / "rec.mrc"
+        src.write_bytes(m.assemble_marc(parsed))
+        out = tmp_path / "out.mrc"
+        log = tmp_path / "run.log"
+        rc = m.main([str(src), "-o", str(out), "--no-log-informational", "--log", str(log)])
+        assert rc == 0
+        assert "INFORMATIONAL" not in log.read_text(encoding="utf-8")
+        # the fix itself still ran, even though it's not in the log
+        results = m.repair_text(m._read_text(str(out)))
+        field = next(f for f in results[0].fields if f.tag == "520")
+        assert field.subfields == [("a", "It's great.")]
 
 
 class TestNonNumericTagRoundTrip:
