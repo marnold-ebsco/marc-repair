@@ -2510,68 +2510,85 @@ class LogEntry:
         return f"{tag}\t{self.category}\t{self.ts}\t{rec}\t{self.detail}"
 
 
-#: Categories that get their own top-level section, regardless of their
-#: `fixed` flag, at a fixed position in the log (see `_section_for`'s sort
-#: order): duplicate identifiers sit between NOT FIXED and FIXED (neither
-#: a corrected defect nor an unfixable structural problem, but a distinct
-#: thing worth its own block); the INFORMATIONAL categories sit at the
-#: very bottom -- these ARE real, successful fixes (hence "fixed" log
-#: entries elsewhere), but ones applied via a fixed default/constant
-#: rather than recovered from the record's own data (a placeholder 008, a
-#: leader byte reset to a default code, $9 promoted to $0, the leader's
-#: entry-map constant restored, an unparseable tag renamed to an unused
-#: 9XX slot, typographic punctuation flattened via a fixed substitution
-#: table, or a whole record transcoded MARC-8 -> UTF-8) -- worth calling
-#: out separately from fixes that reconstructed the record's own
-#: original content field-by-field rather than applying a systematic,
-#: file-wide transformation.
-#: Categories that are both auto-fixed AND still worth a human's
-#: attention -- unlike ordinary FIXED entries, these discard or alter
-#: enough that the original (bad) data is worth a second look, even
-#: though the record is now loadable. Sits right below NOT FIXED: not
-#: as urgent as something left broken, but more urgent than a routine
-#: fix.
+#: There is no plain "FIXED" section -- every category that's ever
+#: logged with fixed=True is explicitly placed in one of the two
+#: sections below (or DUPLICATE RECORDS), so a reader never has to
+#: wonder which bucket a given fix landed in.
+#:
+#: FIXED/REQUIRES ATTENTION: auto-fixed AND still worth a human's
+#: attention -- these discard or alter enough real data (or add
+#: content a human should double-check) that it's worth a second look
+#: even though the record is now loadable. Sits right below NOT
+#: FIXED: not as urgent as something left broken, but more urgent
+#: than a routine fix.
 _FIXED_REQUIRES_ATTENTION = {
     "removed_non_repeatable_duplicate",
     "fixed_008_length",
+    "removed_invalid_subfield",
+    "removed_missing_a",
+    "added_field",
+}
+
+#: INFORMATIONAL, at the very bottom: a fix applied via a fixed
+#: default/constant or a systematic, file-wide transformation rather
+#: than judgment applied to that record's own content (a placeholder
+#: 008/245, a leader byte reset to a default code, $9 promoted to $0,
+#: the leader's entry-map constant restored, an unparseable tag
+#: renamed to an unused 9XX slot, typographic punctuation flattened,
+#: a record transcoded MARC-8 -> UTF-8, double-encoded UTF-8
+#: corrected, 999 remapped to 945, an oversized record's leader
+#: sentinel applied, short indicators padded with spaces) -- or a
+#: detect-only finding not urgent enough for NOT FIXED.
+_INFORMATIONAL = {
+    "added_default_008",
+    "added_default_245",
+    "leader_byte_defaulted",
+    "leader_entry_map_fixed",
+    "normalized_subfield_9_to_0",
+    "invalid_tag",
+    "normalized_smart_characters",
+    "transcoded_marc8",
+    "invalid_indicator_value",
+    "invalid_bibliographic_level",
+    "dangling_880_link",
+    "invalid_isbn_issn_checksum",
+    "fixed_mojibake",
+    "remapped_999_to_945",
+    "oversized_sentinel_fixed",
+    "padded_indicators",
 }
 
 _DEDICATED_SECTIONS: dict[str, tuple[int, str]] = {
     "duplicate_identifier": (3, "DUPLICATE RECORDS"),
-    "added_default_008": (4, "INFORMATIONAL"),
-    "leader_byte_defaulted": (4, "INFORMATIONAL"),
-    "leader_entry_map_fixed": (4, "INFORMATIONAL"),
-    "normalized_subfield_9_to_0": (4, "INFORMATIONAL"),
-    "invalid_tag": (4, "INFORMATIONAL"),
-    "normalized_smart_characters": (4, "INFORMATIONAL"),
-    "transcoded_marc8": (4, "INFORMATIONAL"),
-    "invalid_indicator_value": (4, "INFORMATIONAL"),
-    "invalid_bibliographic_level": (4, "INFORMATIONAL"),
-    "dangling_880_link": (4, "INFORMATIONAL"),
-    "invalid_isbn_issn_checksum": (4, "INFORMATIONAL"),
 }
 for _cat in _FIXED_REQUIRES_ATTENTION:
     _DEDICATED_SECTIONS[_cat] = (1, "FIXED/REQUIRES ATTENTION")
+for _cat in _INFORMATIONAL:
+    _DEDICATED_SECTIONS[_cat] = (4, "INFORMATIONAL")
 del _cat
 
 
 def _section_for(entry: LogEntry) -> tuple[int, str]:
     """(sort_order, section_label) for `entry` -- NOT FIXED, then
-    FIXED/REQUIRES ATTENTION, then FIXED, then any other dedicated
-    sections (see `_DEDICATED_SECTIONS`) like DUPLICATE RECORDS, then
-    INFORMATIONAL."""
+    FIXED/REQUIRES ATTENTION, then any other dedicated sections (see
+    `_DEDICATED_SECTIONS`) like DUPLICATE RECORDS, then INFORMATIONAL.
+    There is no plain "FIXED" section -- an unrecognized category
+    logged with fixed=True falls back to INFORMATIONAL rather than a
+    generic bucket, so every new fix category must be added to
+    `_FIXED_REQUIRES_ATTENTION` or `_INFORMATIONAL` above to land
+    somewhere deliberate."""
     dedicated = _DEDICATED_SECTIONS.get(entry.category)
     if dedicated is not None:
         return dedicated
-    return (2, "FIXED") if entry.fixed else (0, "NOT FIXED")
+    return (4, "INFORMATIONAL") if entry.fixed else (0, "NOT FIXED")
 
 
 def write_log(path: str, entries: list[LogEntry]) -> None:
     """Write `entries` grouped into sections -- NOT FIXED, then FIXED/
-    REQUIRES ATTENTION, then FIXED, then any other dedicated sections
-    like DUPLICATE RECORDS, then INFORMATIONAL at the bottom -- see
-    `_section_for`) and then by category within each, with a header per
-    group -- so a run with (say) 375 missing-008 warnings and 7
+    REQUIRES ATTENTION, then DUPLICATE RECORDS, then INFORMATIONAL at
+    the bottom (there is no plain "FIXED" section -- see
+    `_section_for`) -- and then by category within each, with a header
+    per group -- so a run with (say) 375 missing-008 warnings and 7
     doubled-proxy-URL warnings shows them as two clearly labeled,
     contiguous blocks instead of interleaved in whatever order the
     records happened to come in."""

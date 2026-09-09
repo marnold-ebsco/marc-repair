@@ -441,10 +441,10 @@ class TestFixBadIndicators:
         assert rc == 0
         lines = log.read_text(encoding="utf-8").splitlines()
         not_fixed_idx = next(i for i, ln in enumerate(lines) if ln.startswith("=== NOT FIXED"))
-        fixed_idx = next(i for i, ln in enumerate(lines) if ln.startswith("=== FIXED"))
-        assert not_fixed_idx < fixed_idx, "NOT FIXED block must come before FIXED block"
-        assert any("[FIXED]" in ln and "padded" in ln for ln in lines[fixed_idx:])
-        assert any("[NOT FIXED]" in ln for ln in lines[not_fixed_idx:fixed_idx])
+        info_idx = next(i for i, ln in enumerate(lines) if ln.startswith("=== INFORMATIONAL"))
+        assert not_fixed_idx < info_idx, "NOT FIXED block must come before INFORMATIONAL block"
+        assert any("[INFORMATIONAL]" in ln and "padded" in ln for ln in lines[info_idx:])
+        assert any("[NOT FIXED]" in ln for ln in lines[not_fixed_idx:info_idx])
 
 
 # ---------------------------------------------------------------------------
@@ -1292,7 +1292,7 @@ class TestAddDefault245:
         assert details == []
         assert parsed.fields[0].subfields == [("a", "Real title.")]
 
-    def test_runs_by_default_via_cli_and_logged_as_fixed(self, tmp_path):
+    def test_runs_by_default_via_cli_and_logged_as_informational(self, tmp_path):
         parsed = m.ParsedRecord(
             leader=_SYNTHETIC_LEADER,
             entries=[],
@@ -1305,7 +1305,7 @@ class TestAddDefault245:
         rc = m.main([str(src), "-o", str(out), "--log", str(log)])
         assert rc == 0
         content = log.read_text(encoding="utf-8")
-        assert "=== FIXED: added_default_245 (1) ===" in content
+        assert "=== INFORMATIONAL: added_default_245 (1) ===" in content
         results = m.repair_text(m._read_text(str(out)))
         field245 = next(f for f in results[0].fields if f.tag == "245")
         assert field245.subfields == [("a", "No title")]
@@ -1911,7 +1911,7 @@ class TestFindAndFixMojibake:
         rc = m.main([str(src), "-o", str(out), "--log", str(log)])
         assert rc == 0
         content = log.read_text(encoding="utf-8")
-        assert "=== FIXED: fixed_mojibake (1) ===" in content
+        assert "=== INFORMATIONAL: fixed_mojibake (1) ===" in content
         results = m.repair_text(m._read_text(str(out)))
         field = next(f for f in results[0].fields if f.tag == "500")
         assert field.subfields == [("a", "Großbritannien")]
@@ -2379,7 +2379,9 @@ class TestNoLogInformational:
         log = tmp_path / "run.log"
         rc = m.main([str(src), "-o", str(out), "--no-log-informational", "--log", str(log)])
         assert rc == 0
-        assert "INFORMATIONAL" not in log.read_text(encoding="utf-8")
+        # every entry for this record is informational-only, so once
+        # filtered out there's nothing left to log at all -- no file
+        assert not log.exists()
         # the fix itself still ran, even though it's not in the log
         results = m.repair_text(m._read_text(str(out)))
         field = next(f for f in results[0].fields if f.tag == "520")
@@ -2576,18 +2578,26 @@ class TestWriteLog:
     def test_groups_by_fixed_then_category_with_headers(self, tmp_path):
         entries = [
             m.LogEntry("missing_008", False, "t1", 0, "u1", "no 008"),
-            m.LogEntry("added_field", True, "t2", 0, "u1", "added 245"),
+            # synthetic, never-specially-categorized names -- generic
+            # so this test doesn't break if some real fixed category
+            # later moves into a dedicated section like FIXED/REQUIRES
+            # ATTENTION or INFORMATIONAL (both currently fall back to
+            # INFORMATIONAL, not a plain "FIXED" section -- see
+            # `_section_for`)
+            m.LogEntry("some_fixed_thing", True, "t2", 0, "u1", "added 245"),
             m.LogEntry("missing_008", False, "t3", 1, "u2", "no 008 either"),
-            m.LogEntry("removed_missing_a", True, "t4", 1, "u2", "removed 650"),
+            m.LogEntry("some_other_fixed_thing", True, "t4", 1, "u2", "removed 650"),
         ]
         log_path = tmp_path / "run.log"
         m.write_log(str(log_path), entries)
         lines = log_path.read_text(encoding="utf-8").splitlines()
 
         not_fixed_header = next(i for i, ln in enumerate(lines) if "NOT FIXED: missing_008" in ln)
-        fixed_added_header = next(i for i, ln in enumerate(lines) if "FIXED: added_field" in ln)
+        fixed_added_header = next(
+            i for i, ln in enumerate(lines) if "INFORMATIONAL: some_fixed_thing" in ln
+        )
         fixed_removed_header = next(
-            i for i, ln in enumerate(lines) if "FIXED: removed_missing_a" in ln
+            i for i, ln in enumerate(lines) if "INFORMATIONAL: some_other_fixed_thing" in ln
         )
         assert "(2)" in lines[not_fixed_header]
         assert not_fixed_header < fixed_added_header
