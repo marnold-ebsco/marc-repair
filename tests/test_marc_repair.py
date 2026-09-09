@@ -470,6 +470,8 @@ class TestFindSuspectMarc8Escapes:
         category, detail = findings[0]
         assert category == "suspect_marc8_escape"
         assert "CJK" in detail
+        assert "suggested fix: likely a miskeyed accented letter" in detail
+        assert "Schr[?]inger" in detail
 
     def test_flags_single_cyrillic_char_welded_to_ascii_letters(self):
         # Real production example: "who" + <Cyrillic escape, 1 char> +
@@ -477,7 +479,10 @@ class TestFindSuspectMarc8Escapes:
         parsed = self._record("who\x1b(QS\x1b(Bs ever")
         findings = m.find_suspect_marc8_escapes(parsed)
         assert len(findings) == 1
-        assert "Cyrillic" in findings[0][1]
+        detail = findings[0][1]
+        assert "Cyrillic" in detail
+        assert "suggested fix: likely a miskeyed apostrophe" in detail
+        assert "who's" in detail
 
     def test_does_not_flag_genuine_multi_character_cjk(self):
         # Real production example: a genuine parallel Chinese title,

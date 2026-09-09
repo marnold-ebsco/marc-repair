@@ -1450,7 +1450,13 @@ def find_suspect_marc8_escapes(parsed: ParsedRecord) -> list[tuple[str, str]]:
     both sides with zero characters of separation. Never auto-fixed --
     there's no safe way to guess what the original character should
     have been; category "suspect_marc8_escape" is for a human to
-    review and correct the source cataloging record.
+    review and correct the source cataloging record. Each finding
+    includes a "suggested fix" -- a hypothesis, not a correction:
+    "...'s" at a word boundary reads as a miskeyed apostrophe (e.g.
+    "who's"); anything else is framed as a likely lost accented letter
+    in the surrounding word (e.g. "Schrodinger", "Leonidas"), with a
+    prompt to verify against another edition or an authority record
+    rather than an invented replacement.
     """
     findings: list[tuple[str, str]] = []
     if parsed.leader[9:10] == UNICODE_ENCODING_BYTE:
@@ -1477,12 +1483,37 @@ def find_suspect_marc8_escapes(parsed: ParsedRecord) -> list[tuple[str, str]]:
                 before = text[match.start() - 1:match.start()]
                 after = text[close + 3:close + 4]
                 if before.isalpha() and before.isascii() and after.isalpha() and after.isascii():
+                    word_before_match = re.search(r"[A-Za-z]+$", text[:match.start()])
+                    word_after_match = re.match(r"[A-Za-z]+", text[close + 3:])
+                    word_before = word_before_match.group() if word_before_match else before
+                    word_after = word_after_match.group() if word_after_match else after
+                    next_char = text[close + 3 + len(word_after):close + 4 + len(word_after)]
+                    # "...s" ending a word, itself at a word boundary
+                    # (not followed by another letter) reads as a
+                    # contraction/possessive far more often than an
+                    # accented letter would -- e.g. "who's", "it's".
+                    # Anything else is more likely an accented vowel
+                    # lost from a proper noun (Schrodinger, Leonidas).
+                    if word_after == "s" and not next_char.isalpha():
+                        suggestion = (
+                            f"suggested fix: likely a miskeyed apostrophe -- "
+                            f"probably \"{word_before}'s\""
+                        )
+                    else:
+                        suggestion = (
+                            "suggested fix: likely a miskeyed accented letter "
+                            "(e.g. ö, é, ñ, ü) in "
+                            f"\"{word_before}[?]{word_after}\" -- compare "
+                            "against another edition or an authority record "
+                            "to confirm the correct spelling"
+                        )
                     findings.append((
                         "suspect_marc8_escape",
                         f"tag {f.tag}: single {charset_name} character embedded "
                         f"mid-word ({before!r}<escape>{after!r}) -- likely a "
                         "miskeyed diacritic in the source record, not real "
-                        f"{charset_name} content; raw MARC-8: {text!r}",
+                        f"{charset_name} content; {suggestion}; "
+                        f"raw MARC-8: {text!r}",
                     ))
     return findings
 
@@ -2124,8 +2155,11 @@ class LogEntry:
 #: rather than recovered from the record's own data (a placeholder 008, a
 #: leader byte reset to a default code, $9 promoted to $0, the leader's
 #: entry-map constant restored, an unparseable tag renamed to an unused
-#: 9XX slot) -- worth calling out separately from fixes that
-#: reconstructed the record's actual original content.
+#: 9XX slot, typographic punctuation flattened via a fixed substitution
+#: table, or a whole record transcoded MARC-8 -> UTF-8) -- worth calling
+#: out separately from fixes that reconstructed the record's own
+#: original content field-by-field rather than applying a systematic,
+#: file-wide transformation.
 _DEDICATED_SECTIONS: dict[str, tuple[int, str]] = {
     "duplicate_identifier": (1, "DUPLICATE RECORDS"),
     "added_default_008": (3, "INFORMATIONAL"),
@@ -2133,6 +2167,8 @@ _DEDICATED_SECTIONS: dict[str, tuple[int, str]] = {
     "leader_entry_map_fixed": (3, "INFORMATIONAL"),
     "normalized_subfield_9_to_0": (3, "INFORMATIONAL"),
     "invalid_tag": (3, "INFORMATIONAL"),
+    "normalized_smart_characters": (3, "INFORMATIONAL"),
+    "transcoded_marc8": (3, "INFORMATIONAL"),
 }
 
 

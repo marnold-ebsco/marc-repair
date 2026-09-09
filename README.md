@@ -98,8 +98,8 @@ ten million.
 | Data field with 0 or 1 indicator characters instead of 2 | Padded with spaces by default and logged; `--no-fix-bad-indicators` to leave it instead (such a field then fails Mode 1 and falls back to Mode 2/UNRESOLVED) |
 | `999` fields (Sierra's internal item-linking field, not part of MARC21) | Retagged to `945` with indicators `ff` by default; `--no-remap-999-to-945` to leave as-is. Not logged by default (a record can carry many 999s) — pass `--log-999-to-945` to log each one |
 | `$9` subfields (legacy/local stand-in for `$0`) | Rewritten to `$0` by default; `--no-normalize-subfield-9` to leave as-is; logged |
-| Typographic "smart" Unicode punctuation (curly quotes, em/en dashes, ellipsis) | Normalized to plain ASCII by default; `--no-normalize-smart-characters` to leave as-is; logged |
-| Legacy MARC-8/ANSEL encoding | Converted to UTF-8 by default (requires `pymarc`; the run fails loudly if it's missing, rather than silently leaving non-UTF-8 output — install it, or pass `--no-transcode-marc8` if you explicitly want non-UTF-8 records left as-is) |
+| Typographic "smart" Unicode punctuation (curly quotes, em/en dashes, ellipsis — see table below) | Normalized to plain ASCII by default; `--no-normalize-smart-characters` to leave as-is; logged as `normalized_smart_characters` (INFORMATIONAL) |
+| Legacy MARC-8/ANSEL encoding | Converted to UTF-8 by default (requires `pymarc`; the run fails loudly if it's missing, rather than silently leaving non-UTF-8 output — install it, or pass `--no-transcode-marc8` if you explicitly want non-UTF-8 records left as-is); logged as `transcoded_marc8` (INFORMATIONAL) |
 | A tag that isn't 3 numeric digits (e.g. `24A` from directory corruption) | Renamed to an unused tag in the 900-999 locally-defined range by default, picked from tags seen during the normal single pass (no extra full pass — only the rare record needing this gets a second, targeted look afterward); `--no-fix-invalid-tags` to leave it as-is instead; logged |
 | Doubled proxy URLs, duplicate record identifiers | Always detected and logged, never auto-fixed — no safe correction to guess |
 | A single Hebrew/Arabic/Cyrillic/Greek/CJK character welded directly between two ASCII letters with no word boundary (e.g. real data found: "Schr" + one CJK character + "inger", almost certainly a miskeyed "ö") | Always detected and logged as `suspect_marc8_escape`, never auto-fixed — there's no safe way to guess the intended character; flag this to the source system/cataloger to correct |
@@ -107,6 +107,35 @@ ten million.
 | A record that can't be auto-repaired by either mode at all | Passed through to the output unchanged (never dropped), logged as `UNRESOLVED` |
 
 The output file always has the same number of records as the input.
+
+### Smart-character normalization
+
+`normalize_smart_characters` replaces typographic Unicode punctuation
+with plain ASCII equivalents, character-by-character, in every
+subfield and control field:
+
+| From | To | What it is |
+|---|---|---|
+| `' ' ‚ ‛` | `'` or `,` | curly single quotes / low-9 quote |
+| `" " „ ‟` | `"` | curly double quotes |
+| `–` `—` | `-` `--` | en-dash, em-dash |
+| `‐ ‑ ‒` | `-` | hyphen, non-breaking hyphen, figure dash |
+| `…` | `...` | ellipsis character (one codepoint) → three literal periods |
+| `′ ″` | `'` `"` | prime, double-prime (often used for feet/inches, minutes/seconds) |
+| non-breaking space | regular space | |
+| soft hyphen | removed | invisible hyphenation hint |
+
+These characters are valid Unicode and not a structural defect — a
+properly UTF-8-declared record can legitimately contain them — but
+some downstream MARC tooling (including MarcEdit) flags them as
+suspect, and older/MARC-8-oriented systems can mis-render them even
+when the UTF-8 declaration is correct. It's a judgment call (some
+cataloging practice deliberately keeps typographic quotes/dashes),
+which is why it's overridable (`--no-normalize-smart-characters`)
+rather than hardcoded on with no escape. Logged as
+`normalized_smart_characters` under the INFORMATIONAL section (see
+below) since it changes real content via a fixed substitution table
+rather than reconstructing the record's own original data.
 
 ### Logging
 
@@ -124,8 +153,10 @@ Entries are grouped into sections, in this order:
    default/constant rather than recovered from the record itself: a
    placeholder 008 (`added_default_008`), a leader byte reset to a
    default code (`leader_byte_defaulted`), the leader's entry-map
-   constant restored (`leader_entry_map_fixed`), or `$9` promoted to `$0`
-   (`normalized_subfield_9_to_0`)
+   constant restored (`leader_entry_map_fixed`), `$9` promoted to `$0`
+   (`normalized_subfield_9_to_0`), typographic punctuation flattened
+   to plain ASCII (`normalized_smart_characters`), or a record
+   transcoded MARC-8 → UTF-8 (`transcoded_marc8`)
 
 ...and by category within each section, with a header and count, so e.g.
 all 375 missing-008 findings sit together instead of scattered by record
