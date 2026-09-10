@@ -3137,6 +3137,7 @@ def repair_holdings_records(
     fix_missing_852c: bool = False,
     on_progress: Callable[[int], None] | None = None,
     on_record: Callable[[int], None] | None = None,
+    on_estimate: Callable[[int, int], None] | None = None,
 ) -> dict[str, int]:
     """Actually repair a holdings-only MARC file (e.g. one of
     `split_bib_holdings`'s outputs) -- unlike `check_holdings_records`
@@ -3207,6 +3208,12 @@ def repair_holdings_records(
 
     `on_progress`/`on_record` mirror `split_bib_holdings`'s parameters
     of the same name -- liveness only, no effect on the repair.
+    `on_estimate`, if given, is called after every record with
+    (records processed so far, bytes consumed so far) -- meant to be
+    wired to a `ProgressReporter`'s `maybe_print_estimate`, which
+    self-throttles to fire (at most) once early in a long run and is a
+    cheap no-op every other call, the same way `main`'s own bib loop
+    uses it.
 
     Returns {"total": n, "unresolved": n, "log_lines": n, "not_fixed": n}.
     """
@@ -3216,6 +3223,7 @@ def repair_holdings_records(
     pending_tag_fixes: list[tuple[int, int, int, str]] = []
     n_total = 0
     n_unresolved = 0
+    bytes_consumed_for_estimate = 0
 
     def log(category: str, fixed: bool, record_idx: int, rec_id: str, detail: str) -> None:
         ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -3229,6 +3237,9 @@ def repair_holdings_records(
             n_total += 1
             if on_record is not None:
                 on_record(n_total)
+            if on_estimate is not None:
+                bytes_consumed_for_estimate += len(rec_text.encode(encoding_used))
+                on_estimate(n_total, bytes_consumed_for_estimate)
 
             if parsed.unresolved:
                 reason = parsed.unresolved[0][3]
@@ -3745,6 +3756,7 @@ def main(argv: list[str] | None = None) -> int:
                 fix_missing_852c=args.fix_missing_852c,
                 on_progress=holdings_progress.on_progress,
                 on_record=holdings_progress.maybe_print,
+                on_estimate=holdings_progress.maybe_print_estimate,
             )
             holdings_progress.finish()
             print(
@@ -3778,6 +3790,7 @@ def main(argv: list[str] | None = None) -> int:
             fix_missing_852c=args.fix_missing_852c,
             on_progress=progress.on_progress,
             on_record=progress.maybe_print,
+            on_estimate=progress.maybe_print_estimate,
         )
         progress.finish()
         elapsed = time.perf_counter() - repair_start
