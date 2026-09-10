@@ -3119,8 +3119,11 @@ class TestRepairHoldingsRecords:
         # NOT a valid MARC21 encoding-level code -- fine for most tests
         # here (that fix is exercised elsewhere), but this test wants a
         # record with genuinely nothing to fix, so its leader corrects
-        # that one byte to a valid value ('full level', blank).
-        clean_leader = _HOLDINGS_LEADER[:17] + " " + _HOLDINGS_LEADER[18:]
+        # that one byte to a value that's actually valid for HOLDINGS
+        # specifically ('u', Unknown) -- unlike the bib/authority
+        # leader, holdings' own spec has no defined blank code at all,
+        # see LEADER_17_ENCODING_LEVEL_VALID_HOLDINGS.
+        clean_leader = _HOLDINGS_LEADER[:17] + "u" + _HOLDINGS_LEADER[18:]
         result, out, log = self._run(tmp_path, [self._holdings_record(leader=clean_leader)])
         assert result == {"total": 1, "unresolved": 0, "log_lines": 0, "not_fixed": 0}
         assert m.count_records(str(out)) == 1
@@ -3190,9 +3193,27 @@ class TestRepairHoldingsRecords:
         bad_leader = _HOLDINGS_LEADER[:6] + "!" + _HOLDINGS_LEADER[7:]
         result, out, log = self._run(tmp_path, [self._holdings_record(leader=bad_leader)])
         content = log.read_text(encoding="utf-8")
-        assert "leader_byte_defaulted" in content
+        assert "holdings_leader_byte_defaulted" in content
+        assert "[FIXED/REQUIRES ATTENTION]" in content
         parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
         assert parsed.leader[6] == "u"
+
+    def test_blank_byte_17_is_invalid_for_holdings_and_defaulted_to_u(self, tmp_path):
+        # Blank ("full level") is a valid bib/authority encoding-level
+        # code but NOT a defined holdings one (see
+        # LEADER_17_ENCODING_LEVEL_VALID_HOLDINGS) -- this confirms the
+        # holdings pipeline actually enforces holdings' own code set
+        # rather than the permissive bib/authority/holdings union.
+        blank_byte17_leader = _HOLDINGS_LEADER[:17] + " " + _HOLDINGS_LEADER[18:]
+        result, out, log = self._run(
+            tmp_path, [self._holdings_record(leader=blank_byte17_leader)]
+        )
+        content = log.read_text(encoding="utf-8")
+        assert "holdings_leader_byte_defaulted" in content
+        assert "[FIXED/REQUIRES ATTENTION]" in content
+        assert "encoding level" in content
+        parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
+        assert parsed.leader[17] == "u"
 
     def test_unresolvable_record_passed_through_unchanged(self, tmp_path):
         # A whole file with literally no MARC leader anywhere is a fatal

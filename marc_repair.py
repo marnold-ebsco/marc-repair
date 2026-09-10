@@ -1613,6 +1613,17 @@ LEADER_07_BIBLIOGRAPHIC_LEVEL_VALID = set("abcdims")
 LEADER_08_TYPE_OF_CONTROL_VALID = set("a ")
 LEADER_17_ENCODING_LEVEL_VALID = set("12345 78uz")
 
+#: MARC21 Holdings format's OWN byte 17 (Encoding level) code set --
+#: unlike the permissive union above, this is holdings-specific:
+#: https://www.loc.gov/marc/holdings/hdleader.html documents only
+#: 1/2/3/4/5/m/u/z for holdings -- blank ("full level") is a
+#: *bibliographic* code, not a defined holdings one, and holdings adds
+#: 'm' (Mixed level), which the union set above doesn't include at
+#: all. See `repair_holdings_records`, which passes this (and 'u' as
+#: the correction default, not the union's blank) to
+#: `fix_invalid_leader_bytes` instead of the shared bib-oriented set.
+LEADER_17_ENCODING_LEVEL_VALID_HOLDINGS = set("12345muz")
+
 #: A data field's indicators are almost universally either a digit
 #: (0-9) or blank across the whole MARC21 Bibliographic format -- this
 #: is a broad, format-wide rule rather than a per-tag table, so it
@@ -1622,7 +1633,10 @@ VALID_INDICATOR_CHARS = set("0123456789 ")
 
 
 def fix_invalid_leader_bytes(
-    parsed: ParsedRecord, type_of_record_default: str = "a"
+    parsed: ParsedRecord,
+    type_of_record_default: str = "a",
+    encoding_level_valid: set[str] = LEADER_17_ENCODING_LEVEL_VALID,
+    encoding_level_default: str = " ",
 ) -> list[str]:
     """Default four leader bytes to a known-valid value when they hold
     something outside their valid MARC21 code set (see the
@@ -1636,7 +1650,13 @@ def fix_invalid_leader_bytes(
         *bibliographic* code in a file already classified as holdings
         would silently reclassify the record)
       * byte 08 (Type of control) -> ' ' (not specified)
-      * byte 17 (Encoding level) -> ' ' (full level)
+      * byte 17 (Encoding level) -> `encoding_level_default` against
+        `encoding_level_valid` (' ', full level, against the permissive
+        bib/authority/holdings union `LEADER_17_ENCODING_LEVEL_VALID`,
+        by default; the holdings pipeline passes 'u', Unknown, against
+        `LEADER_17_ENCODING_LEVEL_VALID_HOLDINGS` instead -- holdings'
+        own spec doesn't define a blank code at all, and does define
+        'm', which the shared union set doesn't include)
 
     Each of these bytes carries real classification information (e.g.
     byte 05 distinguishes a deleted record from a merely corrected one),
@@ -1668,7 +1688,7 @@ def fix_invalid_leader_bytes(
     apply(5, LEADER_05_RECORD_STATUS_VALID, "c", "record status")
     apply(6, LEADER_06_TYPE_OF_RECORD_VALID, type_of_record_default, "type of record")
     apply(8, LEADER_08_TYPE_OF_CONTROL_VALID, " ", "type of control")
-    apply(17, LEADER_17_ENCODING_LEVEL_VALID, " ", "encoding level")
+    apply(17, encoding_level_valid, encoding_level_default, "encoding level")
     if details:
         parsed.leader = "".join(leader)
     return details
@@ -2928,6 +2948,7 @@ _FIXED_REQUIRES_ATTENTION = {
     "removed_invalid_subfield",
     "removed_missing_a",
     "added_field",
+    "holdings_leader_byte_defaulted",
 }
 
 #: INFORMATIONAL, at the very bottom: a fix applied via a fixed
@@ -3130,9 +3151,19 @@ def repair_holdings_records(
       * short-indicator padding (via `iter_repair_stream`'s own
         `fix_bad_indicators`)
       * double-encoded UTF-8 ("mojibake") correction
-      * leader bytes 05/08/17 defaulted the same way as bib records;
-        byte 06 (type of record) defaults to 'u' (Unknown) instead of
-        bib's 'a' (Language material) -- see `fix_invalid_leader_bytes`
+      * leader byte 05 defaulted the same way as bib records; byte 06
+        (type of record) defaults to 'u' (Unknown) instead of bib's
+        'a' (Language material); byte 17 (encoding level) is checked
+        against holdings' OWN code set
+        (`LEADER_17_ENCODING_LEVEL_VALID_HOLDINGS`, which includes 'm'
+        and excludes blank, unlike the shared bib/authority/holdings
+        union) and defaults to 'u' rather than blank -- see
+        `fix_invalid_leader_bytes`. Logged as
+        "holdings_leader_byte_defaulted" -- FIXED/REQUIRES ATTENTION,
+        not INFORMATIONAL like the bib pipeline's equivalent -- since
+        this changes real classification bytes and is worth
+        highlighting rather than burying in the bottom, off-by-default
+        section
       * $9 -> $0 subfield code normalization
       * typographic "smart" character normalization
       * invalid (non a-z0-9) subfield code removal
@@ -3223,8 +3254,13 @@ def repair_holdings_records(
             rec_id = record_identifier(parsed)
             for detail in find_and_fix_mojibake(parsed):
                 log("fixed_mojibake", True, i, rec_id, detail)
-            for detail in fix_invalid_leader_bytes(parsed, type_of_record_default="u"):
-                log("leader_byte_defaulted", True, i, rec_id, detail)
+            for detail in fix_invalid_leader_bytes(
+                parsed,
+                type_of_record_default="u",
+                encoding_level_valid=LEADER_17_ENCODING_LEVEL_VALID_HOLDINGS,
+                encoding_level_default="u",
+            ):
+                log("holdings_leader_byte_defaulted", True, i, rec_id, detail)
             for detail in normalize_subfield_9_to_0(parsed):
                 log("normalized_subfield_9_to_0", True, i, rec_id, detail)
             for detail in normalize_smart_characters(parsed):
