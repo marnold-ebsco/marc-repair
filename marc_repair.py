@@ -1055,6 +1055,242 @@ def count_records(path: str, chunk_size: int = 16 * 1024 * 1024) -> int:
             total += chunk.count(b"\x1d")
 
 
+# MARC21 leader byte 6 ("type of record") codes for a bibliographic record
+# (https://www.loc.gov/marc/bibliographic/bdleader.html).
+BIB_LEADER_TYPES = set("acdefgijkmoprt")
+# ...and for a holdings record instead
+# (https://www.loc.gov/marc/holdings/hdleader.html): u=unknown, v=multipart
+# item, x=single-part item, y=serial item.
+HOLDINGS_LEADER_TYPES = set("uvxy")
+
+
+def classify_bib_or_holdings(record_bytes: bytes) -> str:
+    """Classify one raw MARC record (including its trailing record
+    terminator) as "bib", "holdings", or "unclassified" from leader byte 6
+    (the "type of record" position -- always plain ASCII per the MARC21
+    spec, even in a MARC-8/legacy-encoded record), with no decoding or
+    full parsing needed. "unclassified" covers both a genuinely different
+    record type (e.g. "z" authority) and a record too short/corrupted to
+    even have a readable leader byte -- never guessed at, so the caller
+    can route it somewhere visible instead of silently mis-filing it.
+    """
+    if len(record_bytes) < 7:
+        return "unclassified"
+    b6 = record_bytes[6]
+    if b6 >= 128:
+        return "unclassified"
+    ch = chr(b6)
+    if ch in BIB_LEADER_TYPES:
+        return "bib"
+    if ch in HOLDINGS_LEADER_TYPES:
+        return "holdings"
+    return "unclassified"
+
+
+def split_bib_holdings(
+    path: str,
+    bib_path: str,
+    holdings_path: str,
+    unclassified_path: str,
+    chunk_size: int = 16 * 1024 * 1024,
+    on_progress: Callable[[int], None] | None = None,
+) -> dict[str, int]:
+    """Split a MARC file into separate bib/holdings/unclassified files by
+    each record's leader byte 6 alone, streaming raw bytes with no
+    decoding or repair -- every record is copied through byte-for-byte,
+    untouched, so this works regardless of any structural corruption
+    elsewhere in the record (the leader is the only part inspected).
+    `unclassified_path`'s file is only created if at least one record
+    actually needs it, so a clean two-way split doesn't leave a stray
+    empty file behind.
+
+    Returns counts: {"bib": n, "holdings": n, "unclassified": n}.
+    """
+    counts = {"bib": 0, "holdings": 0, "unclassified": 0}
+    unclassified_fh = None
+    with open(bib_path, "wb") as bib_fh, open(holdings_path, "wb") as holdings_fh:
+        try:
+            with open(path, "rb") as in_fh:
+                buf = b""
+                while True:
+                    chunk = in_fh.read(chunk_size)
+                    if on_progress is not None:
+                        on_progress(in_fh.tell())
+                    if not chunk:
+                        break
+                    buf += chunk
+                    while True:
+                        idx = buf.find(b"\x1d")
+                        if idx == -1:
+                            break
+                        record = buf[:idx + 1]
+                        buf = buf[idx + 1:]
+                        kind = classify_bib_or_holdings(record)
+                        counts[kind] += 1
+                        if kind == "bib":
+                            bib_fh.write(record)
+                        elif kind == "holdings":
+                            holdings_fh.write(record)
+                        else:
+                            if unclassified_fh is None:
+                                unclassified_fh = open(unclassified_path, "wb")
+                            unclassified_fh.write(record)
+                if buf:
+                    # trailing bytes with no terminator -- not a real
+                    # record (every genuine MARC record ends in 0x1D); no
+                    # safe way to classify or drop it, so it goes to
+                    # unclassified too rather than being silently lost.
+                    counts["unclassified"] += 1
+                    if unclassified_fh is None:
+                        unclassified_fh = open(unclassified_path, "wb")
+                    unclassified_fh.write(buf)
+        finally:
+            if unclassified_fh is not None:
+                unclassified_fh.close()
+    return counts
+
+
+ESCAPE = "\x1b"
+
+
+def check_holdings_record(rec_text: str, encoding: str) -> tuple[list[tuple[str, str]], str]:
+    """Read-only structural/content checks for one already-isolated
+    holdings record's text -- the same categories of defect this tool
+    already detects (and, for bib records, fixes) elsewhere: bad length,
+    bad directory, missing 008, bad indicators, invalid subfield codes,
+    and MARC-8 escape sequences. Nothing here is modified -- no repair is
+    performed on holdings records at this time; this only reports.
+
+    Returns (issues, record_id): issues is a list of (category, detail)
+    pairs suitable for `LogEntry`; record_id is field 001's content if
+    present, else "".
+    """
+    issues: list[tuple[str, str]] = []
+    leader = rec_text[:24]
+    if len(leader) != 24:
+        return [("holdings_bad_leader", "record too short to contain a leader")], ""
+
+    declared = leader[0:5]
+    actual = len(rec_text.encode(encoding))
+    if not declared.isdigit() or int(declared) != actual:
+        issues.append((
+            "holdings_bad_length",
+            f"bad length (leader declares {declared!r}, actual record is {actual} bytes)",
+        ))
+
+    if ESCAPE in rec_text:
+        issues.append((
+            "holdings_escape_sequence",
+            "contains an ESC (0x1B) byte -- possible unconverted MARC-8 escape sequence",
+        ))
+
+    try:
+        skip, entries = parse_directory(rec_text[24:24 + MAX_DIRECTORY_SCAN_LEN])
+    except RepairError:
+        issues.append((
+            "holdings_bad_directory",
+            "bad directory (no consistent directory found after the leader)",
+        ))
+        return issues, ""
+
+    if not any(e.tag == "008" for e in entries):
+        issues.append(("holdings_missing_008", "missing 008 field"))
+
+    dir_end = 24 + skip + len(entries) * 12
+    pos = rec_text.find(FIELDTERM, dir_end)
+    record_id = ""
+    if pos == -1:
+        issues.append(("holdings_bad_directory", "directory terminator not found"))
+        return issues, record_id
+    pos += 1
+    for entry in entries:
+        end = rec_text.find(FIELDTERM, pos)
+        if end == -1:
+            issues.append((
+                "holdings_bad_directory", f"tag {entry.tag}: field terminator not found"
+            ))
+            break
+        content = rec_text[pos:end]
+        if entry.tag.isdigit() and int(entry.tag) < CONTROL_TAG_LIMIT:
+            if entry.tag == "001" and not record_id:
+                record_id = content
+            pos = end + 1
+            continue
+        _, spaces_needed = _pad_short_indicators(content)
+        if spaces_needed:
+            issues.append((
+                "holdings_bad_indicators",
+                f"tag {entry.tag}: bad indicators ({spaces_needed} character(s) "
+                "missing before the first subfield)",
+            ))
+        body = content[2:]
+        for part in body.split(SUBFIELD)[1:]:
+            if not part:
+                continue
+            code, data = part[0], part[1:]
+            if code not in FALLBACK_CODES:
+                issues.append((
+                    "holdings_invalid_subfield_code",
+                    f"tag {entry.tag}: invalid subfield code {code!r}",
+                ))
+            elif not data:
+                issues.append((
+                    "holdings_null_identifier",
+                    f"tag {entry.tag}: subfield ${code} has no data (null identifier)",
+                ))
+        pos = end + 1
+    return issues, record_id
+
+
+def check_holdings_records(
+    path: str, log_path: str, chunk_size: int = 16 * 1024 * 1024
+) -> int:
+    """Run `check_holdings_record` over every record in a holdings file
+    (e.g. one of `split_bib_holdings`'s outputs) and write every issue
+    found to its own combined log at `log_path`, grouped the same way as
+    the main repair log (see `write_log`) -- everything lands in NOT
+    FIXED, since no repair is performed on holdings records at this time.
+    Returns the number of records that had at least one issue.
+    """
+    encoding = detect_encoding(path)
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    log_entries: list[LogEntry] = []
+    n_flagged = 0
+    idx = 0
+    with open(path, "rb") as fh:
+        buf = b""
+        while True:
+            chunk = fh.read(chunk_size)
+            if not chunk:
+                if buf:
+                    rec_text = buf.decode(encoding)
+                    issues, record_id = check_holdings_record(rec_text, encoding)
+                    if issues:
+                        n_flagged += 1
+                        for category, detail in issues:
+                            log_entries.append(
+                                LogEntry(category, False, ts, idx, record_id, detail)
+                            )
+                break
+            buf += chunk
+            while True:
+                pos = buf.find(b"\x1d")
+                if pos == -1:
+                    break
+                raw = buf[:pos + 1]
+                buf = buf[pos + 1:]
+                rec_text = raw.decode(encoding)
+                issues, record_id = check_holdings_record(rec_text, encoding)
+                if issues:
+                    n_flagged += 1
+                    for category, detail in issues:
+                        log_entries.append(LogEntry(category, False, ts, idx, record_id, detail))
+                idx += 1
+    if log_entries:
+        write_log(log_path, log_entries)
+    return n_flagged
+
+
 def iter_repair_stream(
     path: str,
     overrides: dict[int, OverridesByField] | None = None,
@@ -2745,6 +2981,23 @@ def main(argv: list[str] | None = None) -> int:
         "speed on large files. No output file is written",
     )
     parser.add_argument(
+        "--split-bib-holdings",
+        action="store_true",
+        help="split the input into separate bib and holdings files by each "
+        "record's leader byte 6 (type of record), then exit immediately "
+        "-- no repair is done on either. Output: INPUT_bib.EXT and "
+        "INPUT_holdings.EXT next to the input; a record whose leader "
+        "byte 6 isn't a recognized bib or holdings code (or is "
+        "missing/corrupted) is never guessed at -- it's written "
+        "instead to INPUT_unclassified.EXT (only created if needed) "
+        "and reported on stderr. The holdings records are also run "
+        "through the same categories of read-only check as bib records "
+        "(bad length, bad directory, missing 008, bad indicators, "
+        "invalid subfield codes, MARC-8 escape sequences); any found "
+        "are written to INPUT_holdings_log_TIMESTAMP.log -- reported "
+        "only, never fixed",
+    )
+    parser.add_argument(
         "--mrk",
         nargs="?",
         const="",
@@ -3020,6 +3273,36 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.count:
         print(f"{count_records(args.input)} record(s) in {args.input}")
+        return 0
+
+    if args.split_bib_holdings:
+        base, ext = os.path.splitext(args.input)
+        bib_path = f"{base}_bib{ext}"
+        holdings_path = f"{base}_holdings{ext}"
+        unclassified_path = f"{base}_unclassified{ext}"
+        split_start = time.perf_counter()
+        counts = split_bib_holdings(args.input, bib_path, holdings_path, unclassified_path)
+        print(f"{counts['bib']} bib record(s) written to {bib_path}")
+        print(f"{counts['holdings']} holdings record(s) written to {holdings_path}")
+        if counts["unclassified"]:
+            print(
+                f"{counts['unclassified']} record(s) could not be classified as "
+                f"bib or holdings from leader byte 6 -- written unchanged to "
+                f"{unclassified_path} instead of being guessed at or dropped",
+                file=sys.stderr,
+            )
+        if counts["holdings"]:
+            run_ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+            holdings_log_path = f"{base}_holdings_log_{run_ts}.log"
+            n_flagged = check_holdings_records(holdings_path, holdings_log_path)
+            if n_flagged:
+                print(
+                    f"{n_flagged}/{counts['holdings']} holdings record(s) have "
+                    f"issues -- see {holdings_log_path} (not fixed; no repair is "
+                    "performed on holdings records at this time)"
+                )
+        elapsed = time.perf_counter() - split_start
+        print(f"done in {elapsed:.2f}s")
         return 0
 
     if args.transcode_marc8:

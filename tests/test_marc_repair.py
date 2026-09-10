@@ -2899,3 +2899,141 @@ class TestCountRecords:
         out = capsys.readouterr().out
         assert "3" in out
         assert not (tmp_path / "three_fixed.mrc").exists()
+
+
+_HOLDINGS_LEADER = _SYNTHETIC_LEADER[:6] + "x" + _SYNTHETIC_LEADER[7:]
+
+
+class TestSplitBibHoldings:
+    def _bib_record(self) -> bytes:
+        parsed = m.ParsedRecord(
+            leader=_SYNTHETIC_LEADER,
+            entries=[],
+            fields=[
+                m.Field_("008", None, None, content="x" * 40),
+                m.Field_("245", "00", [("a", "Title.")]),
+            ],
+        )
+        return m.assemble_marc(parsed)
+
+    def _holdings_record(self, ok: bool = True) -> bytes:
+        fields = [m.Field_("008", None, None, content="x" * 40)] if ok else []
+        parsed = m.ParsedRecord(
+            leader=_HOLDINGS_LEADER,
+            entries=[],
+            fields=fields + [m.Field_("852", "  ", [("a", "Main Library")])],
+        )
+        return m.assemble_marc(parsed)
+
+    def test_classify_bib_or_holdings(self):
+        assert m.classify_bib_or_holdings(self._bib_record()) == "bib"
+        assert m.classify_bib_or_holdings(self._holdings_record()) == "holdings"
+        assert m.classify_bib_or_holdings(b"") == "unclassified"
+        authority_leader = _SYNTHETIC_LEADER[:6] + "z" + _SYNTHETIC_LEADER[7:]
+        authority = m.assemble_marc(
+            m.ParsedRecord(leader=authority_leader, entries=[], fields=[
+                m.Field_("100", "1 ", [("a", "Name.")]),
+            ])
+        )
+        assert m.classify_bib_or_holdings(authority) == "unclassified"
+
+    def test_splits_bib_and_holdings_into_separate_files(self, tmp_path):
+        raw = self._bib_record() + self._holdings_record() + self._bib_record()
+        src = tmp_path / "mixed.mrc"
+        src.write_bytes(raw)
+        bib_out = tmp_path / "bib.mrc"
+        holdings_out = tmp_path / "holdings.mrc"
+        unclassified_out = tmp_path / "unclassified.mrc"
+        counts = m.split_bib_holdings(
+            str(src), str(bib_out), str(holdings_out), str(unclassified_out)
+        )
+        assert counts == {"bib": 2, "holdings": 1, "unclassified": 0}
+        assert m.count_records(str(bib_out)) == 2
+        assert m.count_records(str(holdings_out)) == 1
+        assert not unclassified_out.exists()
+
+    def test_unclassified_record_is_not_guessed_at(self, tmp_path):
+        authority_leader = _SYNTHETIC_LEADER[:6] + "z" + _SYNTHETIC_LEADER[7:]
+        parsed = m.ParsedRecord(
+            leader=authority_leader, entries=[], fields=[m.Field_("100", "1 ", [("a", "Name.")])]
+        )
+        raw = self._bib_record() + m.assemble_marc(parsed)
+        src = tmp_path / "mixed.mrc"
+        src.write_bytes(raw)
+        bib_out = tmp_path / "bib.mrc"
+        holdings_out = tmp_path / "holdings.mrc"
+        unclassified_out = tmp_path / "unclassified.mrc"
+        counts = m.split_bib_holdings(
+            str(src), str(bib_out), str(holdings_out), str(unclassified_out)
+        )
+        assert counts == {"bib": 1, "holdings": 0, "unclassified": 1}
+        assert unclassified_out.exists()
+        assert m.count_records(str(unclassified_out)) == 1
+
+    def test_main_split_flag_writes_expected_files_and_no_repair_output(self, tmp_path, capsys):
+        raw = self._bib_record() + self._holdings_record(ok=False)
+        src = tmp_path / "mixed.mrc"
+        src.write_bytes(raw)
+        rc = m.main([str(src), "--split-bib-holdings"])
+        assert rc == 0
+        assert (tmp_path / "mixed_bib.mrc").exists()
+        assert (tmp_path / "mixed_holdings.mrc").exists()
+        assert not (tmp_path / "mixed_fixed.mrc").exists()
+        out = capsys.readouterr().out
+        assert "1 bib record(s)" in out
+        assert "1 holdings record(s)" in out
+        assert "issues" in out
+        logs = list(tmp_path.glob("mixed_holdings_log_*.log"))
+        assert len(logs) == 1
+        content = logs[0].read_text(encoding="utf-8")
+        assert "holdings_missing_008" in content
+
+
+class TestCheckHoldingsRecord:
+    def _holdings_text(self, fields) -> str:
+        parsed = m.ParsedRecord(leader=_HOLDINGS_LEADER, entries=[], fields=fields)
+        return m.assemble_marc(parsed).decode("utf-8")
+
+    def test_clean_record_has_no_issues(self):
+        text = self._holdings_text([
+            m.Field_("008", None, None, content="x" * 40),
+            m.Field_("852", "  ", [("a", "Main Library")]),
+        ])
+        issues, record_id = m.check_holdings_record(text, "utf-8")
+        assert issues == []
+
+    def test_missing_008_is_flagged(self):
+        text = self._holdings_text([m.Field_("852", "  ", [("a", "Main Library")])])
+        issues, _ = m.check_holdings_record(text, "utf-8")
+        assert any(cat == "holdings_missing_008" for cat, _ in issues)
+
+    def test_invalid_subfield_code_is_flagged(self):
+        text = self._holdings_text([
+            m.Field_("008", None, None, content="x" * 40),
+            m.Field_("852", "  ", [("A", "Main Library")]),
+        ])
+        issues, _ = m.check_holdings_record(text, "utf-8")
+        assert any(cat == "holdings_invalid_subfield_code" for cat, _ in issues)
+
+    def test_null_identifier_is_flagged(self):
+        text = self._holdings_text([
+            m.Field_("008", None, None, content="x" * 40),
+            m.Field_("852", "  ", [("a", "")]),
+        ])
+        issues, _ = m.check_holdings_record(text, "utf-8")
+        assert any(cat == "holdings_null_identifier" for cat, _ in issues)
+
+    def test_record_id_comes_from_001(self):
+        text = self._holdings_text([
+            m.Field_("001", None, None, content="on123"),
+            m.Field_("008", None, None, content="x" * 40),
+            m.Field_("852", "  ", [("a", "Main Library")]),
+        ])
+        _, record_id = m.check_holdings_record(text, "utf-8")
+        assert record_id == "on123"
+
+    def test_nothing_is_modified(self):
+        text = self._holdings_text([m.Field_("852", "  ", [("a", "Main Library")])])
+        before = text
+        m.check_holdings_record(text, "utf-8")
+        assert text == before
