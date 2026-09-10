@@ -1115,10 +1115,19 @@ def split_bib_holdings(
     """
     counts = {"bib": 0, "holdings": 0, "unclassified": 0}
     unclassified_fh = None
+    # Compact (drop the already-consumed prefix of `buf`) only once this
+    # much of it has been consumed, rather than on every single record --
+    # slicing `buf` is itself an O(len(buf)) copy, so doing it per record
+    # while `buf` still holds most of a multi-MB chunk made this whole
+    # function accidentally quadratic in chunk size (a real, measured
+    # slowdown on a multi-GB file). A `pos` cursor advances through `buf`
+    # in between compactions instead.
+    compact_threshold = 2 * chunk_size
     with open(bib_path, "wb") as bib_fh, open(holdings_path, "wb") as holdings_fh:
         try:
             with open(path, "rb") as in_fh:
                 buf = b""
+                pos = 0
                 while True:
                     chunk = in_fh.read(chunk_size)
                     if on_progress is not None:
@@ -1127,11 +1136,11 @@ def split_bib_holdings(
                         break
                     buf += chunk
                     while True:
-                        idx = buf.find(b"\x1d")
+                        idx = buf.find(b"\x1d", pos)
                         if idx == -1:
                             break
-                        record = buf[:idx + 1]
-                        buf = buf[idx + 1:]
+                        record = buf[pos:idx + 1]
+                        pos = idx + 1
                         kind = classify_bib_or_holdings(record)
                         counts[kind] += 1
                         if kind == "bib":
@@ -1144,7 +1153,11 @@ def split_bib_holdings(
                             unclassified_fh.write(record)
                         if on_record is not None:
                             on_record(counts["bib"] + counts["holdings"] + counts["unclassified"])
-                if buf:
+                    if pos > compact_threshold:
+                        buf = buf[pos:]
+                        pos = 0
+                remainder = buf[pos:]
+                if remainder:
                     # trailing bytes with no terminator -- not a real
                     # record (every genuine MARC record ends in 0x1D); no
                     # safe way to classify or drop it, so it goes to
@@ -1152,7 +1165,7 @@ def split_bib_holdings(
                     counts["unclassified"] += 1
                     if unclassified_fh is None:
                         unclassified_fh = open(unclassified_path, "wb")
-                    unclassified_fh.write(buf)
+                    unclassified_fh.write(remainder)
                     if on_record is not None:
                         on_record(counts["bib"] + counts["holdings"] + counts["unclassified"])
         finally:
@@ -1268,35 +1281,41 @@ def check_holdings_records(
     log_entries: list[LogEntry] = []
     n_flagged = 0
     idx = 0
+    # See the matching comment in `split_bib_holdings` -- a cursor plus
+    # periodic compaction avoids re-copying the whole buffer on every
+    # single record.
+    compact_threshold = 2 * chunk_size
+
+    def _check(raw: bytes) -> None:
+        nonlocal n_flagged, idx
+        rec_text = raw.decode(encoding)
+        issues, record_id = check_holdings_record(rec_text, encoding)
+        if issues:
+            n_flagged += 1
+            for category, detail in issues:
+                log_entries.append(LogEntry(category, False, ts, idx, record_id, detail))
+        idx += 1
+
     with open(path, "rb") as fh:
         buf = b""
+        pos = 0
         while True:
             chunk = fh.read(chunk_size)
             if not chunk:
-                if buf:
-                    rec_text = buf.decode(encoding)
-                    issues, record_id = check_holdings_record(rec_text, encoding)
-                    if issues:
-                        n_flagged += 1
-                        for category, detail in issues:
-                            log_entries.append(
-                                LogEntry(category, False, ts, idx, record_id, detail)
-                            )
                 break
             buf += chunk
             while True:
-                pos = buf.find(b"\x1d")
-                if pos == -1:
+                term = buf.find(b"\x1d", pos)
+                if term == -1:
                     break
-                raw = buf[:pos + 1]
-                buf = buf[pos + 1:]
-                rec_text = raw.decode(encoding)
-                issues, record_id = check_holdings_record(rec_text, encoding)
-                if issues:
-                    n_flagged += 1
-                    for category, detail in issues:
-                        log_entries.append(LogEntry(category, False, ts, idx, record_id, detail))
-                idx += 1
+                _check(buf[pos:term + 1])
+                pos = term + 1
+            if pos > compact_threshold:
+                buf = buf[pos:]
+                pos = 0
+        remainder = buf[pos:]
+        if remainder:
+            _check(remainder)
     if log_entries:
         write_log(log_path, log_entries)
     return n_flagged

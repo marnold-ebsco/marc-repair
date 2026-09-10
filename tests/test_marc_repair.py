@@ -2952,6 +2952,27 @@ class TestSplitBibHoldings:
         assert m.count_records(str(holdings_out)) == 1
         assert not unclassified_out.exists()
 
+    def test_splits_correctly_across_many_small_chunks(self, tmp_path):
+        # Regression test: a tiny chunk_size forces many reads and many
+        # buffer compactions, exercising the cursor/compaction logic
+        # (rather than a single in-memory buffer) that replaced an
+        # earlier, accidentally-quadratic re-slice-on-every-record
+        # implementation.
+        records = [self._bib_record(), self._holdings_record()] * 15
+        raw = b"".join(records)
+        src = tmp_path / "many.mrc"
+        src.write_bytes(raw)
+        bib_out = tmp_path / "bib.mrc"
+        holdings_out = tmp_path / "holdings.mrc"
+        unclassified_out = tmp_path / "unclassified.mrc"
+        counts = m.split_bib_holdings(
+            str(src), str(bib_out), str(holdings_out), str(unclassified_out),
+            chunk_size=17,
+        )
+        assert counts == {"bib": 15, "holdings": 15, "unclassified": 0}
+        assert m.count_records(str(bib_out)) == 15
+        assert m.count_records(str(holdings_out)) == 15
+
     def test_unclassified_record_is_not_guessed_at(self, tmp_path):
         authority_leader = _SYNTHETIC_LEADER[:6] + "z" + _SYNTHETIC_LEADER[7:]
         parsed = m.ParsedRecord(
