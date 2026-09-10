@@ -1094,6 +1094,7 @@ def split_bib_holdings(
     unclassified_path: str,
     chunk_size: int = 16 * 1024 * 1024,
     on_progress: Callable[[int], None] | None = None,
+    on_record: Callable[[int], None] | None = None,
 ) -> dict[str, int]:
     """Split a MARC file into separate bib/holdings/unclassified files by
     each record's leader byte 6 alone, streaming raw bytes with no
@@ -1103,6 +1104,12 @@ def split_bib_holdings(
     `unclassified_path`'s file is only created if at least one record
     actually needs it, so a clean two-way split doesn't leave a stray
     empty file behind.
+
+    `on_progress`, if given, is called after every chunk read from disk
+    with total bytes read so far (see `iter_repair_stream`). `on_record`,
+    if given, is called after every record is classified and written,
+    with the running total record count so far -- both exist purely so a
+    caller can show liveness on a large file; neither affects the split.
 
     Returns counts: {"bib": n, "holdings": n, "unclassified": n}.
     """
@@ -1135,6 +1142,8 @@ def split_bib_holdings(
                             if unclassified_fh is None:
                                 unclassified_fh = open(unclassified_path, "wb")
                             unclassified_fh.write(record)
+                        if on_record is not None:
+                            on_record(counts["bib"] + counts["holdings"] + counts["unclassified"])
                 if buf:
                     # trailing bytes with no terminator -- not a real
                     # record (every genuine MARC record ends in 0x1D); no
@@ -1144,6 +1153,8 @@ def split_bib_holdings(
                     if unclassified_fh is None:
                         unclassified_fh = open(unclassified_path, "wb")
                     unclassified_fh.write(buf)
+                    if on_record is not None:
+                        on_record(counts["bib"] + counts["holdings"] + counts["unclassified"])
         finally:
             if unclassified_fh is not None:
                 unclassified_fh.close()
@@ -3281,7 +3292,16 @@ def main(argv: list[str] | None = None) -> int:
         holdings_path = f"{base}_holdings{ext}"
         unclassified_path = f"{base}_unclassified{ext}"
         split_start = time.perf_counter()
-        counts = split_bib_holdings(args.input, bib_path, holdings_path, unclassified_path)
+        split_progress = ProgressReporter(total_bytes=os.path.getsize(args.input))
+        counts = split_bib_holdings(
+            args.input,
+            bib_path,
+            holdings_path,
+            unclassified_path,
+            on_progress=split_progress.on_progress,
+            on_record=split_progress.maybe_print,
+        )
+        split_progress.finish()
         print(f"{counts['bib']} bib record(s) written to {bib_path}")
         print(f"{counts['holdings']} holdings record(s) written to {holdings_path}")
         if counts["unclassified"]:
