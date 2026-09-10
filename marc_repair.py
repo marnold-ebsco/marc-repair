@@ -1177,6 +1177,31 @@ def split_bib_holdings(
 ESCAPE = "\x1b"
 
 
+def _find_004_issues(count: int) -> list[tuple[str, str]]:
+    """Categorize a holdings record's 004 (Control Number -- the
+    associated bibliographic record's own control number, MARC21
+    Holdings format's linking mechanism back to its bib record) field
+    count. Detect-only in both directions: a missing 004 can't be
+    safely invented -- there's no way to know which bib record it
+    should point to -- and more than one isn't necessarily wrong (a
+    holdings record can legitimately link to more than one bib
+    record), so it's surfaced for awareness rather than trimmed.
+    categories: "holdings_missing_004" (none found -- lands in NOT
+    FIXED, the default for an unregistered fixed=False category, see
+    `_section_for`), "holdings_multiple_004" (more than one found --
+    registered in `_INFORMATIONAL` below, since it's not necessarily a
+    defect)."""
+    if count == 0:
+        return [(
+            "holdings_missing_004",
+            "record has no 004 field (Control Number linking to the "
+            "bibliographic record)",
+        )]
+    if count > 1:
+        return [("holdings_multiple_004", f"record has {count} 004 field(s)")]
+    return []
+
+
 def check_holdings_record(rec_text: str, encoding: str) -> tuple[list[tuple[str, str]], str]:
     """Read-only structural/content checks for one already-isolated
     holdings record's text -- the same categories of defect this tool
@@ -1223,6 +1248,8 @@ def check_holdings_record(rec_text: str, encoding: str) -> tuple[list[tuple[str,
 
     if not any(e.tag == "008" for e in entries):
         issues.append(("holdings_missing_008", "missing 008 field"))
+
+    issues.extend(_find_004_issues(sum(1 for e in entries if e.tag == "004")))
 
     dir_end = 24 + skip + len(entries) * 12
     pos = rec_text.find(FIELDTERM, dir_end)
@@ -2917,6 +2944,7 @@ _INFORMATIONAL = {
     "added_default_008",
     "added_default_holdings_008",
     "added_missing_852c",
+    "holdings_multiple_004",
     "added_default_245",
     "leader_byte_defaulted",
     "leader_entry_map_fixed",
@@ -3114,6 +3142,11 @@ def repair_holdings_records(
         agnostic *content* default the way bib's placeholder has one)
       * a wrong-length 008 is padded/truncated to the holdings-specific
         32 bytes (see `HOLDINGS_008_LENGTH`), not bib's 40
+      * a missing 004 (Control Number linking to the bib record) is
+        flagged NOT FIXED (category "holdings_missing_004"); more than
+        one is flagged INFORMATIONAL (category "holdings_multiple_004",
+        since a legitimate multi-bib link isn't necessarily wrong) --
+        see `_find_004_issues`; neither is ever invented or trimmed
       * if `fix_missing_852c` is set (off by default -- see
         --fix-missing-852c), an 852 (Location) field missing $c
         (shelving location) gets a placeholder $c appended (see
@@ -3216,6 +3249,9 @@ def repair_holdings_records(
                             f"tag {f.tag}: subfield ${code} has no data "
                             "(null identifier)",
                         )
+            n_004 = sum(1 for f in parsed.fields if f.tag == "004")
+            for category, detail in _find_004_issues(n_004):
+                log(category, False, i, rec_id, detail)
 
             try:
                 assembled = assemble_marc(parsed)
@@ -3331,11 +3367,27 @@ def main(argv: list[str] | None = None) -> int:
         "logged to INPUT_holdings_log_TIMESTAMP.log",
     )
     parser.add_argument(
+        "--repair-holdings",
+        action="store_true",
+        help="treat the input as an already-holdings-only MARC file (e.g. "
+        "one of --split-bib-holdings' own INPUT_holdings.EXT outputs) and "
+        "repair it directly, then exit immediately -- the exact same "
+        "repair --split-bib-holdings applies to its holdings output (see "
+        "repair_holdings_records()), without re-splitting anything or "
+        "touching bib records. Useful when the bib/holdings split was "
+        "already done in an earlier run (or by some other tool) and only "
+        "the holdings side needs (re-)repairing. Output: INPUT_repaired.EXT "
+        "next to the input (or -o/--out); log: INPUT_log_TIMESTAMP.log (or "
+        "--log). See --fix-missing-852c for the one opt-in "
+        "holdings-specific content fix",
+    )
+    parser.add_argument(
         "--fix-missing-852c",
         dest="fix_missing_852c",
         action="store_true",
         default=False,
-        help="(holdings records only, used by --split-bib-holdings) add a "
+        help="(holdings records only, used by --split-bib-holdings and "
+        "--repair-holdings) add a "
         f"placeholder $c (shelving location) subfield -- content "
         f"{DEFAULT_852_C_CONTENT!r} -- to any 852 (Location) field missing "
         "one. Off by default since 852 $c is real location data this tool "
@@ -3674,6 +3726,45 @@ def main(argv: list[str] | None = None) -> int:
                 )
         elapsed = time.perf_counter() - split_start
         print(f"done in {elapsed:.2f}s")
+        return 0
+
+    if args.repair_holdings:
+        base, ext = os.path.splitext(args.input)
+        out_path = args.out or f"{base}_repaired{ext}"
+        run_ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        log_path = args.log or f"{base}_log_{run_ts}.log"
+        repair_start = time.perf_counter()
+        progress = ProgressReporter(total_bytes=os.path.getsize(args.input))
+        result = repair_holdings_records(
+            args.input,
+            out_path,
+            log_path,
+            fix_missing_852c=args.fix_missing_852c,
+            on_progress=progress.on_progress,
+            on_record=progress.maybe_print,
+        )
+        progress.finish()
+        elapsed = time.perf_counter() - repair_start
+        print(
+            f"Wrote {result['total']}/{result['total']} holdings record(s) to "
+            f"{out_path} ({result['total'] - result['unresolved']} "
+            f"corrected/passed clean, {result['unresolved']} passed through "
+            f"unchanged) in {elapsed:.2f}s"
+        )
+        if result["log_lines"]:
+            print(
+                f"{result['log_lines']} log line(s) written to {log_path} "
+                f"({result['not_fixed']} not fixed, "
+                f"{result['log_lines'] - result['not_fixed']} fixed)",
+                file=sys.stderr,
+            )
+        if result["unresolved"]:
+            print(
+                f"{result['unresolved']} record(s) could not be auto-repaired "
+                "and were kept unchanged in the output.",
+                file=sys.stderr,
+            )
+            return 1
         return 0
 
     if args.transcode_marc8:
