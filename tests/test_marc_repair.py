@@ -2917,7 +2917,7 @@ class TestSplitBibHoldings:
         return m.assemble_marc(parsed)
 
     def _holdings_record(self, ok: bool = True) -> bytes:
-        fields = [m.Field_("008", None, None, content="x" * 40)] if ok else []
+        fields = [m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH)] if ok else []
         parsed = m.ParsedRecord(
             leader=_HOLDINGS_LEADER,
             entries=[],
@@ -2991,7 +2991,7 @@ class TestSplitBibHoldings:
         assert unclassified_out.exists()
         assert m.count_records(str(unclassified_out)) == 1
 
-    def test_main_split_flag_writes_expected_files_and_no_repair_output(self, tmp_path, capsys):
+    def test_main_split_flag_writes_expected_files_and_repairs_holdings(self, tmp_path, capsys):
         raw = self._bib_record() + self._holdings_record(ok=False)
         src = tmp_path / "mixed.mrc"
         src.write_bytes(raw)
@@ -2999,15 +2999,18 @@ class TestSplitBibHoldings:
         assert rc == 0
         assert (tmp_path / "mixed_bib.mrc").exists()
         assert (tmp_path / "mixed_holdings.mrc").exists()
+        assert (tmp_path / "mixed_holdings_repaired.mrc").exists()
         assert not (tmp_path / "mixed_fixed.mrc").exists()
         out = capsys.readouterr().out
         assert "1 bib record(s)" in out
         assert "1 holdings record(s)" in out
-        assert "issues" in out
+        assert "holdings record(s) repaired" in out
         logs = list(tmp_path.glob("mixed_holdings_log_*.log"))
         assert len(logs) == 1
         content = logs[0].read_text(encoding="utf-8")
-        assert "holdings_missing_008" in content
+        assert "added_default_holdings_008" in content
+        repaired = m.count_records(str(tmp_path / "mixed_holdings_repaired.mrc"))
+        assert repaired == 1
 
 
 class TestCheckHoldingsRecord:
@@ -3058,3 +3061,210 @@ class TestCheckHoldingsRecord:
         before = text
         m.check_holdings_record(text, "utf-8")
         assert text == before
+
+
+class TestRepairHoldingsRecords:
+    def _write_holdings_file(self, tmp_path, records: list[bytes], name="holdings.mrc"):
+        path = tmp_path / name
+        path.write_bytes(b"".join(records))
+        return path
+
+    def _holdings_record(self, leader=_HOLDINGS_LEADER, fields=None) -> bytes:
+        if fields is None:
+            fields = [
+                m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
+                m.Field_("852", "  ", [("a", "Main Library")]),
+            ]
+        return m.assemble_marc(m.ParsedRecord(leader=leader, entries=[], fields=fields))
+
+    def _run(self, tmp_path, records: list[bytes]):
+        src = self._write_holdings_file(tmp_path, records)
+        out = tmp_path / "out.mrc"
+        log = tmp_path / "out.log"
+        result = m.repair_holdings_records(str(src), str(out), str(log))
+        return result, out, log
+
+    def test_clean_record_passes_through_with_no_log(self, tmp_path):
+        # byte 17 (encoding level) of _HOLDINGS_LEADER is 'k', which is
+        # NOT a valid MARC21 encoding-level code -- fine for most tests
+        # here (that fix is exercised elsewhere), but this test wants a
+        # record with genuinely nothing to fix, so its leader corrects
+        # that one byte to a valid value ('full level', blank).
+        clean_leader = _HOLDINGS_LEADER[:17] + " " + _HOLDINGS_LEADER[18:]
+        result, out, log = self._run(tmp_path, [self._holdings_record(leader=clean_leader)])
+        assert result == {"total": 1, "unresolved": 0, "log_lines": 0, "not_fixed": 0}
+        assert m.count_records(str(out)) == 1
+        assert not log.exists()
+
+    def test_missing_008_gets_blank_holdings_placeholder(self, tmp_path):
+        fields = [m.Field_("852", "  ", [("a", "Main Library")])]
+        result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
+        # +1 for byte 17 (encoding level) always being defaulted for this
+        # fixture's leader -- see the comment in
+        # test_clean_record_passes_through_with_no_log
+        assert result["log_lines"] == 2
+        assert result["not_fixed"] == 0
+        content = log.read_text(encoding="utf-8")
+        assert "added_default_holdings_008" in content
+        raw = out.read_bytes()
+        parsed = m.read_intact_record(raw.decode("utf-8"))
+        field008 = next(f for f in parsed.fields if f.tag == "008")
+        assert field008.content == " " * m.HOLDINGS_008_LENGTH
+
+    def test_wrong_length_008_padded_to_32_not_40(self, tmp_path):
+        fields = [
+            m.Field_("008", None, None, content="x" * 40),
+            m.Field_("852", "  ", [("a", "Main Library")]),
+        ]
+        result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
+        content = log.read_text(encoding="utf-8")
+        assert "fixed_holdings_008_length" in content
+        parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
+        field008 = next(f for f in parsed.fields if f.tag == "008")
+        assert len(field008.content) == m.HOLDINGS_008_LENGTH
+
+    def test_null_identifier_flagged_not_fixed(self, tmp_path):
+        # $b is the null identifier under test; $a is real, non-empty
+        # data so the field survives strip_empty_fields (a field with
+        # ONLY an empty subfield is dropped entirely and silently --
+        # see strip_empty_fields -- so isolating the null-identifier
+        # case needs at least one other non-empty subfield alongside it)
+        fields = [
+            m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
+            m.Field_("852", "  ", [("a", "Main Library"), ("b", "")]),
+        ]
+        result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
+        assert result["not_fixed"] == 1
+        content = log.read_text(encoding="utf-8")
+        assert "holdings_null_identifier" in content
+        assert "[NOT FIXED]" in content
+
+    def test_escape_sequence_flagged_not_transcoded(self, tmp_path):
+        fields = [
+            m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
+            m.Field_("852", "  ", [("a", "Main Library\x1b(Bfoo")]),
+        ]
+        result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
+        assert result["not_fixed"] >= 1
+        content = log.read_text(encoding="utf-8")
+        assert "holdings_escape_sequence" in content
+        # the ESC byte itself must still be present in the output -- not
+        # transcoded away, per this pipeline's explicit, temporary scope
+        assert b"\x1b" in out.read_bytes()
+
+    def test_invalid_leader_byte_06_defaults_to_unknown_not_bib(self, tmp_path):
+        bad_leader = _HOLDINGS_LEADER[:6] + "!" + _HOLDINGS_LEADER[7:]
+        result, out, log = self._run(tmp_path, [self._holdings_record(leader=bad_leader)])
+        content = log.read_text(encoding="utf-8")
+        assert "leader_byte_defaulted" in content
+        parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
+        assert parsed.leader[6] == "u"
+
+    def test_unresolvable_record_passed_through_unchanged(self, tmp_path):
+        # A whole file with literally no MARC leader anywhere is a fatal
+        # RepairError for iter_repair_stream (nowhere to even start) --
+        # per-record UNRESOLVED handling instead kicks in for a *trailing*
+        # chunk after at least one real leader was found, which is what
+        # this exercises: one clean record, then trailing garbage with
+        # no leader of its own.
+        garbage = b"not a marc record at all, no leader here whatsoever" + b"\x1d"
+        result, out, log = self._run(tmp_path, [self._holdings_record(), garbage])
+        assert result["total"] == 2
+        assert result["unresolved"] == 1
+        content = log.read_text(encoding="utf-8")
+        assert "unresolved_record" in content
+
+    def test_invalid_tag_renamed_to_unused_9xx(self, tmp_path):
+        parsed = m.ParsedRecord(
+            leader=_HOLDINGS_LEADER, entries=[],
+            fields=[
+                m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
+                m.Field_("85Z", "  ", [("a", "bad tag")]),
+            ],
+        )
+        raw = m.assemble_marc(parsed)
+        result, out, log = self._run(tmp_path, [raw])
+        content = log.read_text(encoding="utf-8")
+        assert "invalid_tag" in content
+        parsed_out = m.read_intact_record(out.read_bytes().decode("utf-8"))
+        assert all(f.tag.isdigit() for f in parsed_out.fields)
+
+    def test_fix_missing_852c_off_by_default(self, tmp_path):
+        fields = [
+            m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
+            m.Field_("852", "  ", [("a", "Main Library")]),
+        ]
+        result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
+        assert result["log_lines"] == 1  # only the byte-17 leader default
+        parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
+        field852 = next(f for f in parsed.fields if f.tag == "852")
+        assert not any(code == "c" for code, _ in field852.subfields)
+
+    def test_fix_missing_852c_when_enabled(self, tmp_path):
+        fields = [
+            m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
+            m.Field_("852", "  ", [("a", "Main Library")]),
+        ]
+        src = self._write_holdings_file(tmp_path, [self._holdings_record(fields=fields)])
+        out = tmp_path / "out.mrc"
+        log = tmp_path / "out.log"
+        result = m.repair_holdings_records(str(src), str(out), str(log), fix_missing_852c=True)
+        content = log.read_text(encoding="utf-8")
+        assert "added_missing_852c" in content
+        assert "Migration" in content
+        parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
+        field852 = next(f for f in parsed.fields if f.tag == "852")
+        assert ("c", "Migration") in field852.subfields
+        assert result["log_lines"] == 2  # byte-17 leader default + this
+
+    def test_fix_missing_852c_noop_when_c_already_present(self, tmp_path):
+        fields = [
+            m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
+            m.Field_("852", "  ", [("a", "Main Library"), ("c", "Stacks")]),
+        ]
+        src = self._write_holdings_file(tmp_path, [self._holdings_record(fields=fields)])
+        out = tmp_path / "out.mrc"
+        log = tmp_path / "out.log"
+        m.repair_holdings_records(str(src), str(out), str(log), fix_missing_852c=True)
+        parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
+        field852 = next(f for f in parsed.fields if f.tag == "852")
+        assert field852.subfields.count(("c", "Stacks")) == 1
+        assert not any(code == "c" and data == "Migration" for code, data in field852.subfields)
+
+    def test_cli_fix_missing_852c_flag(self, tmp_path):
+        fields = [
+            m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
+            m.Field_("852", "  ", [("a", "Main Library")]),
+        ]
+        src = tmp_path / "mixed.mrc"
+        src.write_bytes(self._holdings_record(fields=fields))
+        rc = m.main([str(src), "--split-bib-holdings", "--fix-missing-852c"])
+        assert rc == 0
+        out = tmp_path / "mixed_holdings_repaired.mrc"
+        parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
+        field852 = next(f for f in parsed.fields if f.tag == "852")
+        assert ("c", "Migration") in field852.subfields
+
+    def test_repairs_real_short_bucknell_holdings_file(self):
+        # Regression/integration check against real production data
+        # (a Bucknell export) rather than only synthetic fixtures --
+        # confirms the holdings-specific 008 length assumption (32
+        # bytes, not bib's 40) actually matches real records, and that
+        # a real file with hundreds of records round-trips through the
+        # whole pipeline without crashing or losing records.
+        import tempfile
+
+        base = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "short_bucknell_marc_holdings.mrc",
+        )
+        if not os.path.exists(base):
+            pytest.skip("real short_bucknell_marc_holdings.mrc fixture not present")
+        n_input = m.count_records(base)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out = os.path.join(tmpdir, "out.mrc")
+            log = os.path.join(tmpdir, "out.log")
+            result = m.repair_holdings_records(base, out, log)
+            assert result["total"] == n_input == 528
+            assert result["unresolved"] == 0
+            assert m.count_records(out) == n_input

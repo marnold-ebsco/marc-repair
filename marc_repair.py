@@ -1180,10 +1180,14 @@ ESCAPE = "\x1b"
 def check_holdings_record(rec_text: str, encoding: str) -> tuple[list[tuple[str, str]], str]:
     """Read-only structural/content checks for one already-isolated
     holdings record's text -- the same categories of defect this tool
-    already detects (and, for bib records, fixes) elsewhere: bad length,
-    bad directory, missing 008, bad indicators, invalid subfield codes,
-    and MARC-8 escape sequences. Nothing here is modified -- no repair is
-    performed on holdings records at this time; this only reports.
+    detects (and, for bib records -- and now holdings records too, see
+    `repair_holdings_records` -- fixes) elsewhere: bad length, bad
+    directory, missing 008, bad indicators, invalid subfield codes, and
+    MARC-8 escape sequences. Nothing here is modified; this function
+    itself stays a pure detector -- the CLI's `--split-bib-holdings`
+    now calls `repair_holdings_records` instead of this for its
+    holdings step, but this remains available as a standalone read-only
+    check.
 
     Returns (issues, record_id): issues is a list of (category, detail)
     pairs suitable for `LogEntry`; record_id is field 001's content if
@@ -1273,7 +1277,9 @@ def check_holdings_records(
     (e.g. one of `split_bib_holdings`'s outputs) and write every issue
     found to its own combined log at `log_path`, grouped the same way as
     the main repair log (see `write_log`) -- everything lands in NOT
-    FIXED, since no repair is performed on holdings records at this time.
+    FIXED, since this function only detects, never modifies. For actual
+    repair, see `repair_holdings_records`, which the CLI's
+    `--split-bib-holdings` uses instead.
     Returns the number of records that had at least one issue.
     """
     encoding = detect_encoding(path)
@@ -1588,14 +1594,20 @@ LEADER_17_ENCODING_LEVEL_VALID = set("12345 78uz")
 VALID_INDICATOR_CHARS = set("0123456789 ")
 
 
-def fix_invalid_leader_bytes(parsed: ParsedRecord) -> list[str]:
+def fix_invalid_leader_bytes(
+    parsed: ParsedRecord, type_of_record_default: str = "a"
+) -> list[str]:
     """Default four leader bytes to a known-valid value when they hold
     something outside their valid MARC21 code set (see the
     LEADER_*_VALID sets above), mirroring a widely-used site cleanup
     script's leader-repair logic:
 
       * byte 05 (Record status) -> 'c' (Corrected or revised)
-      * byte 06 (Type of record) -> 'a' (Language material)
+      * byte 06 (Type of record) -> `type_of_record_default` ('a',
+        Language material, for a bib file; the holdings pipeline passes
+        'u', Unknown, instead -- defaulting a corrupted byte 06 to a
+        *bibliographic* code in a file already classified as holdings
+        would silently reclassify the record)
       * byte 08 (Type of control) -> ' ' (not specified)
       * byte 17 (Encoding level) -> ' ' (full level)
 
@@ -1627,7 +1639,7 @@ def fix_invalid_leader_bytes(parsed: ParsedRecord) -> list[str]:
             leader[pos] = default
 
     apply(5, LEADER_05_RECORD_STATUS_VALID, "c", "record status")
-    apply(6, LEADER_06_TYPE_OF_RECORD_VALID, "a", "type of record")
+    apply(6, LEADER_06_TYPE_OF_RECORD_VALID, type_of_record_default, "type of record")
     apply(8, LEADER_08_TYPE_OF_CONTROL_VALID, " ", "type of control")
     apply(17, LEADER_17_ENCODING_LEVEL_VALID, " ", "encoding level")
     if details:
@@ -1827,10 +1839,15 @@ def find_invalid_isbn_issn_checksums(parsed: ParsedRecord) -> list[tuple[str, st
     return findings
 
 
-def fix_008_length(parsed: ParsedRecord) -> list[str]:
-    """008 must always be exactly 40 characters -- pad a too-short one
-    with trailing spaces (the generic "not specified" filler used
-    throughout 008's own byte positions) or truncate a too-long one.
+def fix_008_length(parsed: ParsedRecord, expected_len: int = 40) -> list[str]:
+    """008 must always be exactly `expected_len` characters -- 40 for a
+    bibliographic/authority record (the default), or 32 for a holdings
+    record (see `HOLDINGS_008_LENGTH`; MARC21's Holdings format defines
+    a shorter, differently-laid-out 008 -- https://www.loc.gov/marc/
+    holdings/hd008.html -- confirmed against real data: every 008 in a
+    real Bucknell holdings export is exactly 32 bytes). Pads a too-short
+    one with trailing spaces (the generic "not specified" filler used
+    throughout 008's own byte positions) or truncates a too-long one.
     This makes the record loadable (a strict importer like FOLIO can
     reject a wrong-length 008 outright) but is still a real content
     change worth a second look -- logged under FIXED/REQUIRES
@@ -1839,13 +1856,13 @@ def fix_008_length(parsed: ParsedRecord) -> list[str]:
     """
     details = []
     for f in parsed.fields:
-        if f.tag == "008" and f.content is not None and len(f.content) != 40:
+        if f.tag == "008" and f.content is not None and len(f.content) != expected_len:
             original = f.content
-            f.content = original.ljust(40)[:40]
-            action = "padded" if len(original) < 40 else "truncated"
+            f.content = original.ljust(expected_len)[:expected_len]
+            action = "padded" if len(original) < expected_len else "truncated"
             details.append(
-                f"008 was {len(original)} bytes (must be exactly 40); "
-                f"{action} to 40; original content: {original!r}"
+                f"008 was {len(original)} bytes (must be exactly {expected_len}); "
+                f"{action} to {expected_len}; original content: {original!r}"
             )
     return details
 
@@ -2174,6 +2191,75 @@ def add_default_008(parsed: ParsedRecord) -> list[str]:
     --ensure-field."""
     if ensure_field(parsed, "008", None, DEFAULT_008_CONTENT):
         return [f"added default 008 (was missing): {DEFAULT_008_CONTENT!r}"]
+    return []
+
+
+#: MARC21's Holdings format 008 is a different, shorter fixed field
+#: than the bibliographic/authority 008 (32 bytes, not 40 --
+#: https://www.loc.gov/marc/holdings/hd008.html; confirmed against real
+#: data, where every 008 in a real Bucknell holdings export is exactly
+#: 32 bytes). See `fix_008_length`'s `expected_len` for the structural
+#: (pad/truncate) side of this; this constant is only the content used
+#: when a holdings record has no 008 at all.
+HOLDINGS_008_LENGTH = 32
+
+#: Placeholder 008 content for a holdings record missing one entirely.
+#: Unlike DEFAULT_008_CONTENT (bibliographic 008, matching a widely-used
+#: site cleanup script's own blanket default byte-for-byte), no
+#: equivalent holdings-specific default is available -- the 008's
+#: content (receipt/acquisition status, expected frequency, completeness,
+#: retention policy, etc.) is genuinely institution- and
+#: collection-specific, so inventing plausible-looking values for
+#: positions this tool can't actually determine would be exactly the
+#: kind of silent guess this tool avoids everywhere else. This is a
+#: fully blank placeholder instead -- syntactically valid (right length,
+#: which is what a strict importer like FOLIO actually enforces) but
+#: informationally empty -- logged the same way as the bibliographic
+#: placeholder (see `add_default_holdings_008`) so every occurrence is
+#: easy to find and review.
+DEFAULT_HOLDINGS_008_CONTENT = " " * HOLDINGS_008_LENGTH
+
+
+#: Placeholder content for a missing 852 (Location) $c (shelving
+#: location) -- see `add_missing_852c`. Like the 008/245 placeholders
+#: above, this deliberately flags itself as inserted rather than
+#: guessing a real shelving location, which this tool has no way to
+#: know.
+DEFAULT_852_C_CONTENT = "Migration"
+
+
+def add_missing_852c(parsed: ParsedRecord) -> list[str]:
+    """Append subfield $c (shelving location) to every 852 (Location)
+    field that's missing it, with placeholder content
+    `DEFAULT_852_C_CONTENT`. Off by default (see --fix-missing-852c);
+    logged (category "added_missing_852c") every time it runs, since
+    it's adding content -- not just correcting structure -- and a
+    placeholder rather than a value recovered from the record's own
+    data. No-op for an 852 that already has a $c, however placed.
+    """
+    details = []
+    for f in parsed.fields:
+        if f.tag != "852" or f.is_control():
+            continue
+        if any(code == "c" for code, _ in f.subfields):
+            continue
+        f.subfields = list(f.subfields) + [("c", DEFAULT_852_C_CONTENT)]
+        details.append(f"added missing 852 $c: {DEFAULT_852_C_CONTENT!r}")
+    return details
+
+
+def add_default_holdings_008(parsed: ParsedRecord) -> list[str]:
+    """Insert `DEFAULT_HOLDINGS_008_CONTENT` for a holdings record with
+    no 008 field at all. No-op if 008 is already present. Logged
+    (category "added_default_holdings_008") since the inserted value is
+    a blank placeholder, not a real one -- see
+    `DEFAULT_HOLDINGS_008_CONTENT`.
+    """
+    if ensure_field(parsed, "008", None, DEFAULT_HOLDINGS_008_CONTENT):
+        return [
+            "added blank placeholder holdings 008 (was missing): "
+            f"{DEFAULT_HOLDINGS_008_CONTENT!r}"
+        ]
     return []
 
 
@@ -2811,6 +2897,7 @@ class LogEntry:
 _FIXED_REQUIRES_ATTENTION = {
     "removed_non_repeatable_duplicate",
     "fixed_008_length",
+    "fixed_holdings_008_length",
     "removed_invalid_subfield",
     "removed_missing_a",
     "added_field",
@@ -2828,6 +2915,8 @@ _FIXED_REQUIRES_ATTENTION = {
 #: detect-only finding not urgent enough for NOT FIXED.
 _INFORMATIONAL = {
     "added_default_008",
+    "added_default_holdings_008",
+    "added_missing_852c",
     "added_default_245",
     "leader_byte_defaulted",
     "leader_entry_map_fixed",
@@ -2992,6 +3081,212 @@ class ProgressReporter:
             print(file=sys.stderr)  # move off the in-place progress line
 
 
+def repair_holdings_records(
+    input_path: str,
+    output_path: str,
+    log_path: str,
+    fix_missing_852c: bool = False,
+    on_progress: Callable[[int], None] | None = None,
+    on_record: Callable[[int], None] | None = None,
+) -> dict[str, int]:
+    """Actually repair a holdings-only MARC file (e.g. one of
+    `split_bib_holdings`'s outputs) -- unlike `check_holdings_records`
+    (still available, and still purely read-only), this rewrites the
+    file. It reuses this tool's same self-determining structural repair
+    (`iter_repair_stream`, Mode 1/2 -- fixes bad length/bad directory for
+    free, since those are just consequences of a stale declared length
+    once the record's real content is re-derived) plus the subset of
+    the main bib pipeline's content fixes that are safe and meaningful
+    for a holdings record specifically:
+
+      * short-indicator padding (via `iter_repair_stream`'s own
+        `fix_bad_indicators`)
+      * double-encoded UTF-8 ("mojibake") correction
+      * leader bytes 05/08/17 defaulted the same way as bib records;
+        byte 06 (type of record) defaults to 'u' (Unknown) instead of
+        bib's 'a' (Language material) -- see `fix_invalid_leader_bytes`
+      * $9 -> $0 subfield code normalization
+      * typographic "smart" character normalization
+      * invalid (non a-z0-9) subfield code removal
+      * empty-field removal
+      * a missing 008 gets a blank, syntactically-valid placeholder
+        (see `add_default_holdings_008` -- there's no institution-
+        agnostic *content* default the way bib's placeholder has one)
+      * a wrong-length 008 is padded/truncated to the holdings-specific
+        32 bytes (see `HOLDINGS_008_LENGTH`), not bib's 40
+      * if `fix_missing_852c` is set (off by default -- see
+        --fix-missing-852c), an 852 (Location) field missing $c
+        (shelving location) gets a placeholder $c appended (see
+        `add_missing_852c`)
+      * a non-numeric tag is renamed to an unused 9XX slot, same
+        deferred two-pass approach `main` uses for bib records (needs
+        every tag in the *holdings* file specifically, so this is
+        tracked separately from the bib pass)
+
+    Deliberately NOT applied here (bib-specific, would misfire on a
+    holdings record): a placeholder 245 (holdings records have no 245),
+    `strip_missing_required_a` / `strip_duplicate_non_repeatable_fields`
+    (their tag lists -- required_a_tags.txt / non_repeatable_tags.txt --
+    were built against bibliographic field semantics), and
+    `remap_999_to_945` (a Sierra/bib-specific convention). MARC-8-to-
+    UTF-8 transcoding is also skipped for now (an explicit, temporary
+    scope decision, not a permanent one) -- an ESC byte is still
+    flagged (category "holdings_escape_sequence", NOT FIXED) rather
+    than silently left in a record declared UTF-8, and a null
+    identifier (subfield present but empty) is still flagged (category
+    "holdings_null_identifier", NOT FIXED) rather than guessed at.
+
+    A record that can't be structurally parsed at all is passed through
+    unchanged, exactly like the main bib pipeline (category
+    "unresolved_record", NOT FIXED) -- the output always has the same
+    number of records as the input.
+
+    `on_progress`/`on_record` mirror `split_bib_holdings`'s parameters
+    of the same name -- liveness only, no effect on the repair.
+
+    Returns {"total": n, "unresolved": n, "log_lines": n, "not_fixed": n}.
+    """
+    encoding_used = detect_encoding(input_path)
+    log_entries: list[LogEntry] = []
+    used_tags: set[str] = set()
+    pending_tag_fixes: list[tuple[int, int, int, str]] = []
+    n_total = 0
+    n_unresolved = 0
+
+    def log(category: str, fixed: bool, record_idx: int, rec_id: str, detail: str) -> None:
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        log_entries.append(LogEntry(category, fixed, ts, record_idx, rec_id, detail))
+
+    with open(output_path, "wb") as out_fh:
+        record_stream = iter_repair_stream(
+            input_path, on_progress=on_progress, fix_bad_indicators=True,
+        )
+        for i, (parsed, rec_text) in enumerate(record_stream):
+            n_total += 1
+            if on_record is not None:
+                on_record(n_total)
+
+            if parsed.unresolved:
+                reason = parsed.unresolved[0][3]
+                log("unresolved_record", False, i, "", f"passed through unchanged: {reason}")
+                out_fh.write(rec_text.encode(encoding_used))
+                n_unresolved += 1
+                continue
+
+            for tag, spaces_added in parsed.indicator_fixes:
+                rec_id = record_identifier(parsed)
+                log(
+                    "padded_indicators", True, i, rec_id,
+                    f"padded {spaces_added} space(s) into short indicators on ={tag}",
+                )
+            if ESCAPE in rec_text:
+                rec_id = record_identifier(parsed)
+                log(
+                    "holdings_escape_sequence", False, i, rec_id,
+                    "contains an ESC (0x1B) byte -- possible unconverted MARC-8 "
+                    "escape sequence (not transcoded -- MARC-8-to-UTF-8 conversion "
+                    "is skipped for holdings records for now)",
+                )
+            rec_id = record_identifier(parsed)
+            for detail in find_and_fix_mojibake(parsed):
+                log("fixed_mojibake", True, i, rec_id, detail)
+            for detail in fix_invalid_leader_bytes(parsed, type_of_record_default="u"):
+                log("leader_byte_defaulted", True, i, rec_id, detail)
+            for detail in normalize_subfield_9_to_0(parsed):
+                log("normalized_subfield_9_to_0", True, i, rec_id, detail)
+            for detail in normalize_smart_characters(parsed):
+                log("normalized_smart_characters", True, i, rec_id, detail)
+            for detail in strip_invalid_subfield_codes(parsed):
+                log("removed_invalid_subfield", True, i, rec_id, detail)
+            strip_empty_fields(parsed)
+            for detail in add_default_holdings_008(parsed):
+                log("added_default_holdings_008", True, i, rec_id, detail)
+            for detail in fix_008_length(parsed, expected_len=HOLDINGS_008_LENGTH):
+                log("fixed_holdings_008_length", True, i, rec_id, detail)
+            if fix_missing_852c:
+                for detail in add_missing_852c(parsed):
+                    log("added_missing_852c", True, i, rec_id, detail)
+            for f in parsed.fields:
+                if f.is_control():
+                    continue
+                for code, data in f.subfields:
+                    if not data:
+                        log(
+                            "holdings_null_identifier", False, i, rec_id,
+                            f"tag {f.tag}: subfield ${code} has no data "
+                            "(null identifier)",
+                        )
+
+            try:
+                assembled = assemble_marc(parsed)
+            except RepairError as exc:
+                log("oversized_unfixable", False, i, rec_id, f"passed through unchanged: {exc}")
+                out_fh.write(rec_text.encode(encoding_used))
+                n_unresolved += 1
+                continue
+
+            if len(assembled) > 99999:
+                log(
+                    "oversized_sentinel_fixed", True, i, rec_id,
+                    f"record is {len(assembled)} bytes; leader declares the "
+                    "MARC21 sentinel 99999 instead (real end is still found "
+                    "from the record terminator, nothing lost)",
+                )
+
+            offset = out_fh.tell()
+            out_fh.write(assembled)
+
+            has_invalid_tag = False
+            for f in parsed.fields:
+                if f.tag.isdigit():
+                    used_tags.add(f.tag)
+                else:
+                    has_invalid_tag = True
+            if has_invalid_tag:
+                rec_encoding = "utf-8" if parsed.leader[9:10] == "a" else "latin-1"
+                pending_tag_fixes.append((i, offset, len(assembled), rec_encoding))
+
+    if pending_tag_fixes:
+        replacement_tag = pick_unused_9xx_tag(used_tags)
+        fix_ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        with open(output_path, "r+b") as fixup_fh:
+            for record_idx, offset, length, rec_encoding in pending_tag_fixes:
+                fixup_fh.seek(offset)
+                raw = fixup_fh.read(length)
+                rec = read_intact_record(raw.decode(rec_encoding))
+                rec_id = record_identifier(rec)
+                if replacement_tag is None:
+                    for f in rec.fields:
+                        if not f.tag.isdigit():
+                            log_entries.append(LogEntry(
+                                "non_numeric_tag", False, fix_ts, record_idx, rec_id,
+                                f"tag {f.tag!r} is not 3 numeric digits (could not "
+                                "fix: every 900-999 tag is already used elsewhere "
+                                "in this file)",
+                            ))
+                    continue
+                for detail in fix_invalid_tags(rec, replacement_tag):
+                    log_entries.append(
+                        LogEntry("invalid_tag", True, fix_ts, record_idx, rec_id, detail)
+                    )
+                fixed_bytes = assemble_marc(rec)
+                assert len(fixed_bytes) == length, (
+                    "tag rename must not change a record's total byte length"
+                )
+                fixup_fh.seek(offset)
+                fixup_fh.write(fixed_bytes)
+
+    if log_entries:
+        write_log(log_path, log_entries)
+    n_not_fixed = sum(1 for e in log_entries if _section_for(e)[1] == "NOT FIXED")
+    return {
+        "total": n_total,
+        "unresolved": n_unresolved,
+        "log_lines": len(log_entries),
+        "not_fixed": n_not_fixed,
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -3020,12 +3315,32 @@ def main(argv: list[str] | None = None) -> int:
         "byte 6 isn't a recognized bib or holdings code (or is "
         "missing/corrupted) is never guessed at -- it's written "
         "instead to INPUT_unclassified.EXT (only created if needed) "
-        "and reported on stderr. The holdings records are also run "
-        "through the same categories of read-only check as bib records "
-        "(bad length, bad directory, missing 008, bad indicators, "
-        "invalid subfield codes, MARC-8 escape sequences); any found "
-        "are written to INPUT_holdings_log_TIMESTAMP.log -- reported "
-        "only, never fixed",
+        "and reported on stderr. The holdings records are then "
+        "actually repaired too (see repair_holdings_records()) -- the "
+        "same categories of structural/content fix already applied to "
+        "bib records (bad length, bad directory, missing 008 [a "
+        "holdings-specific 32-byte placeholder, not bib's], bad "
+        "indicators, invalid subfield codes, mojibake, smart "
+        "characters, invalid tags), except MARC-8-to-UTF-8 transcoding "
+        "(skipped for holdings for now) and the bib-specific tag-list "
+        "fixes (245/required-$a/duplicate-field, which don't apply to "
+        "holdings semantics). See also --fix-missing-852c, an opt-in "
+        "holdings-specific content fix. Output: INPUT_holdings_repaired.EXT; a "
+        "record that can't be auto-repaired is passed through "
+        "unchanged like the main bib pipeline. Every fix/finding is "
+        "logged to INPUT_holdings_log_TIMESTAMP.log",
+    )
+    parser.add_argument(
+        "--fix-missing-852c",
+        dest="fix_missing_852c",
+        action="store_true",
+        default=False,
+        help="(holdings records only, used by --split-bib-holdings) add a "
+        f"placeholder $c (shelving location) subfield -- content "
+        f"{DEFAULT_852_C_CONTENT!r} -- to any 852 (Location) field missing "
+        "one. Off by default since 852 $c is real location data this tool "
+        "has no way to know; each insertion is logged (see --log) as a "
+        "placeholder, not a real value",
     )
     parser.add_argument(
         "--mrk",
@@ -3331,14 +3646,31 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
         if counts["holdings"]:
+            holdings_repaired_path = f"{base}_holdings_repaired{ext}"
             run_ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
             holdings_log_path = f"{base}_holdings_log_{run_ts}.log"
-            n_flagged = check_holdings_records(holdings_path, holdings_log_path)
-            if n_flagged:
+            holdings_progress = ProgressReporter(total_bytes=os.path.getsize(holdings_path))
+            result = repair_holdings_records(
+                holdings_path,
+                holdings_repaired_path,
+                holdings_log_path,
+                fix_missing_852c=args.fix_missing_852c,
+                on_progress=holdings_progress.on_progress,
+                on_record=holdings_progress.maybe_print,
+            )
+            holdings_progress.finish()
+            print(
+                f"{result['total']}/{result['total']} holdings record(s) repaired "
+                f"and written to {holdings_repaired_path} "
+                f"({result['total'] - result['unresolved']} corrected/passed clean, "
+                f"{result['unresolved']} passed through unchanged)"
+            )
+            if result["log_lines"]:
                 print(
-                    f"{n_flagged}/{counts['holdings']} holdings record(s) have "
-                    f"issues -- see {holdings_log_path} (not fixed; no repair is "
-                    "performed on holdings records at this time)"
+                    f"{result['log_lines']} holdings log line(s) written to "
+                    f"{holdings_log_path} ({result['not_fixed']} not fixed, "
+                    f"{result['log_lines'] - result['not_fixed']} fixed)",
+                    file=sys.stderr,
                 )
         elapsed = time.perf_counter() - split_start
         print(f"done in {elapsed:.2f}s")
