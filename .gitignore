@@ -17,5 +17,11 @@ venv2/
 !tests/fixtures/bad_missing245_bib_nashvillestate_bibs_202693_me.mrc
 !tests/fixtures/bad_bib_mandatoryfieldsnashvillestate_bibs_202693_me.mrc
 !tests/fixtures/nscc_bad_bib_badescape.mrc
+!tests/fixtures/kitchen_sink_bib.mrc
+!tests/fixtures/kitchen_sink_bib_repaired.mrc
+!tests/fixtures/kitchen_sink_bib.log
+!tests/fixtures/kitchen_sink_holdings.mrc
+!tests/fixtures/kitchen_sink_holdings_repaired.mrc
+!tests/fixtures/kitchen_sink_holdings.log
 archive/
 split/
