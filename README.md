@@ -201,15 +201,52 @@ substitution).
 all 375 missing-008 findings sit together instead of scattered by record
 order.
 
+## Performance
+
+The tool is CPU-bound, not I/O-bound, and scales linearly with input
+size. Real timings, measured on the same 16-core machine against two
+real files (91MB/48,017 records, and a 2.6GB/706,109-record production
+export):
+
+| File | CPython | PyPy | Speedup |
+|---|---|---|---|
+| 91MB / 48,017 records | 17.6s | 12.2s | 1.44x |
+| 2.6GB / 706,109 records | 8m 06s | 4m 51s | 1.67x |
+
+PyPy runs the exact same code — no code changes, no behavior
+difference. Both runs above produced byte-identical output `.mrc`
+files and identical logs (aside from timestamps), and the full test
+suite (225 tests) passes unmodified under PyPy. The speedup ratio
+improves with file size, since PyPy's JIT warm-up cost matters less
+over a longer run.
+
+See [PyPy (optional, faster on large files)](#pypy-optional-faster-on-large-files)
+in Installation below for setup.
+
 ## Installation
 
 Requires **Python 3.12+**. The core tool is pure Python (standard library
 only) — nothing to install for repairing structural corruption, missing
-fields, invalid subfields, or bad indicators.
+fields, invalid subfields, or bad indicators. These steps assume a clean
+machine with nothing pre-installed.
 
 ```bash
 git clone <this repo>   # or just copy marc_repair.py + required_a_tags.txt
 cd marc_repair
+```
+
+### CPython (standard, recommended for most use)
+
+Ubuntu 24.04 ships Python 3.12 by default; on an older/different system,
+install a 3.12+ interpreter first (e.g. via the
+[deadsnakes PPA](https://github.com/deadsnakes)) before continuing.
+
+```bash
+sudo apt update
+sudo apt install -y python3 python3-venv python3-pip
+python3 --version   # confirm 3.12 or higher
+
+python3 -m venv venv
 ```
 
 Only `--transcode-marc8` (converting legacy MARC-8/ANSEL to UTF-8) needs a
@@ -218,12 +255,83 @@ mapping tables from scratch would be error-prone — this defers to
 `pymarc`'s LC-authoritative tables instead:
 
 ```bash
-python3 -m venv venv
 ./venv/bin/pip install -r requirements.txt   # only needed for --transcode-marc8
 ```
 
 Everything else runs with a plain `python3 marc_repair.py ...` — no venv
 or install step required.
+
+### PyPy (optional, faster on large files)
+
+See [Performance](#performance) above — PyPy runs this tool's exact,
+unmodified code roughly 1.4-1.7x faster with identical output, at the
+cost of maintaining a second interpreter/venv alongside CPython. It's
+worth setting up if you regularly repair very large files; skip it
+otherwise.
+
+```bash
+sudo apt update
+sudo apt install -y pypy3 pypy3-venv
+pypy3 --version
+
+pypy3 -m venv pypy_venv
+./pypy_venv/bin/pip install -r requirements.txt   # pymarc, for --transcode-marc8
+```
+
+Then run the tool exactly the same way, just pointing at the PyPy venv's
+interpreter instead:
+
+```bash
+./pypy_venv/bin/python marc_repair.py bad_length_bib.mrc
+```
+
+### CPython vs. PyPy: which to use
+
+| | CPython | PyPy |
+|---|---|---|
+| Speed on large files | Baseline | ~1.4-1.7x faster (see [Performance](#performance)); the larger the file, the bigger the win |
+| Startup/small-job overhead | Minimal — negligible interpreter startup cost | JIT warm-up adds fixed overhead per run; for a single record or a small file, that overhead can outweigh the eventual speedup |
+| Ecosystem/tooling compatibility | Guaranteed — this is the reference implementation every package targets | Generally solid for pure-Python code like this tool, but any *future* dependency isn't guaranteed to have PyPy-compatible (or C-extension-free) wheels |
+| Matches project convention | Yes — this project targets Python 3.12+ | No — the Ubuntu-packaged `pypy3` used here implements the Python 3.9 language level |
+| Maintenance | One interpreter/venv | A second interpreter/venv to install and keep in sync alongside CPython |
+| Verified correctness | N/A (reference behavior) | Confirmed byte-identical output/logs and all 225 tests passing vs. CPython on real files (see [Performance](#performance)) |
+
+**Rule of thumb:** use CPython by default; reach for PyPy only for large,
+repeated, or time-sensitive batch runs (e.g. a multi-gigabyte production
+export) where the speedup is worth maintaining a second venv.
+
+### Keeping interpreters and dependencies up to date
+
+Both interpreters come from `apt`, so `sudo apt update && sudo apt
+upgrade` picks up new patch releases of whichever `python3`/`pypy3`
+package the system currently has installed. A newer *major* version
+(e.g. Python 3.13, or a `pypy3` build tracking a newer CPython language
+level) generally isn't offered by `apt` until the next Ubuntu release,
+so check `python3 --version` / `pypy3 --version` after upgrading — if
+you need a version ahead of what `apt` offers, that's a deadsnakes-PPA
+(CPython) or a fresh download from [pypy.org](https://www.pypy.org/download.html)
+(PyPy) rather than an in-place `apt` upgrade. Either way, a venv tracks
+whichever interpreter it was created with, so after installing a new
+interpreter version, re-create the venv (`python3 -m venv venv` /
+`pypy3 -m venv pypy_venv`) rather than expecting the existing one to
+pick it up.
+
+For dependencies (currently just `pymarc`, in `requirements.txt`, plus
+`pytest`/`flake8` for development), re-run the same install command to
+pick up newer versions — `pip` always installs the latest release
+satisfying `requirements.txt` unless a version is pinned there:
+
+```bash
+./venv/bin/pip install --upgrade -r requirements.txt
+./pypy_venv/bin/pip install --upgrade -r requirements.txt   # if using PyPy
+```
+
+After upgrading either an interpreter or a dependency, re-run the test
+suite (see [Testing](#testing) below) before trusting the result on
+real data — this is exactly the kind of change the PyPy comparison in
+[Performance](#performance) was verified against (byte-identical
+output, all 225 tests passing), and the same verification should be
+repeated whenever a version changes.
 
 ## Usage
 
