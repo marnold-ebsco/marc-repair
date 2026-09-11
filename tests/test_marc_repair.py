@@ -13,6 +13,7 @@ extracts exhibiting the three defect classes this tool targets:
     fields in the "required $a" tag list are missing/empty $a
 """
 
+import glob
 import os
 import sys
 
@@ -27,6 +28,20 @@ FIXTURES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures")
 
 def _fixture(name: str) -> str:
     return os.path.join(FIXTURES, name)
+
+
+def _resolve_log(log_path):
+    """marc_repair.py always inserts a run timestamp before a log path's
+    extension, even one given explicitly via --log, so a test can't just
+    read back the literal path it passed in. Resolve it to whatever file
+    actually got written (each test's tmp_path is unique, so at most one
+    match exists); falls back to `log_path` itself when nothing matches,
+    so `.exists()` still correctly reports False."""
+    base, ext = os.path.splitext(str(log_path))
+    matches = glob.glob(f"{base}_*{ext}")
+    if not matches:
+        return log_path
+    return type(log_path)(matches[0])
 
 
 def _read(name: str) -> str:
@@ -468,7 +483,7 @@ class TestFixBadIndicators:
             "--log-informational", "--log", str(log),
         ])
         assert rc == 0
-        lines = log.read_text(encoding="utf-8").splitlines()
+        lines = _resolve_log(log).read_text(encoding="utf-8").splitlines()
         not_fixed_idx = next(i for i, ln in enumerate(lines) if ln.startswith("=== NOT FIXED"))
         info_idx = next(i for i, ln in enumerate(lines) if ln.startswith("=== INFORMATIONAL"))
         assert not_fixed_idx < info_idx, "NOT FIXED block must come before INFORMATIONAL block"
@@ -632,7 +647,7 @@ class TestTranscodeMarc8:
         # per-record unless --log-transcoded-marc8 (and --log-informational)
         # are also given -- with no other loggable entries, no log file
         # is written at all
-        assert not log.exists()
+        assert not _resolve_log(log).exists()
         results = m.repair_text(m._read_text(str(out)))
         assert results[0].leader[9] == "a"
 
@@ -657,7 +672,7 @@ class TestTranscodeMarc8:
             "--log-informational", "--log", str(log),
         ])
         assert rc == 0
-        content = log.read_text(encoding="utf-8")
+        content = _resolve_log(log).read_text(encoding="utf-8")
         assert "transcoded_marc8" in content
 
     def test_no_transcode_marc8_flag_leaves_it_as_marc8(self, tmp_path):
@@ -746,7 +761,7 @@ class TestTranscodeMarc8:
         log = tmp_path / "run.log"
         rc = m.main([str(src), "-o", str(out), "--log", str(log)])
         assert rc == 0  # must not crash the whole run
-        content = log.read_text(encoding="utf-8")
+        content = _resolve_log(log).read_text(encoding="utf-8")
         assert "=== NOT FIXED: transcode_marc8_failed (1) ===" in content
         results = m.repair_text(m._read_text(str(out)))
         assert results[0].leader[9] == " "  # left declaring MARC-8
@@ -1105,7 +1120,7 @@ class TestFixInvalidLeaderBytes:
         log = tmp_path / "run.log"
         rc = m.main([str(src), "-o", str(out), "--log-informational", "--log", str(log)])
         assert rc == 0
-        content = log.read_text(encoding="utf-8")
+        content = _resolve_log(log).read_text(encoding="utf-8")
         assert "leader_byte_defaulted" in content
         results = m.repair_text(m._read_text(str(out)))
         assert results[0].leader[5] == "c"
@@ -1281,7 +1296,8 @@ class TestLeaderEntryMapCorrection:
         log = tmp_path / "run.log"
         rc = m.main([str(src), "-o", str(out), "--log", str(log)])
         assert rc == 0
-        content = log.read_text(encoding="utf-8") if log.exists() else ""
+        resolved_log = _resolve_log(log)
+        content = resolved_log.read_text(encoding="utf-8") if resolved_log.exists() else ""
         assert "leader_entry_map_fixed" not in content
         assert m.assemble_marc(m.repair_text(m._read_text(str(out)))[0])[20:24] == b"4500"
 
@@ -1295,7 +1311,7 @@ class TestLeaderEntryMapCorrection:
             "--log-informational", "--log", str(log),
         ])
         assert rc == 0
-        content = log.read_text(encoding="utf-8")
+        content = _resolve_log(log).read_text(encoding="utf-8")
         assert "leader_entry_map_fixed" in content
 
 
@@ -1361,7 +1377,7 @@ class TestAddDefault245:
         log = tmp_path / "run.log"
         rc = m.main([str(src), "-o", str(out), "--log-informational", "--log", str(log)])
         assert rc == 0
-        content = log.read_text(encoding="utf-8")
+        content = _resolve_log(log).read_text(encoding="utf-8")
         assert "=== INFORMATIONAL: added_default_245 (1) ===" in content
         results = m.repair_text(m._read_text(str(out)))
         field245 = next(f for f in results[0].fields if f.tag == "245")
@@ -1440,7 +1456,7 @@ class TestAddDefault008:
         log = tmp_path / "run.log"
         rc = m.main([str(src), "-o", str(out), "--log-informational", "--log", str(log)])
         assert rc == 0
-        content = log.read_text(encoding="utf-8")
+        content = _resolve_log(log).read_text(encoding="utf-8")
         assert "=== INFORMATIONAL: added_default_008 (1) ===" in content
         assert "missing_008" not in content
         results = m.repair_text(m._read_text(str(out)))
@@ -1459,7 +1475,7 @@ class TestAddDefault008:
         log = tmp_path / "run.log"
         rc = m.main([str(src), "-o", str(out), "--no-add-default-008", "--log", str(log)])
         assert rc == 0
-        content = log.read_text(encoding="utf-8")
+        content = _resolve_log(log).read_text(encoding="utf-8")
         assert "=== NOT FIXED: missing_008 (1) ===" in content
         results = m.repair_text(m._read_text(str(out)))
         assert not any(f.tag == "008" for f in results[0].fields)
@@ -1533,7 +1549,7 @@ class TestFixInvalidTags:
         log = tmp_path / "run.log"
         rc = m.main([str(src), "-o", str(out), "--log-informational", "--log", str(log)])
         assert rc == 0
-        content = log.read_text(encoding="utf-8")
+        content = _resolve_log(log).read_text(encoding="utf-8")
         assert "=== INFORMATIONAL: invalid_tag (1) ===" in content
         assert "non_numeric_tag" not in content
         results = m.repair_text(m._read_text(str(out)))
@@ -1556,7 +1572,7 @@ class TestFixInvalidTags:
         log = tmp_path / "run.log"
         rc = m.main([str(src), "-o", str(out), "--no-fix-invalid-tags", "--log", str(log)])
         assert rc == 0
-        content = log.read_text(encoding="utf-8")
+        content = _resolve_log(log).read_text(encoding="utf-8")
         assert "=== NOT FIXED: non_numeric_tag (1) ===" in content
         results = m.repair_text(m._read_text(str(out)))
         tags = [f.tag for f in results[0].fields]
@@ -1623,7 +1639,7 @@ class TestFixInvalidTags:
         # slot taken" setup.
         rc = m.main([str(src), "-o", str(out), "--log", str(log)])
         assert rc == 0
-        content = log.read_text(encoding="utf-8")
+        content = _resolve_log(log).read_text(encoding="utf-8")
         assert "=== NOT FIXED: non_numeric_tag (1) ===" in content
         assert "could not fix" in content
         results = m.repair_text(m._read_text(str(out)))
@@ -1702,7 +1718,7 @@ class TestRemap999To945:
         log = tmp_path / "run.log"
         rc = m.main([str(src), "-o", str(out), "--remap-999-to-945", "--log", str(log)])
         assert rc == 0
-        assert not log.exists()  # runs, but not logged unless --log-999-to-945 too
+        assert not _resolve_log(log).exists()  # runs, but not logged unless --log-999-to-945 too
         results = m.repair_text(m._read_text(str(out)))
         tags = [f.tag for f in results[0].fields]
         assert "999" not in tags
@@ -1728,7 +1744,7 @@ class TestRemap999To945:
             "--log-informational", "--log", str(log),
         ])
         assert rc == 0
-        content = log.read_text(encoding="utf-8")
+        content = _resolve_log(log).read_text(encoding="utf-8")
         assert "remapped_999_to_945" in content
 
 
@@ -1781,7 +1797,7 @@ class TestNormalizeSubfield9To0:
         log = tmp_path / "run.log"
         rc = m.main([str(src), "-o", str(out), "--log-informational", "--log", str(log)])
         assert rc == 0
-        content = log.read_text(encoding="utf-8")
+        content = _resolve_log(log).read_text(encoding="utf-8")
         assert "normalized_subfield_9_to_0" in content
         results = m.repair_text(m._read_text(str(out)))
         field = next(f for f in results[0].fields if f.tag == "650")
@@ -1872,7 +1888,7 @@ class TestNormalizeSmartCharacters:
         # per-record unless --log-normalized-smart-characters (and
         # --log-informational) are also given -- with no other loggable
         # entries, no log file is written at all
-        assert not log.exists()
+        assert not _resolve_log(log).exists()
         results = m.repair_text(m._read_text(str(out)))
         title_field = next(f for f in results[0].fields if f.tag == "520")
         assert title_field.subfields == [("a", "It's great.")]
@@ -1895,7 +1911,7 @@ class TestNormalizeSmartCharacters:
             "--log-informational", "--log", str(log),
         ])
         assert rc == 0
-        content = log.read_text(encoding="utf-8")
+        content = _resolve_log(log).read_text(encoding="utf-8")
         assert "normalized_smart_characters" in content
         results = m.repair_text(m._read_text(str(out)))
         title_field = next(f for f in results[0].fields if f.tag == "520")
@@ -1993,7 +2009,7 @@ class TestFindAndFixMojibake:
         log = tmp_path / "run.log"
         rc = m.main([str(src), "-o", str(out), "--log-informational", "--log", str(log)])
         assert rc == 0
-        content = log.read_text(encoding="utf-8")
+        content = _resolve_log(log).read_text(encoding="utf-8")
         assert "=== INFORMATIONAL: fixed_mojibake (1) ===" in content
         results = m.repair_text(m._read_text(str(out)))
         field = next(f for f in results[0].fields if f.tag == "500")
@@ -2193,7 +2209,7 @@ class TestStripDuplicateNonRepeatableFields:
         log = tmp_path / "run.log"
         rc = m.main([str(src), "-o", str(out), "--log", str(log)])
         assert rc == 0
-        content = log.read_text(encoding="utf-8")
+        content = _resolve_log(log).read_text(encoding="utf-8")
         assert "=== FIXED/REQUIRES ATTENTION: removed_non_repeatable_duplicate (1) ===" in content
         assert "2nd ed." in content
         results = m.repair_text(m._read_text(str(out)))
@@ -2274,7 +2290,7 @@ class TestFix008Length:
         log = tmp_path / "run.log"
         rc = m.main([str(src), "-o", str(out), "--log", str(log)])
         assert rc == 0
-        content = log.read_text(encoding="utf-8")
+        content = _resolve_log(log).read_text(encoding="utf-8")
         assert "=== FIXED/REQUIRES ATTENTION: fixed_008_length (1) ===" in content
         results = m.repair_text(m._read_text(str(out)))
         field008 = next(f for f in results[0].fields if f.tag == "008")
@@ -2447,7 +2463,7 @@ class TestLogInformational:
         assert rc == 0
         # every entry for this record is informational-only, so once
         # filtered out there's nothing left to log at all -- no file
-        assert not log.exists()
+        assert not _resolve_log(log).exists()
         # the fix itself still ran, even though it's not in the log
         results = m.repair_text(m._read_text(str(out)))
         field = next(f for f in results[0].fields if f.tag == "520")
@@ -2468,7 +2484,7 @@ class TestLogInformational:
         log = tmp_path / "run.log"
         rc = m.main([str(src), "-o", str(out), "--log-informational", "--log", str(log)])
         assert rc == 0
-        assert "INFORMATIONAL" in log.read_text(encoding="utf-8")
+        assert "INFORMATIONAL" in _resolve_log(log).read_text(encoding="utf-8")
 
 
 class TestNonNumericTagRoundTrip:
@@ -2652,7 +2668,7 @@ class TestFindDuplicateIdentifiers:
         log = tmp_path / "run.log"
         rc = m.main([str(src), "-o", str(out), "--log", str(log)])
         assert rc == 0
-        content = log.read_text(encoding="utf-8")
+        content = _resolve_log(log).read_text(encoding="utf-8")
         assert "duplicate_identifier" in content
         assert content.count("dup1") >= 2
 
@@ -2861,7 +2877,7 @@ class TestCLIHelpers:
         # both the patched 245 and the missing-008 default are logged as
         # added_default_245/added_default_008, both INFORMATIONAL and
         # off by default -- nothing else fired, so no log file at all
-        assert not log.exists()
+        assert not _resolve_log(log).exists()
 
 
 # ---------------------------------------------------------------------------
@@ -3150,7 +3166,7 @@ class TestRepairHoldingsRecords:
         result, out, log = self._run(tmp_path, [self._holdings_record(leader=clean_leader)])
         assert result == {"total": 1, "unresolved": 0, "log_lines": 0, "not_fixed": 0}
         assert m.count_records(str(out)) == 1
-        assert not log.exists()
+        assert not _resolve_log(log).exists()
 
     def test_missing_008_gets_blank_holdings_placeholder(self, tmp_path):
         fields = [
@@ -3163,7 +3179,7 @@ class TestRepairHoldingsRecords:
         # test_clean_record_passes_through_with_no_log
         assert result["log_lines"] == 2
         assert result["not_fixed"] == 0
-        content = log.read_text(encoding="utf-8")
+        content = _resolve_log(log).read_text(encoding="utf-8")
         assert "added_default_holdings_008" in content
         raw = out.read_bytes()
         parsed = m.read_intact_record(raw.decode("utf-8"))
@@ -3176,7 +3192,7 @@ class TestRepairHoldingsRecords:
             m.Field_("852", "  ", [("a", "Main Library")]),
         ]
         result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
-        content = log.read_text(encoding="utf-8")
+        content = _resolve_log(log).read_text(encoding="utf-8")
         assert "fixed_holdings_008_length" in content
         parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
         field008 = next(f for f in parsed.fields if f.tag == "008")
@@ -3195,7 +3211,7 @@ class TestRepairHoldingsRecords:
         ]
         result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
         assert result["not_fixed"] == 1
-        content = log.read_text(encoding="utf-8")
+        content = _resolve_log(log).read_text(encoding="utf-8")
         assert "holdings_null_identifier" in content
         assert "[NOT FIXED]" in content
 
@@ -3206,7 +3222,7 @@ class TestRepairHoldingsRecords:
         ]
         result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
         assert result["not_fixed"] >= 1
-        content = log.read_text(encoding="utf-8")
+        content = _resolve_log(log).read_text(encoding="utf-8")
         assert "holdings_escape_sequence" in content
         # the ESC byte itself must still be present in the output -- not
         # transcoded away, per this pipeline's explicit, temporary scope
@@ -3215,7 +3231,7 @@ class TestRepairHoldingsRecords:
     def test_invalid_leader_byte_06_defaults_to_unknown_not_bib(self, tmp_path):
         bad_leader = _HOLDINGS_LEADER[:6] + "!" + _HOLDINGS_LEADER[7:]
         result, out, log = self._run(tmp_path, [self._holdings_record(leader=bad_leader)])
-        content = log.read_text(encoding="utf-8")
+        content = _resolve_log(log).read_text(encoding="utf-8")
         assert "holdings_leader_byte_defaulted" in content
         assert "[FIXED/REQUIRES ATTENTION]" in content
         parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
@@ -3231,7 +3247,7 @@ class TestRepairHoldingsRecords:
         result, out, log = self._run(
             tmp_path, [self._holdings_record(leader=blank_byte17_leader)]
         )
-        content = log.read_text(encoding="utf-8")
+        content = _resolve_log(log).read_text(encoding="utf-8")
         assert "holdings_leader_byte_defaulted" in content
         assert "[FIXED/REQUIRES ATTENTION]" in content
         assert "encoding level" in content
@@ -3249,7 +3265,7 @@ class TestRepairHoldingsRecords:
         result, out, log = self._run(tmp_path, [self._holdings_record(), garbage])
         assert result["total"] == 2
         assert result["unresolved"] == 1
-        content = log.read_text(encoding="utf-8")
+        content = _resolve_log(log).read_text(encoding="utf-8")
         assert "unresolved_record" in content
 
     def test_invalid_tag_renamed_to_unused_9xx(self, tmp_path):
@@ -3262,7 +3278,7 @@ class TestRepairHoldingsRecords:
         )
         raw = m.assemble_marc(parsed)
         result, out, log = self._run(tmp_path, [raw])
-        content = log.read_text(encoding="utf-8")
+        content = _resolve_log(log).read_text(encoding="utf-8")
         assert "invalid_tag" in content
         parsed_out = m.read_intact_record(out.read_bytes().decode("utf-8"))
         assert all(f.tag.isdigit() for f in parsed_out.fields)
@@ -3274,7 +3290,7 @@ class TestRepairHoldingsRecords:
         ]
         result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
         assert result["not_fixed"] == 1
-        content = log.read_text(encoding="utf-8")
+        content = _resolve_log(log).read_text(encoding="utf-8")
         assert "holdings_missing_004" in content
         assert "[NOT FIXED]" in content
 
@@ -3285,8 +3301,8 @@ class TestRepairHoldingsRecords:
             m.Field_("852", "  ", [("a", "Main Library")]),
         ]
         result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
-        if log.exists():
-            content = log.read_text(encoding="utf-8")
+        if _resolve_log(log).exists():
+            content = _resolve_log(log).read_text(encoding="utf-8")
             assert "holdings_missing_004" not in content
             assert "holdings_multiple_004" not in content
 
@@ -3299,7 +3315,7 @@ class TestRepairHoldingsRecords:
         ]
         result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
         assert result["not_fixed"] == 0  # informational, not NOT FIXED
-        content = log.read_text(encoding="utf-8")
+        content = _resolve_log(log).read_text(encoding="utf-8")
         assert "holdings_multiple_004" in content
         assert "[INFORMATIONAL]" in content
 
@@ -3325,7 +3341,7 @@ class TestRepairHoldingsRecords:
         out = tmp_path / "out.mrc"
         log = tmp_path / "out.log"
         result = m.repair_holdings_records(str(src), str(out), str(log), fix_missing_852c=True)
-        content = log.read_text(encoding="utf-8")
+        content = _resolve_log(log).read_text(encoding="utf-8")
         assert "added_missing_852c" in content
         assert "Migration" in content
         parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))

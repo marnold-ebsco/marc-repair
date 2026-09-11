@@ -3029,6 +3029,15 @@ def _section_for(entry: LogEntry) -> tuple[int, str]:
     return (4, "INFORMATIONAL") if entry.fixed else (0, "NOT FIXED")
 
 
+def _timestamped_log_path(path: str, run_ts: str) -> str:
+    """Insert `run_ts` right before `path`'s extension, so every log this
+    tool writes is timestamped -- even one named explicitly via --log --
+    and repeat runs never silently overwrite or blend into a prior run's
+    log."""
+    base, ext = os.path.splitext(path)
+    return f"{base}_{run_ts}{ext}"
+
+
 def write_log(path: str, entries: list[LogEntry]) -> None:
     """Write `entries` grouped into sections -- NOT FIXED, then FIXED/
     REQUIRES ATTENTION, then DUPLICATE RECORDS, then INFORMATIONAL at
@@ -3717,7 +3726,9 @@ def main(argv: list[str] | None = None) -> int:
         "--log",
         help="single combined log file for every removal, warning, and "
         "pass-through-unchanged notice from this run (default: "
-        "OUT_log_TIMESTAMP.log, one per run); appended to, not overwritten",
+        "OUT_log_TIMESTAMP.log). The run timestamp is always inserted "
+        "before the extension -- even when this is given explicitly -- so "
+        "repeat runs never overwrite or blend into a prior run's log",
     )
     parser.add_argument(
         "--no-transcode-marc8",
@@ -3801,7 +3812,10 @@ def main(argv: list[str] | None = None) -> int:
         base, ext = os.path.splitext(args.input)
         out_path = args.out or f"{base}_repaired{ext}"
         run_ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        log_path = args.log or f"{base}_log_{run_ts}.log"
+        log_path = (
+            _timestamped_log_path(args.log, run_ts) if args.log
+            else f"{base}_log_{run_ts}.log"
+        )
         repair_start = time.perf_counter()
         progress = ProgressReporter(total_bytes=os.path.getsize(args.input))
         result = repair_holdings_records(
@@ -4165,7 +4179,10 @@ def main(argv: list[str] | None = None) -> int:
         # attention in the output), fixed ones last; within each, grouped
         # by category with a header and count, so e.g. all 375 missing-008
         # findings sit together instead of scattered by record order.
-        log_path = args.log or os.path.splitext(out_path)[0] + f"_log_{run_ts}.log"
+        log_path = (
+            _timestamped_log_path(args.log, run_ts) if args.log
+            else os.path.splitext(out_path)[0] + f"_log_{run_ts}.log"
+        )
         write_log(log_path, log_entries)
         # Based on which section an entry actually lands in, not the
         # raw `fixed` flag -- INFORMATIONAL can now include detect-only
