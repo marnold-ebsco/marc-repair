@@ -23,5 +23,7 @@ venv2/
 !tests/fixtures/kitchen_sink_holdings.mrc
 !tests/fixtures/kitchen_sink_holdings_repaired.mrc
 !tests/fixtures/kitchen_sink_holdings.log
+!docs/kitchen_sink_bib.log
+!docs/kitchen_sink_holdings.log
 archive/
 split/
