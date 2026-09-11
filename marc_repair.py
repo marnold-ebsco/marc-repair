@@ -2742,6 +2742,15 @@ _SMART_CHAR_TABLE = str.maketrans(SMART_CHAR_MAP)
 
 
 def _replace_smart_chars(text: str) -> tuple[str, int]:
+    # Every SMART_CHAR_MAP key is non-ASCII, so ASCII text can never
+    # match -- `isascii()` is an O(1) check on CPython's compact string
+    # representation (it already knows its own max codepoint), while
+    # `translate()`/`count()` are full O(len) scans. Real-world MARC
+    # text is overwhelmingly ASCII, so this short-circuit skips those
+    # scans for nearly every field instead of running them just to
+    # discover nothing changed.
+    if text.isascii():
+        return text, 0
     new_text = text.translate(_SMART_CHAR_TABLE)
     if new_text == text:
         return text, 0
@@ -2807,6 +2816,11 @@ def _fix_mojibake(text: str) -> str | None:
     with -- an essentially impossible coincidence for text that wasn't
     actually double-encoded, so a successful round-trip is strong
     confirmation, not a guess."""
+    # Same reasoning as _replace_smart_chars: every marker is non-ASCII,
+    # so this O(1) check skips the substring scans (and the encode/decode
+    # round-trip below) for ordinary ASCII text, which is most of it.
+    if text.isascii():
+        return None
     if not any(marker in text for marker in _MOJIBAKE_MARKERS):
         return None
     try:
