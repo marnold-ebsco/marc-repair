@@ -924,6 +924,29 @@ class TestStripMissingRequiredA:
         assert len(parsed.fields) == 1
         assert details == []
 
+    def test_field_with_punctuation_only_a_is_removed_and_logged(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[m.Field_("650", " 0", [("a", "--"), ("z", "United States.")])],
+        )
+        details = m.strip_missing_required_a(parsed, {"650"})
+        assert parsed.fields == []
+        assert len(details) == 1
+        assert "650" in details[0]
+        assert "punctuation only" in details[0]
+
+    def test_field_with_only_punctuation_a_and_nothing_else_is_removed_and_logged(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[m.Field_("650", " 0", [("a", ".")])],
+        )
+        details = m.strip_missing_required_a(parsed, {"650"})
+        assert parsed.fields == []
+        assert len(details) == 1
+        assert "punctuation only" in details[0]
+
     def test_real_fixture_505_and_260_survive(self):
         text = _read("bad_bib_mandatoryfieldsnashvillestate_bibs_202693_me.mrc")
         results = m.repair_text(text)

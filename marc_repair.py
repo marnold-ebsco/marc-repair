@@ -2528,18 +2528,31 @@ def load_tag_list(path: str) -> set[str]:
     return tags
 
 
+_PUNCTUATION_ONLY_A_RE = re.compile(r"^[^\w]*$", re.UNICODE)
+
+
+def _is_punctuation_only(data: str) -> bool:
+    """True if `data` has no letters or digits (unicode-aware), i.e. it's
+    made up entirely of punctuation/symbols/whitespace -- a $a like "." or
+    "--" that carries no actual content."""
+    return bool(data) and bool(_PUNCTUATION_ONLY_A_RE.match(data))
+
+
 def strip_missing_required_a(parsed: ParsedRecord, required_a_tags: set[str]) -> list[str]:
     """Remove data fields whose tag is in `required_a_tags` (see
-    required_a_tags.txt) but that lack a non-empty $a subfield, which is
-    required there.
+    required_a_tags.txt) but that lack a non-empty, non-punctuation-only $a
+    subfield, which is required there. A $a whose content is nothing but
+    punctuation (e.g. "." or "--") carries no real data and is treated the
+    same as a missing $a.
 
     A field that's entirely empty (no non-empty subfield at all, e.g. a bare
     "$a" with nothing after it and nothing else in the field) is removed
     silently -- there's nothing to lose. A field that has some other
-    non-empty subfield data is also removed (per the same missing-required-$a
-    rule) but is NOT silent: a line describing exactly what was discarded is
-    returned (category "removed_missing_a" -- see `main`) so the caller can
-    log it before the content is gone for good.
+    non-empty subfield data (including a punctuation-only $a) is also
+    removed (per the same missing-required-$a rule) but is NOT silent: a
+    line describing exactly what was discarded is returned (category
+    "removed_missing_a" -- see `main`) so the caller can log it before the
+    content is gone for good.
     """
     details = []
     kept = []
@@ -2547,13 +2560,21 @@ def strip_missing_required_a(parsed: ParsedRecord, required_a_tags: set[str]) ->
         if f.is_control() or f.tag not in required_a_tags:
             kept.append(f)
             continue
-        if any(code == "a" and data for code, data in f.subfields):
+        if any(
+            code == "a" and data and not _is_punctuation_only(data)
+            for code, data in f.subfields
+        ):
             kept.append(f)
             continue
         if any(data for code, data in f.subfields):
             body = "".join(f"${code}{data}" for code, data in f.subfields)
+            reason = (
+                "$a is punctuation only"
+                if any(code == "a" and data for code, data in f.subfields)
+                else "missing required $a"
+            )
             details.append(
-                f"removed ={f.tag}  {f.indicators}{body}\t(missing required $a; "
+                f"removed ={f.tag}  {f.indicators}{body}\t({reason}; "
                 "content discarded)"
             )
         # else: field was entirely empty -- drop it without logging

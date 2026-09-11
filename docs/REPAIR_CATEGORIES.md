@@ -23,7 +23,7 @@ all -- every holdings INFORMATIONAL entry is always written.**
 | $9 -> $0 normalization | Renamed subfield code | Yes (`--no-normalize-subfield-9`) | `normalized_subfield_9_to_0` | INFORMATIONAL | No |
 | Smart-character normalization | Replaced characters | Yes (`--no-normalize-smart-characters`) | `normalized_smart_characters` | INFORMATIONAL | No |
 | Invalid subfield code removal | Removed subfield | Yes (`--no-strip-invalid-subfield-codes`) | `removed_invalid_subfield` | FIXED/REQUIRES ATTENTION | **Yes** |
-| Missing-required-$a field removal | Removed field | Yes (`--no-strip-missing-required-a`) | `removed_missing_a` | FIXED/REQUIRES ATTENTION | **Yes** |
+| Missing-required-$a field removal (also treats a punctuation-only $a, e.g. "." or "--", as missing) | Removed field | Yes (`--no-strip-missing-required-a`) | `removed_missing_a` | FIXED/REQUIRES ATTENTION | **Yes** |
 | Empty-field removal | Removed field | Yes (`--no-strip-empty-fields`) | -- (unconditional, unlogged either way) | -- | -- |
 | Duplicate non-repeatable field removal | Removed field | Yes (`--no-strip-duplicate-non-repeatable-fields`) | `removed_non_repeatable_duplicate` | FIXED/REQUIRES ATTENTION | **Yes** |
 | `--ensure-field` insertion | Added field | n/a (only if flag given) | `added_field` | FIXED/REQUIRES ATTENTION | **Yes** |
