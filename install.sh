@@ -141,6 +141,13 @@ echo "Installing dependencies..."
 "${VENV_DIR}/bin/pip" install --quiet --upgrade pip
 "${VENV_DIR}/bin/pip" install --quiet -r "${INSTALL_DIR}/requirements.txt"
 
+# $0 is "bash" when run via `curl | bash -s --`, so it's not a usable
+# path to re-invoke -- fall back to re-fetching via curl in that case.
+case "$0" in
+  *install.sh) RERUN_CMD="$0" ;;
+  *) RERUN_CMD="curl -fsSL https://raw.githubusercontent.com/${REPO}/main/install.sh | bash -s --" ;;
+esac
+
 cat <<EOF
 
 Done. marc_repair (${INTERPRETER}, commit ${REMOTE_SHA:0:12}) is ready at:
@@ -151,8 +158,8 @@ Activate and run:
   python "${INSTALL_DIR}/marc_repair.py" --help
 
 Check for updates later without changing anything:
-  $0 --dir "${INSTALL_DIR}" --interpreter ${INTERPRETER} --check
+  ${RERUN_CMD} --dir "${INSTALL_DIR}" --interpreter ${INTERPRETER} --check
 
 Apply an update in place:
-  $0 --dir "${INSTALL_DIR}" --interpreter ${INTERPRETER}
+  ${RERUN_CMD} --dir "${INSTALL_DIR}" --interpreter ${INTERPRETER}
 EOF
