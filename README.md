@@ -235,6 +235,28 @@ git clone <this repo>   # or just copy marc_repair.py + required_a_tags.txt
 cd marc_repair
 ```
 
+### Quick install (no full clone)
+
+`install.sh` fetches only the files needed to run the tool (the script,
+`requirements.txt`, the two tag files, and the docs) pinned to one commit,
+and builds a ready-to-use venv — no `git clone`, no repo history, no test
+fixtures.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/marnold-ebsco/marc-repair/main/install.sh \
+  | bash -s -- --dir ~/marc_repair            # add --interpreter pypy for PyPy instead
+```
+
+Re-run the same command later to update in place (the venv is reused
+unless the interpreter choice changes), or check without changing
+anything:
+
+```bash
+~/marc_repair/install.sh --dir ~/marc_repair --check
+```
+
+Run `install.sh --help` for all options.
+
 ### CPython (standard, recommended for most use)
 
 Ubuntu 24.04 ships Python 3.12 by default; on an older/different system,
