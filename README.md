@@ -92,7 +92,7 @@ ten million.
 | Missing 245, or a 245 present but missing $a | Placeholder `$aNo title` added by default — many real-world imports reject a record with no title at all — either as a new field or, if a 245 already exists (e.g. one with only `$h[electronic resource]`), patched into the existing field alongside its other subfields, not stripped and rebuilt; `--ensure-field "245:..."` takes priority per-record if supplied; `--no-add-default-245` to leave such records untouched instead; logged as `added_default_245` (INFORMATIONAL) |
 | Missing any other field | `--ensure-field` (opt-in; you supply the content); logged as `added_field` under **FIXED/REQUIRES ATTENTION** since a human-supplied value is worth double-checking |
 | Missing 008 | Placeholder inserted by default (a fixed, material-type-agnostic default — real content still needs `--ensure-field "008:..."`, which takes priority per-record); `--no-add-default-008` to leave such records with no 008 instead; logged as `added_default_008` (INFORMATIONAL) |
-| Fields missing a required `$a` | Removed by default (see `required_a_tags.txt`, editable); `--no-strip-missing-required-a` to leave them instead; the exact removed content is logged in full as `removed_missing_a` under **FIXED/REQUIRES ATTENTION** since real data was discarded |
+| Fields missing a required `$a` | Removed by default (see `required_a_tags.txt`, editable); `--no-strip-missing-required-a` to leave them instead; the exact removed content is logged in full as `field_removed_because_missing_a` under **FIXED/REQUIRES ATTENTION** since real data was discarded |
 | Invalid subfield codes (not `[a-z0-9]`) | Removed by default; `--no-strip-invalid-subfield-codes` to leave them instead; the exact removed content is logged in full as `removed_invalid_subfield` under **FIXED/REQUIRES ATTENTION** since real data was discarded |
 | A field where every subfield's data is empty (any tag) | Removed by default (not logged since nothing is discarded); `--no-strip-empty-fields` to leave them instead |
 | Data field with 0 or 1 indicator characters instead of 2 | Padded with spaces by default; `--no-fix-bad-indicators` to leave it instead (such a field then fails Mode 1 and falls back to Mode 2/UNRESOLVED); logged as `padded_indicators` (INFORMATIONAL) |
@@ -164,7 +164,7 @@ which bucket a given fix fell into:
    an 008 padded/truncated to the required 40 characters
    (`fixed_008_length`, with the original content), a field with an
    invalid subfield code removed (`removed_invalid_subfield`), a
-   heading field missing its required `$a` removed (`removed_missing_a`),
+   heading field missing its required `$a` removed (`field_removed_because_missing_a`),
    or a missing field added from a human-supplied `--ensure-field` value
    (`added_field`). The goal throughout this tool is a MARC file that's
    always loadable, even when that requires discarding something — but

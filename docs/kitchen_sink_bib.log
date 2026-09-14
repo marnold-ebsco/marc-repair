@@ -56,8 +56,8 @@
 === FIXED/REQUIRES ATTENTION: removed_invalid_subfield (1) ===
 [FIXED/REQUIRES ATTENTION]	removed_invalid_subfield	2026-09-11T15:44:27Z	record 8 (ks-badsubfield)	removed invalid subfield(s) '$Zbad code' from =500	(invalid subfield code; content discarded)
 
-=== FIXED/REQUIRES ATTENTION: removed_missing_a (1) ===
-[FIXED/REQUIRES ATTENTION]	removed_missing_a	2026-09-11T15:44:27Z	record 9 (ks-missinga)	removed =650   0$zUnited States.	(missing required $a; content discarded)
+=== FIXED/REQUIRES ATTENTION: field_removed_because_missing_a (1) ===
+[FIXED/REQUIRES ATTENTION]	field_removed_because_missing_a	2026-09-11T15:44:27Z	record 9 (ks-missinga)	removed =650   0$zUnited States.	(missing required $a; content discarded)
 
 === FIXED/REQUIRES ATTENTION: removed_non_repeatable_duplicate (1) ===
 [FIXED/REQUIRES ATTENTION]	removed_non_repeatable_duplicate	2026-09-11T15:44:27Z	record 10 (ks-dup245)	removed duplicate =245    $a2nd ed.	(non-repeatable field)

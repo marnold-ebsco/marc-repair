@@ -215,7 +215,7 @@ def build_bib_records() -> list[bytes]:
         m.Field_("500", "  ", [("Z", "bad code"), ("a", "Good note.")]),
     ]))
 
-    # removed_missing_a: 650 (in the default required-$a tag list) with
+    # field_removed_because_missing_a: 650 (in the default required-$a tag list) with
     # no $a subfield at all -- removed and logged since it has other,
     # non-empty content.
     records.append(_record(_BIB_LEADER, [

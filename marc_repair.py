@@ -2551,7 +2551,7 @@ def strip_missing_required_a(parsed: ParsedRecord, required_a_tags: set[str]) ->
     non-empty subfield data (including a punctuation-only $a) is also
     removed (per the same missing-required-$a rule) but is NOT silent: a
     line describing exactly what was discarded is returned (category
-    "removed_missing_a" -- see `main`) so the caller can log it before the
+    "field_removed_because_missing_a" -- see `main`) so the caller can log it before the
     content is gone for good.
     """
     details = []
@@ -2946,7 +2946,7 @@ def _format_duration(seconds: float) -> str:
 @dataclass
 class LogEntry:
     """One line destined for the run's combined log. `category` is a
-    stable machine-readable label (e.g. "missing_008", "removed_missing_a")
+    stable machine-readable label (e.g. "missing_008", "field_removed_because_missing_a")
     used to group same-type entries together within their fixed/not-fixed
     block (see `write_log`); `fixed` says which block."""
 
@@ -2981,7 +2981,7 @@ _FIXED_REQUIRES_ATTENTION = {
     "fixed_008_length",
     "fixed_holdings_008_length",
     "removed_invalid_subfield",
-    "removed_missing_a",
+    "field_removed_because_missing_a",
     "added_field",
     "holdings_leader_byte_defaulted",
 }
@@ -4044,7 +4044,7 @@ def main(argv: list[str] | None = None) -> int:
                 if args.strip_missing_required_a:
                     rec_id = record_identifier(parsed)
                     for detail in strip_missing_required_a(parsed, required_a_tags):
-                        log("removed_missing_a", True, i, rec_id, detail)
+                        log("field_removed_because_missing_a", True, i, rec_id, detail)
                 if args.strip_empty_fields:
                     strip_empty_fields(parsed)
                 if args.strip_duplicate_non_repeatable_fields:
