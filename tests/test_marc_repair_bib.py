@@ -16,6 +16,8 @@ extracts exhibiting the three defect classes this tool targets:
 import glob
 import os
 import sys
+from dataclasses import dataclass, field
+from typing import Callable
 
 import pytest
 
@@ -418,32 +420,6 @@ class TestTranscodeMarc8:
         converted = dict(field880.subfields)["a"]
         assert converted == "כתאב אלחגה"
         assert "\x1b" not in converted  # no leftover raw escape byte
-
-    def test_runs_by_default_via_cli_but_not_logged_unless_flagged(self, tmp_path):
-        pytest.importorskip("pymarc")
-        leader = list(_SYNTHETIC_LEADER)
-        leader[9] = " "
-        parsed = m.ParsedRecord(
-            leader="".join(leader),
-            entries=[],
-            fields=[
-                m.Field_("008", None, None, content="x" * 40),
-                m.Field_("100", "1 ", [("a", "Bal\xe5asim, \xf2Hasan.")]),
-            ],
-        )
-        src = tmp_path / "marc8.mrc"
-        src.write_bytes(m.assemble_marc(parsed))
-        out = tmp_path / "out.mrc"
-        log = tmp_path / "run.log"
-        rc = m.main([str(src), "-o", str(out), "--log", str(log)])
-        assert rc == 0
-        # transcoding itself runs by default, but isn't logged
-        # per-record unless --log-transcoded-marc8 (and --log-informational)
-        # are also given -- with no other loggable entries, no log file
-        # is written at all
-        assert not _resolve_log(log).exists()
-        results = m.repair_text(m._read_text(str(out)))
-        assert results[0].leader[9] == "a"
 
     def test_log_transcoded_marc8_flag_enables_logging(self, tmp_path):
         pytest.importorskip("pymarc")
@@ -901,24 +877,6 @@ class TestFixInvalidLeaderBytes:
         assert parsed.leader[8] == " "
         assert parsed.leader[17] == " "
 
-    def test_runs_by_default_via_cli_and_logged_as_informational(self, tmp_path):
-        leader = _VALID_LEADER[:5] + "0" + _VALID_LEADER[6:]
-        parsed = m.ParsedRecord(
-            leader=leader,
-            entries=[],
-            fields=[m.Field_("008", None, None, content="x" * 40)],
-        )
-        src = tmp_path / "badleader.mrc"
-        src.write_bytes(m.assemble_marc(parsed))
-        out = tmp_path / "out.mrc"
-        log = tmp_path / "run.log"
-        rc = m.main([str(src), "-o", str(out), "--log-informational", "--log", str(log)])
-        assert rc == 0
-        content = _resolve_log(log).read_text(encoding="utf-8")
-        assert "leader_byte_defaulted" in content
-        results = m.repair_text(m._read_text(str(out)))
-        assert results[0].leader[5] == "c"
-
     def test_no_fix_invalid_leader_bytes_flag_skips_it(self, tmp_path):
         leader = _VALID_LEADER[:5] + "0" + _VALID_LEADER[6:]
         parsed = m.ParsedRecord(
@@ -1083,18 +1041,6 @@ class TestLeaderEntryMapCorrection:
         raw[20:24] = b"45x0"
         return bytes(raw)
 
-    def test_runs_by_default_via_cli_but_not_logged_unless_flagged(self, tmp_path):
-        src = tmp_path / "badmap.mrc"
-        src.write_bytes(self._corrupted_entry_map_bytes())
-        out = tmp_path / "out.mrc"
-        log = tmp_path / "run.log"
-        rc = m.main([str(src), "-o", str(out), "--log", str(log)])
-        assert rc == 0
-        resolved_log = _resolve_log(log)
-        content = resolved_log.read_text(encoding="utf-8") if resolved_log.exists() else ""
-        assert "leader_entry_map_fixed" not in content
-        assert m.assemble_marc(m.repair_text(m._read_text(str(out)))[0])[20:24] == b"4500"
-
     def test_log_leader_entry_map_fixed_flag_enables_logging(self, tmp_path):
         src = tmp_path / "badmap.mrc"
         src.write_bytes(self._corrupted_entry_map_bytes())
@@ -1159,24 +1105,6 @@ class TestAddDefault245:
         assert details == []
         assert parsed.fields[0].subfields == [("a", "Real title.")]
 
-    def test_runs_by_default_via_cli_and_logged_as_informational(self, tmp_path):
-        parsed = m.ParsedRecord(
-            leader=_SYNTHETIC_LEADER,
-            entries=[],
-            fields=[m.Field_("008", None, None, content="x" * 40)],
-        )
-        src = tmp_path / "no245.mrc"
-        src.write_bytes(m.assemble_marc(parsed))
-        out = tmp_path / "out.mrc"
-        log = tmp_path / "run.log"
-        rc = m.main([str(src), "-o", str(out), "--log-informational", "--log", str(log)])
-        assert rc == 0
-        content = _resolve_log(log).read_text(encoding="utf-8")
-        assert "=== INFORMATIONAL: added_default_245 (1) ===" in content
-        results = m.repair_text(m._read_text(str(out)))
-        field245 = next(f for f in results[0].fields if f.tag == "245")
-        assert field245.subfields == [("a", "No title")]
-
     def test_no_add_default_245_flag_leaves_it_missing(self, tmp_path):
         parsed = m.ParsedRecord(
             leader=_SYNTHETIC_LEADER,
@@ -1237,25 +1165,6 @@ class TestAddDefault008:
         details = m.add_default_008(parsed)
         assert details == []
         assert parsed.fields[0].content == "x" * 40
-
-    def test_runs_by_default_via_cli_and_logged_as_informational(self, tmp_path):
-        parsed = m.ParsedRecord(
-            leader=_SYNTHETIC_LEADER,
-            entries=[],
-            fields=[m.Field_("245", "00", [("a", "Title.")])],
-        )
-        src = tmp_path / "no008.mrc"
-        src.write_bytes(m.assemble_marc(parsed))
-        out = tmp_path / "out.mrc"
-        log = tmp_path / "run.log"
-        rc = m.main([str(src), "-o", str(out), "--log-informational", "--log", str(log)])
-        assert rc == 0
-        content = _resolve_log(log).read_text(encoding="utf-8")
-        assert "=== INFORMATIONAL: added_default_008 (1) ===" in content
-        assert "missing_008" not in content
-        results = m.repair_text(m._read_text(str(out)))
-        field008 = next(f for f in results[0].fields if f.tag == "008")
-        assert field008.content == m.DEFAULT_008_CONTENT
 
     def test_no_add_default_008_flag_leaves_it_missing_and_flagged(self, tmp_path):
         parsed = m.ParsedRecord(
@@ -1576,31 +1485,6 @@ class TestNormalizeSubfield9To0:
         assert details == []
         assert parsed.fields[0].subfields == [("a", "Subject")]
 
-    def test_runs_by_default_via_cli_but_not_logged_unless_flagged(self, tmp_path):
-        parsed = m.ParsedRecord(
-            leader=_SYNTHETIC_LEADER,
-            entries=[],
-            fields=[
-                m.Field_("008", None, None, content="x" * 40),
-                m.Field_("650", " 0", [("a", "Subject"), ("9", "123456")]),
-            ],
-        )
-        src = tmp_path / "sub9.mrc"
-        src.write_bytes(m.assemble_marc(parsed))
-        out = tmp_path / "out.mrc"
-        log = tmp_path / "run.log"
-        rc = m.main([str(src), "-o", str(out), "--log-informational", "--log", str(log)])
-        assert rc == 0
-        # normalization itself runs by default, but isn't logged
-        # per-record unless --log-normalized-subfield-9-to-0 (and
-        # --log-informational) are also given
-        resolved_log = _resolve_log(log)
-        content = resolved_log.read_text(encoding="utf-8") if resolved_log.exists() else ""
-        assert "normalized_subfield_9_to_0" not in content
-        results = m.repair_text(m._read_text(str(out)))
-        field = next(f for f in results[0].fields if f.tag == "650")
-        assert field.subfields == [("a", "Subject"), ("0", "123456")]
-
     def test_log_normalized_subfield_9_to_0_flag_enables_logging(self, tmp_path):
         parsed = m.ParsedRecord(
             leader=_SYNTHETIC_LEADER,
@@ -1690,30 +1574,6 @@ class TestNormalizeSmartCharacters:
         )
         m.normalize_smart_characters(parsed)
         assert parsed.fields[0].subfields == [("a", "a bc")]
-
-    def test_runs_by_default_via_cli_but_not_logged_unless_flagged(self, tmp_path):
-        parsed = m.ParsedRecord(
-            leader=_SYNTHETIC_LEADER,
-            entries=[],
-            fields=[
-                m.Field_("008", None, None, content="x" * 40),
-                m.Field_("520", "  ", [("a", "It’s great.")]),
-            ],
-        )
-        src = tmp_path / "smart.mrc"
-        src.write_bytes(m.assemble_marc(parsed))
-        out = tmp_path / "out.mrc"
-        log = tmp_path / "run.log"
-        rc = m.main([str(src), "-o", str(out), "--log", str(log)])
-        assert rc == 0
-        # normalization itself runs by default, but isn't logged
-        # per-record unless --log-normalized-smart-characters (and
-        # --log-informational) are also given -- with no other loggable
-        # entries, no log file is written at all
-        assert not _resolve_log(log).exists()
-        results = m.repair_text(m._read_text(str(out)))
-        title_field = next(f for f in results[0].fields if f.tag == "520")
-        assert title_field.subfields == [("a", "It's great.")]
 
     def test_log_normalized_smart_characters_flag_enables_logging(self, tmp_path):
         parsed = m.ParsedRecord(
@@ -1815,27 +1675,6 @@ class TestFindAndFixMojibake:
         details = m.find_and_fix_mojibake(parsed)
         assert len(details) == 1
         assert parsed.fields[0].content == "Großbritannien"
-
-    def test_runs_by_default_via_cli_and_logged_as_informational(self, tmp_path):
-        parsed = m.ParsedRecord(
-            leader=_SYNTHETIC_LEADER,
-            entries=[],
-            fields=[
-                m.Field_("008", None, None, content="x" * 40),
-                m.Field_("500", "  ", [("a", "GroÃŸbritannien")]),
-            ],
-        )
-        src = tmp_path / "moji.mrc"
-        src.write_bytes(m.assemble_marc(parsed))
-        out = tmp_path / "out.mrc"
-        log = tmp_path / "run.log"
-        rc = m.main([str(src), "-o", str(out), "--log-informational", "--log", str(log)])
-        assert rc == 0
-        content = _resolve_log(log).read_text(encoding="utf-8")
-        assert "=== INFORMATIONAL: fixed_mojibake (1) ===" in content
-        results = m.repair_text(m._read_text(str(out)))
-        field = next(f for f in results[0].fields if f.tag == "500")
-        assert field.subfields == [("a", "Großbritannien")]
 
     def test_no_fix_mojibake_flag_skips_it(self, tmp_path):
         parsed = m.ParsedRecord(
@@ -2015,29 +1854,6 @@ class TestStripDuplicateNonRepeatableFields:
         remaining = [f for f in parsed.fields if f.tag == "001"]
         assert remaining[0].content == "ocm12345678"
 
-    def test_runs_by_default_via_cli_logged_as_fixed_requires_attention(self, tmp_path):
-        parsed = m.ParsedRecord(
-            leader=_SYNTHETIC_LEADER,
-            entries=[],
-            fields=[
-                m.Field_("008", None, None, content="x" * 40),
-                m.Field_("245", "14", [("a", "Real title /")]),
-                m.Field_("245", "  ", [("a", "2nd ed.")]),
-            ],
-        )
-        src = tmp_path / "dup245.mrc"
-        src.write_bytes(m.assemble_marc(parsed))
-        out = tmp_path / "out.mrc"
-        log = tmp_path / "run.log"
-        rc = m.main([str(src), "-o", str(out), "--log", str(log)])
-        assert rc == 0
-        content = _resolve_log(log).read_text(encoding="utf-8")
-        assert "=== FIXED/REQUIRES ATTENTION: removed_non_repeatable_duplicate (1) ===" in content
-        assert "2nd ed." in content
-        results = m.repair_text(m._read_text(str(out)))
-        remaining = [f for f in results[0].fields if f.tag == "245"]
-        assert len(remaining) == 1
-
     def test_no_strip_flag_leaves_duplicates(self, tmp_path):
         parsed = m.ParsedRecord(
             leader=_SYNTHETIC_LEADER,
@@ -2096,27 +1912,6 @@ class TestFix008Length:
             fields=[m.Field_("008", None, None, content="x" * 40)],
         )
         assert m.fix_008_length(parsed) == []
-
-    def test_runs_by_default_via_cli_logged_as_fixed_requires_attention(self, tmp_path):
-        parsed = m.ParsedRecord(
-            leader=_SYNTHETIC_LEADER,
-            entries=[],
-            fields=[
-                m.Field_("008", None, None, content="x" * 35),
-                m.Field_("245", "00", [("a", "Title.")]),
-            ],
-        )
-        src = tmp_path / "short008.mrc"
-        src.write_bytes(m.assemble_marc(parsed))
-        out = tmp_path / "out.mrc"
-        log = tmp_path / "run.log"
-        rc = m.main([str(src), "-o", str(out), "--log", str(log)])
-        assert rc == 0
-        content = _resolve_log(log).read_text(encoding="utf-8")
-        assert "=== FIXED/REQUIRES ATTENTION: fixed_008_length (1) ===" in content
-        results = m.repair_text(m._read_text(str(out)))
-        field008 = next(f for f in results[0].fields if f.tag == "008")
-        assert len(field008.content) == 40
 
 
 # ---------------------------------------------------------------------------
@@ -2259,5 +2054,223 @@ class TestDetectOnlyChecks:
 
 
 # ---------------------------------------------------------------------------
-# --log-informational
+# CLI-default-behavior wiring, parametrized across categories that share
+# the same shape of test: build one triggering record, run `main` with a
+# given set of extra flags, check the log for required/forbidden
+# substrings, then check one thing about the repaired output. Categories
+# whose verification needs more than that (branching logic, multiple
+# records, etc.) keep their own dedicated test instead -- see e.g.
+# TestFixInvalidTags.test_runs_by_default_via_cli_picking_an_unused_9xx.
 # ---------------------------------------------------------------------------
+
+@dataclass
+class _CliDefaultCase:
+    id: str
+    build: Callable[[], bytes]
+    verify: Callable[[list], bool]
+    extra_cli_args: list = field(default_factory=list)
+    required_log_substrings: list = field(default_factory=list)
+    forbidden_log_substrings: list = field(default_factory=list)
+    requires_pymarc: bool = False
+
+
+def _run_cli_default_case(case: "_CliDefaultCase", tmp_path):
+    if case.requires_pymarc:
+        pytest.importorskip("pymarc")
+    src = tmp_path / "in.mrc"
+    src.write_bytes(case.build())
+    out = tmp_path / "out.mrc"
+    log = tmp_path / "run.log"
+    rc = m.main([str(src), "-o", str(out), *case.extra_cli_args, "--log", str(log)])
+    assert rc == 0
+    resolved_log = _resolve_log(log)
+    content = resolved_log.read_text(encoding="utf-8") if resolved_log.exists() else ""
+    for substring in case.required_log_substrings:
+        assert substring in content
+    for substring in case.forbidden_log_substrings:
+        assert substring not in content
+    results = m.repair_text(m._read_text(str(out)))
+    assert case.verify(results)
+
+
+_INFORMATIONAL_BY_DEFAULT_CASES = [
+    _CliDefaultCase(
+        id="leader_byte_defaulted",
+        build=lambda: m.assemble_marc(m.ParsedRecord(
+            leader=_VALID_LEADER[:5] + "0" + _VALID_LEADER[6:],
+            entries=[],
+            fields=[m.Field_("008", None, None, content="x" * 40)],
+        )),
+        extra_cli_args=["--log-informational"],
+        required_log_substrings=["=== INFORMATIONAL: leader_byte_defaulted (1) ==="],
+        verify=lambda results: results[0].leader[5] == "c",
+    ),
+    _CliDefaultCase(
+        id="added_default_245",
+        build=lambda: m.assemble_marc(m.ParsedRecord(
+            leader=_SYNTHETIC_LEADER,
+            entries=[],
+            fields=[m.Field_("008", None, None, content="x" * 40)],
+        )),
+        extra_cli_args=["--log-informational"],
+        required_log_substrings=["=== INFORMATIONAL: added_default_245 (1) ==="],
+        verify=lambda results: (
+            next(f for f in results[0].fields if f.tag == "245").subfields
+            == [("a", "No title")]
+        ),
+    ),
+    _CliDefaultCase(
+        id="added_default_008",
+        build=lambda: m.assemble_marc(m.ParsedRecord(
+            leader=_SYNTHETIC_LEADER,
+            entries=[],
+            fields=[m.Field_("245", "00", [("a", "Title.")])],
+        )),
+        extra_cli_args=["--log-informational"],
+        required_log_substrings=["=== INFORMATIONAL: added_default_008 (1) ==="],
+        forbidden_log_substrings=["missing_008"],
+        verify=lambda results: (
+            next(f for f in results[0].fields if f.tag == "008").content
+            == m.DEFAULT_008_CONTENT
+        ),
+    ),
+    _CliDefaultCase(
+        id="fixed_mojibake",
+        build=lambda: m.assemble_marc(m.ParsedRecord(
+            leader=_SYNTHETIC_LEADER,
+            entries=[],
+            fields=[
+                m.Field_("008", None, None, content="x" * 40),
+                m.Field_("500", "  ", [("a", "GroÃŸbritannien")]),
+            ],
+        )),
+        extra_cli_args=["--log-informational"],
+        required_log_substrings=["=== INFORMATIONAL: fixed_mojibake (1) ==="],
+        verify=lambda results: (
+            next(f for f in results[0].fields if f.tag == "500").subfields
+            == [("a", "Großbritannien")]
+        ),
+    ),
+]
+
+
+def _build_corrupted_entry_map_record() -> bytes:
+    parsed = m.ParsedRecord(
+        leader=_SYNTHETIC_LEADER,
+        entries=[],
+        fields=[m.Field_("008", None, None, content="x" * 40)],
+    )
+    raw = bytearray(m.assemble_marc(parsed))
+    raw[20:24] = b"45x0"
+    return bytes(raw)
+
+
+_NOT_LOGGED_UNLESS_FLAGGED_CASES = [
+    _CliDefaultCase(
+        id="leader_entry_map_fixed",
+        build=_build_corrupted_entry_map_record,
+        forbidden_log_substrings=["leader_entry_map_fixed"],
+        verify=lambda results: m.assemble_marc(results[0])[20:24] == b"4500",
+    ),
+    _CliDefaultCase(
+        id="transcoded_marc8",
+        build=lambda: m.assemble_marc(m.ParsedRecord(
+            leader=_SYNTHETIC_LEADER[:9] + " " + _SYNTHETIC_LEADER[10:],
+            entries=[],
+            fields=[
+                m.Field_("008", None, None, content="x" * 40),
+                m.Field_("100", "1 ", [("a", "Bal\xe5asim, \xf2Hasan.")]),
+            ],
+        )),
+        forbidden_log_substrings=["transcoded_marc8"],
+        verify=lambda results: results[0].leader[9] == "a",
+        requires_pymarc=True,
+    ),
+    _CliDefaultCase(
+        id="normalized_subfield_9_to_0",
+        build=lambda: m.assemble_marc(m.ParsedRecord(
+            leader=_SYNTHETIC_LEADER,
+            entries=[],
+            fields=[
+                m.Field_("008", None, None, content="x" * 40),
+                m.Field_("650", " 0", [("a", "Subject"), ("9", "123456")]),
+            ],
+        )),
+        extra_cli_args=["--log-informational"],
+        forbidden_log_substrings=["normalized_subfield_9_to_0"],
+        verify=lambda results: (
+            next(f for f in results[0].fields if f.tag == "650").subfields
+            == [("a", "Subject"), ("0", "123456")]
+        ),
+    ),
+    _CliDefaultCase(
+        id="normalized_smart_characters",
+        build=lambda: m.assemble_marc(m.ParsedRecord(
+            leader=_SYNTHETIC_LEADER,
+            entries=[],
+            fields=[
+                m.Field_("008", None, None, content="x" * 40),
+                m.Field_("520", "  ", [("a", "It’s great.")]),
+            ],
+        )),
+        forbidden_log_substrings=["normalized_smart_characters"],
+        verify=lambda results: (
+            next(f for f in results[0].fields if f.tag == "520").subfields
+            == [("a", "It's great.")]
+        ),
+    ),
+]
+
+_FIXED_REQUIRES_ATTENTION_CASES = [
+    _CliDefaultCase(
+        id="removed_non_repeatable_duplicate",
+        build=lambda: m.assemble_marc(m.ParsedRecord(
+            leader=_SYNTHETIC_LEADER,
+            entries=[],
+            fields=[
+                m.Field_("008", None, None, content="x" * 40),
+                m.Field_("245", "14", [("a", "Real title /")]),
+                m.Field_("245", "  ", [("a", "2nd ed.")]),
+            ],
+        )),
+        required_log_substrings=[
+            "=== FIXED/REQUIRES ATTENTION: removed_non_repeatable_duplicate (1) ===",
+            "2nd ed.",
+        ],
+        verify=lambda results: len([f for f in results[0].fields if f.tag == "245"]) == 1,
+    ),
+    _CliDefaultCase(
+        id="fixed_008_length",
+        build=lambda: m.assemble_marc(m.ParsedRecord(
+            leader=_SYNTHETIC_LEADER,
+            entries=[],
+            fields=[
+                m.Field_("008", None, None, content="x" * 35),
+                m.Field_("245", "00", [("a", "Title.")]),
+            ],
+        )),
+        required_log_substrings=["=== FIXED/REQUIRES ATTENTION: fixed_008_length (1) ==="],
+        verify=lambda results: (
+            len(next(f for f in results[0].fields if f.tag == "008").content) == 40
+        ),
+    ),
+]
+
+
+class TestCliDefaultBehaviors:
+    """Each fix/detect category runs by default (or not) and gets logged
+    by default (or not) in one of three shapes -- see the case tables
+    above. This exercises that CLI wiring once per category without
+    repeating the same four-step test body for each one."""
+
+    @pytest.mark.parametrize("case", _INFORMATIONAL_BY_DEFAULT_CASES, ids=lambda c: c.id)
+    def test_runs_by_default_and_logged_as_informational(self, case, tmp_path):
+        _run_cli_default_case(case, tmp_path)
+
+    @pytest.mark.parametrize("case", _NOT_LOGGED_UNLESS_FLAGGED_CASES, ids=lambda c: c.id)
+    def test_runs_by_default_but_not_logged_unless_flagged(self, case, tmp_path):
+        _run_cli_default_case(case, tmp_path)
+
+    @pytest.mark.parametrize("case", _FIXED_REQUIRES_ATTENTION_CASES, ids=lambda c: c.id)
+    def test_runs_by_default_logged_as_fixed_requires_attention(self, case, tmp_path):
+        _run_cli_default_case(case, tmp_path)
