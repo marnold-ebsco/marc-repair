@@ -3236,6 +3236,12 @@ def repair_holdings_records(
         deferred two-pass approach `main` uses for bib records (needs
         every tag in the *holdings* file specifically, so this is
         tracked separately from the bib pass)
+      * an 001 (or other record identifier -- see `record_identifier`)
+        reused across more than one record in this run is flagged for
+        every record involved (category "duplicate_identifier",
+        DUPLICATE RECORDS section, same as the bib pipeline) -- see
+        `find_duplicate_identifiers`; this is a whole-file check, run
+        once after the full pass, same as the bib pipeline's equivalent
 
     Deliberately NOT applied here (bib-specific, would misfire on a
     holdings record): a placeholder 245 (holdings records have no 245),
@@ -3270,6 +3276,7 @@ def repair_holdings_records(
     log_entries: list[LogEntry] = []
     used_tags: set[str] = set()
     pending_tag_fixes: list[tuple[int, int, int, str]] = []
+    id_records: list[tuple[int, str, str]] = []
     n_total = 0
     n_unresolved = 0
     bytes_consumed_for_estimate = 0
@@ -3355,6 +3362,8 @@ def repair_holdings_records(
                 log("oversized_unfixable", False, i, rec_id, f"passed through unchanged: {exc}")
                 out_fh.write(rec_text.encode(encoding_used))
                 n_unresolved += 1
+                if rec_id:
+                    id_records.append((i, rec_id, rec_text[:5]))
                 continue
 
             if len(assembled) > 99999:
@@ -3367,6 +3376,8 @@ def repair_holdings_records(
 
             offset = out_fh.tell()
             out_fh.write(assembled)
+            if rec_id:
+                id_records.append((i, rec_id, assembled[:5].decode("ascii")))
 
             has_invalid_tag = False
             for f in parsed.fields:
@@ -3407,6 +3418,9 @@ def repair_holdings_records(
                 )
                 fixup_fh.seek(offset)
                 fixup_fh.write(fixed_bytes)
+
+    dup_ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    log_entries.extend(find_duplicate_identifiers(id_records, dup_ts))
 
     if log_entries:
         write_log(log_path, log_entries)

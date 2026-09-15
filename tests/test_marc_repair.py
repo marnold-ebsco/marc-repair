@@ -3440,6 +3440,31 @@ class TestRepairHoldingsRecords:
         field852 = next(f for f in parsed.fields if f.tag == "852")
         assert ("c", "Migration") in field852.subfields
 
+    def test_duplicate_001_flagged_across_records(self, tmp_path):
+        fields_a = [
+            m.Field_("001", None, None, content="dup1"),
+            m.Field_("004", None, None, content="ocm123"),
+            m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
+            m.Field_("852", "  ", [("a", "Main Library")]),
+        ]
+        fields_b = [
+            m.Field_("001", None, None, content="dup1"),
+            m.Field_("004", None, None, content="ocm456"),
+            m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
+            m.Field_("852", "  ", [("a", "Annex")]),
+        ]
+        result, out, log = self._run(tmp_path, [
+            self._holdings_record(fields=fields_a),
+            self._holdings_record(fields=fields_b),
+        ])
+        assert result["total"] == 2
+        content = _resolve_log(log).read_text(encoding="utf-8")
+        assert "duplicate_identifier" in content
+        assert content.count("dup1") >= 2
+        # both records still made it into the output, unmodified by the
+        # (unfixable) duplicate check
+        assert m.count_records(str(out)) == 2
+
     def test_repairs_real_short_bucknell_holdings_file(self):
         # Regression/integration check against real production data
         # (a Bucknell export) rather than only synthetic fixtures --
