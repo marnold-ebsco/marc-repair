@@ -446,8 +446,11 @@ re-run with `--overrides overrides.json`.
 | `required_a_tags.txt` | Editable tag list for `--strip-missing-required-a` — deliberately external, since which fields truly require `$a` is a cataloging-practice judgment call, not something to hardcode |
 | `non_repeatable_tags.txt` | Editable tag list for `--strip-duplicate-non-repeatable-fields` — deliberately conservative (only tags whose Not-Repeatable status is well-established); extend it if you find more in your own data |
 | `requirements.txt` | Only `pymarc`, only needed for `--transcode-marc8` |
-| `tests/test_marc_repair.py` | pytest suite |
+| `tests/test_marc_repair_core.py` | pytest suite — parsing/assembly, splitting, logging, and other tests not specific to bib or holdings content |
+| `tests/test_marc_repair_bib.py` | pytest suite — bib-only repair categories |
+| `tests/test_marc_repair_holdings.py` | pytest suite — holdings-only repair categories |
 | `tests/fixtures/` | Real (anonymized) MARC extracts exercising each defect class |
+| `tools/generate_repair_categories_doc.py` | Source of truth for `docs/REPAIR_CATEGORIES.md` — edit the row data here and re-run it, not the markdown file directly |
 
 ## Testing
 
