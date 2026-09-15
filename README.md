@@ -450,6 +450,7 @@ re-run with `--overrides overrides.json`.
 | `tests/test_marc_repair_bib.py` | pytest suite — bib-only repair categories |
 | `tests/test_marc_repair_holdings.py` | pytest suite — holdings-only repair categories |
 | `tests/fixtures/` | Real (anonymized) MARC extracts exercising each defect class |
+| `tools/generate_repair_categories_doc.py` | Source of truth for `docs/REPAIR_CATEGORIES.md` — edit the row data here and re-run it, not the markdown file directly |
 
 ## Testing
 
