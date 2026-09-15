@@ -20,7 +20,7 @@ all -- every holdings INFORMATIONAL entry is always written.**
 | Mojibake (double-encoded UTF-8) fix | Re-decoded field data | Yes (`--no-fix-mojibake`) | `fixed_mojibake` | INFORMATIONAL | No | `--no-fix-mojibake`; `--log-informational` |
 | Leader bytes 05/06/08/17 defaulted | Defaulted leader byte | Yes (`--no-fix-invalid-leader-bytes`) | `leader_byte_defaulted` | INFORMATIONAL | No | `--no-fix-invalid-leader-bytes`; `--log-informational` |
 | 999 -> 945 remap | Renamed field tag | **No** (`--remap-999-to-945` to enable) | `remapped_999_to_945` | INFORMATIONAL | No (needs `--log-999-to-945` too) | `--remap-999-to-945`; `--log-999-to-945`; `--log-informational` |
-| $9 -> $0 normalization | Renamed subfield code | Yes (`--no-normalize-subfield-9`) | `normalized_subfield_9_to_0` | INFORMATIONAL | No | `--no-normalize-subfield-9`; `--log-informational` |
+| $9 -> $0 normalization | Renamed subfield code | Yes (`--no-normalize-subfield-9`) | `normalized_subfield_9_to_0` | INFORMATIONAL | No (needs `--log-normalized-subfield-9-to-0` *and* `--log-informational`) | `--no-normalize-subfield-9`; `--log-normalized-subfield-9-to-0`; `--log-informational` |
 | Smart-character normalization | Replaced characters | Yes (`--no-normalize-smart-characters`) | `normalized_smart_characters` | INFORMATIONAL | No | `--no-normalize-smart-characters`; `--log-normalized-smart-characters`; `--log-informational` |
 | Invalid subfield code removal | Removed subfield | Yes (`--no-strip-invalid-subfield-codes`) | `removed_invalid_subfield` | FIXED/REQUIRES ATTENTION | **Yes** | `--no-strip-invalid-subfield-codes` |
 | Missing-required-$a field removal (also treats a punctuation-only $a, e.g. "." or "--", as missing) | Removed field | Yes (`--no-strip-missing-required-a`) | `field_removed_because_missing_a` | FIXED/REQUIRES ATTENTION | **Yes** | `--no-strip-missing-required-a`; `--required-a-tags-file` |
@@ -41,8 +41,8 @@ all -- every holdings INFORMATIONAL entry is always written.**
 | Doubled proxy URL prefix | Flagged only, no change | detect-only | `doubled_proxy_url` | NOT FIXED | **Yes** | -- (detect-only, no switch) |
 | Invalid indicator *value* (present but not digit/blank) | Flagged only, no change | detect-only | `invalid_indicator_value` | INFORMATIONAL | No | `--log-informational` (detect-only, no fix switch) |
 | Invalid bibliographic level (leader byte 07) | Flagged only, no change | detect-only | `invalid_bibliographic_level` | INFORMATIONAL | No | `--log-informational` (detect-only, no fix switch) |
-| Dangling 880 $6 link | Flagged only, no change | detect-only | `dangling_880_link` | INFORMATIONAL | No | `--log-informational` (detect-only, no fix switch) |
-| Invalid ISBN/ISSN checksum | Flagged only, no change | detect-only | `invalid_isbn_issn_checksum` | INFORMATIONAL | No | `--log-informational` (detect-only, no fix switch) |
+| Dangling 880 $6 link | Flagged only, no change | **No** (`--check-dangling-880-links` to enable) | `dangling_880_link` | INFORMATIONAL | No (needs `--check-dangling-880-links` *and* `--log-informational`) | `--check-dangling-880-links`; `--log-informational` (detect-only, no fix switch) |
+| Invalid ISBN/ISSN checksum | Flagged only, no change | **No** (`--check-isbn-issn-checksum` to enable) | `invalid_isbn_issn_checksum` | INFORMATIONAL | No (needs `--check-isbn-issn-checksum` *and* `--log-informational`) | `--check-isbn-issn-checksum`; `--log-informational` (detect-only, no fix switch) |
 | Duplicate identifier across records | Flagged only, no change | detect-only | `duplicate_identifier` | DUPLICATE RECORDS | **Yes** | -- (detect-only, no switch) |
 
 ## Holdings pipeline (`repair_holdings_records`, via `--split-bib-holdings` or `--repair-holdings`)

@@ -1782,7 +1782,7 @@ class TestNormalizeSubfield9To0:
         assert details == []
         assert parsed.fields[0].subfields == [("a", "Subject")]
 
-    def test_runs_by_default_via_cli(self, tmp_path):
+    def test_runs_by_default_but_not_logged_unless_flagged(self, tmp_path):
         parsed = m.ParsedRecord(
             leader=_SYNTHETIC_LEADER,
             entries=[],
@@ -1796,6 +1796,34 @@ class TestNormalizeSubfield9To0:
         out = tmp_path / "out.mrc"
         log = tmp_path / "run.log"
         rc = m.main([str(src), "-o", str(out), "--log-informational", "--log", str(log)])
+        assert rc == 0
+        # normalization itself runs by default, but isn't logged
+        # per-record unless --log-normalized-subfield-9-to-0 (and
+        # --log-informational) are also given
+        resolved_log = _resolve_log(log)
+        content = resolved_log.read_text(encoding="utf-8") if resolved_log.exists() else ""
+        assert "normalized_subfield_9_to_0" not in content
+        results = m.repair_text(m._read_text(str(out)))
+        field = next(f for f in results[0].fields if f.tag == "650")
+        assert field.subfields == [("a", "Subject"), ("0", "123456")]
+
+    def test_log_normalized_subfield_9_to_0_flag_enables_logging(self, tmp_path):
+        parsed = m.ParsedRecord(
+            leader=_SYNTHETIC_LEADER,
+            entries=[],
+            fields=[
+                m.Field_("008", None, None, content="x" * 40),
+                m.Field_("650", " 0", [("a", "Subject"), ("9", "123456")]),
+            ],
+        )
+        src = tmp_path / "sub9.mrc"
+        src.write_bytes(m.assemble_marc(parsed))
+        out = tmp_path / "out.mrc"
+        log = tmp_path / "run.log"
+        rc = m.main([
+            str(src), "-o", str(out), "--log-normalized-subfield-9-to-0",
+            "--log-informational", "--log", str(log),
+        ])
         assert rc == 0
         content = _resolve_log(log).read_text(encoding="utf-8")
         assert "normalized_subfield_9_to_0" in content

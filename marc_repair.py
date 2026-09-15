@@ -1793,7 +1793,8 @@ def find_dangling_880_links(parsed: ParsedRecord) -> list[tuple[str, str]]:
     in the record (e.g. $6 "245-01" but there's no 245). A dangling
     link breaks the record's own romanized/original-script pairing --
     detect-only, since there's no way to know what the correct link
-    should have been. category: "dangling_880_link"."""
+    should have been. category: "dangling_880_link". Off by default in
+    the CLI -- see --check-dangling-880-links."""
     findings = []
     tags_present = {f.tag for f in parsed.fields}
     for f in parsed.fields:
@@ -1856,7 +1857,8 @@ def find_invalid_isbn_issn_checksums(parsed: ParsedRecord) -> list[tuple[str, st
     values whose cleaned length doesn't match a known ISBN/ISSN form at
     all (e.g. a qualifier-only $a) rather than guessing. Detect-only --
     there's no safe way to know which digit was wrong. category:
-    "invalid_isbn_issn_checksum"."""
+    "invalid_isbn_issn_checksum". Off by default in the CLI -- see
+    --check-isbn-issn-checksum."""
     findings = []
     for f in parsed.fields:
         if f.is_control():
@@ -2640,8 +2642,11 @@ def normalize_subfield_9_to_0(parsed: ParsedRecord) -> list[str]:
     promotes it to the standard one. Because $9 is *reserved* rather than
     standardized, a $9 could in principle mean something unrelated in some
     other system's data -- run by default per that script's convention,
-    but logged (category "normalized_subfield_9_to_0") since it changes
-    subfield codes, and --no-normalize-subfield-9 is available to skip it.
+    and --no-normalize-subfield-9 is available to skip it. Returns one
+    detail string per field changed (category "normalized_subfield_9_to_0"
+    if the caller logs them), but by default the CLI does NOT log these --
+    see --log-normalized-subfield-9-to-0 -- since a file that uses $9 at
+    all often has it on nearly every record.
     """
     details = []
     for f in parsed.fields:
@@ -3722,8 +3727,38 @@ def main(argv: list[str] | None = None) -> int:
         help="do NOT rewrite $9 subfield codes to $0. By default every "
         "$9 is unconditionally rewritten to $0 (a long-standing cleanup "
         "convention treating $9 as a legacy/local stand-in for the "
-        "standard authority-linking subfield) and logged (see --log); "
-        "pass this flag to leave $9 subfields as-is instead",
+        "standard authority-linking subfield); pass this flag to leave "
+        "$9 subfields as-is instead. Not logged per-record by default "
+        "(see --log-normalized-subfield-9-to-0) since this can be "
+        "nearly every record in a file that uses $9",
+    )
+    parser.add_argument(
+        "--log-normalized-subfield-9-to-0",
+        action="store_true",
+        help="log each individual $9-to-$0 rewrite (see "
+        "--no-normalize-subfield-9). Off by default since this can be "
+        "nearly every record in a file that uses $9, which would "
+        "otherwise dominate the log; the fix itself always runs "
+        "regardless of this flag",
+    )
+    parser.add_argument(
+        "--check-isbn-issn-checksum",
+        action="store_true",
+        help="detect a 020 (ISBN) or 022 (ISSN) $a whose check digit "
+        "fails the standard checksum for its length. Off by default "
+        "since it's a detect-only, no-fix check on data that's often "
+        "already correct; pass this flag to have it run and be logged "
+        "as invalid_isbn_issn_checksum (INFORMATIONAL, still needs "
+        "--log-informational too)",
+    )
+    parser.add_argument(
+        "--check-dangling-880-links",
+        action="store_true",
+        help="detect an 880 field whose $6 linking subfield references "
+        "a tag that doesn't exist elsewhere in the record. Off by "
+        "default since it's a detect-only, no-fix check; pass this "
+        "flag to have it run and be logged as dangling_880_link "
+        "(INFORMATIONAL, still needs --log-informational too)",
     )
     parser.add_argument(
         "--no-normalize-smart-characters",
@@ -4029,8 +4064,10 @@ def main(argv: list[str] | None = None) -> int:
                             log("remapped_999_to_945", True, i, rec_id, detail)
                 if args.normalize_subfield_9:
                     rec_id = record_identifier(parsed)
-                    for detail in normalize_subfield_9_to_0(parsed):
-                        log("normalized_subfield_9_to_0", True, i, rec_id, detail)
+                    details = normalize_subfield_9_to_0(parsed)
+                    if args.log_normalized_subfield_9_to_0:
+                        for detail in details:
+                            log("normalized_subfield_9_to_0", True, i, rec_id, detail)
                 if args.normalize_smart_characters:
                     rec_id = record_identifier(parsed)
                     details = normalize_smart_characters(parsed)
@@ -4069,11 +4106,15 @@ def main(argv: list[str] | None = None) -> int:
                     rec_id = record_identifier(parsed)
                     for detail in fix_008_length(parsed):
                         log("fixed_008_length", True, i, rec_id, detail)
+                extra_detect_only_findings = []
+                if args.check_dangling_880_links:
+                    extra_detect_only_findings += find_dangling_880_links(parsed)
+                if args.check_isbn_issn_checksum:
+                    extra_detect_only_findings += find_invalid_isbn_issn_checksums(parsed)
                 for category, detail in (
                     find_invalid_indicator_values(parsed)
                     + find_invalid_bibliographic_level(parsed)
-                    + find_dangling_880_links(parsed)
-                    + find_invalid_isbn_issn_checksums(parsed)
+                    + extra_detect_only_findings
                 ):
                     rec_id = record_identifier(parsed)
                     log(category, False, i, rec_id, detail)
