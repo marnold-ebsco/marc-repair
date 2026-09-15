@@ -39,9 +39,8 @@ TABLE_COLUMNS = [
 FOOTER = """
 Holdings has no equivalent of bib's `strip_missing_required_a`,
 `strip_duplicate_non_repeatable_fields`, `remap_999_to_945`,
-`add_default_245`, `duplicate_identifier`, or the
-ISBN/ISSN/880-link/indicator-value/bib-level checks -- those are
-bib-specific and deliberately not applied.
+`add_default_245`, or the ISBN/ISSN/880-link/indicator-value/bib-level
+checks -- those are bib-specific and deliberately not applied.
 """
 
 
@@ -358,6 +357,11 @@ HOLDINGS_ROWS = [
         "Unfixable oversized field/base address", "Left record unchanged",
         "n/a (only if it occurs)", "`oversized_unfixable`", "NOT FIXED",
         "**Yes**", "-- (no switch -- genuinely unfixable)",
+    ),
+    CategoryRow(
+        "Duplicate identifier across records", "Flagged only, no change",
+        "detect-only", "`duplicate_identifier`", "DUPLICATE RECORDS",
+        "**Yes**", "-- (detect-only, no switch)",
     ),
 ]
 
