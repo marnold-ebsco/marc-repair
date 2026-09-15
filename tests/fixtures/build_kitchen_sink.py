@@ -3,7 +3,7 @@
 Standalone, re-runnable, deterministic generator: constructs one synthetic
 record per repair/check category documented in docs/REPAIR_CATEGORIES.md
 (reusing the same Field_/ParsedRecord/assemble_marc construction patterns
-tests/test_marc_repair.py already uses for each category), then pads each
+the tests/test_marc_repair_*.py files already use for each category), then pads each
 output file with real, unmodified records copied out of two existing
 fixtures until it has at least 50 records total.
 
@@ -57,7 +57,7 @@ def _record(leader: str, fields: list) -> bytes:
 def _drop_indicator_char(raw: bytes, needle: bytes, n: int = 1) -> bytes:
     """Corrupt a well-formed record's field by removing `n` indicator
     character(s) right before `needle`'s first subfield delimiter --
-    mirrors tests/test_marc_repair.py's _drop_indicator_chars helper."""
+    mirrors tests/test_marc_repair_bib.py's _drop_indicator_chars helper."""
     assert needle in raw
     return raw.replace(needle, needle[n:], 1)
 
@@ -94,7 +94,7 @@ def _splice_leader_byte(raw: bytes, pos: int, value: str) -> bytes:
 def _splice_entry_map(raw: bytes) -> bytes:
     """Corrupt leader bytes 20-23 (always "4500") to "45x0", bypassing
     assemble_marc's own force-correction of those bytes -- see
-    tests/test_marc_repair.py's _corrupted_entry_map_bytes."""
+    tests/test_marc_repair_bib.py's _corrupted_entry_map_bytes."""
     raw = bytearray(raw)
     raw[20:24] = b"45x0"
     return bytes(raw)
