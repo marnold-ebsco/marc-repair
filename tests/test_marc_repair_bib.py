@@ -289,11 +289,6 @@ class TestFixBadIndicators:
 # transcode_marc8_to_utf8 -- ANSEL diacritics -> Unicode
 # ---------------------------------------------------------------------------
 
-
-# ---------------------------------------------------------------------------
-# transcode_marc8_to_utf8 -- ANSEL diacritics -> Unicode
-# ---------------------------------------------------------------------------
-
 class TestFindSuspectMarc8Escapes:
     def _record(self, raw_a):
         leader = list(_SYNTHETIC_LEADER)
@@ -687,11 +682,6 @@ class TestRecordIdentifier:
 # strip_missing_required_a -- remove fields lacking a required $a
 # ---------------------------------------------------------------------------
 
-
-# ---------------------------------------------------------------------------
-# strip_missing_required_a -- remove fields lacking a required $a
-# ---------------------------------------------------------------------------
-
 class TestStripMissingRequiredA:
     def test_default_tag_list_excludes_505_and_260(self):
         tags = m.load_tag_list(m.DEFAULT_REQUIRED_A_TAGS_FILE)
@@ -776,11 +766,6 @@ class TestStripMissingRequiredA:
         # at least one 505/260 existed in the raw fixture and neither tag
         # should have been wiped out entirely by the required-$a pass
         assert "505" in all_tags or "260" in all_tags
-
-
-# ---------------------------------------------------------------------------
-# find_suspicious_fields -- doubled-URL heuristic
-# ---------------------------------------------------------------------------
 
 
 # ---------------------------------------------------------------------------
@@ -957,11 +942,6 @@ class TestFixInvalidLeaderBytes:
 # strip_invalid_subfield_codes -- remove unusable subfield codes
 # ---------------------------------------------------------------------------
 
-
-# ---------------------------------------------------------------------------
-# strip_invalid_subfield_codes -- remove unusable subfield codes
-# ---------------------------------------------------------------------------
-
 class TestStripInvalidSubfieldCodes:
     def test_removes_bad_subfield_keeps_good_ones(self):
         parsed = m.ParsedRecord(
@@ -1003,11 +983,6 @@ class TestStripInvalidSubfieldCodes:
         log_lines = m.strip_invalid_subfield_codes(parsed)
         assert log_lines == []
         assert parsed.fields[0].subfields == [("a", "Subject"), ("2", "local")]
-
-
-# ---------------------------------------------------------------------------
-# strip_empty_fields -- remove fields with no non-empty subfields, any tag
-# ---------------------------------------------------------------------------
 
 
 # ---------------------------------------------------------------------------
@@ -1056,11 +1031,6 @@ class TestStripEmptyFields:
         )
         m.strip_empty_fields(parsed)
         assert parsed.fields == []
-
-
-# ---------------------------------------------------------------------------
-# assemble_marc -- oversized-record guard
-# ---------------------------------------------------------------------------
 
 
 # ---------------------------------------------------------------------------
@@ -1137,11 +1107,6 @@ class TestLeaderEntryMapCorrection:
         assert rc == 0
         content = _resolve_log(log).read_text(encoding="utf-8")
         assert "leader_entry_map_fixed" in content
-
-
-# ---------------------------------------------------------------------------
-# add_default_245 -- placeholder 245 for records missing one entirely
-# ---------------------------------------------------------------------------
 
 
 # ---------------------------------------------------------------------------
@@ -1251,11 +1216,6 @@ class TestAddDefault245:
 # add_default_008 -- placeholder 008 for records missing one entirely
 # ---------------------------------------------------------------------------
 
-
-# ---------------------------------------------------------------------------
-# add_default_008 -- placeholder 008 for records missing one entirely
-# ---------------------------------------------------------------------------
-
 class TestAddDefault008:
     def test_inserts_default_when_missing(self):
         parsed = m.ParsedRecord(
@@ -1332,11 +1292,6 @@ class TestAddDefault008:
         results = m.repair_text(m._read_text(str(out)))
         field008 = next(f for f in results[0].fields if f.tag == "008")
         assert field008.content == "realcontent" + "x" * 29
-
-
-# ---------------------------------------------------------------------------
-# fix_invalid_tags -- non-numeric tags -> an unused 9XX slot
-# ---------------------------------------------------------------------------
 
 
 # ---------------------------------------------------------------------------
@@ -1489,11 +1444,6 @@ class TestFixInvalidTags:
 # remap_999_to_945 -- Sierra's internal 999 -> locally-defined 945
 # ---------------------------------------------------------------------------
 
-
-# ---------------------------------------------------------------------------
-# remap_999_to_945 -- Sierra's internal 999 -> locally-defined 945
-# ---------------------------------------------------------------------------
-
 class TestRemap999To945:
     def test_retags_999_to_945_with_ff_indicators(self):
         parsed = m.ParsedRecord(
@@ -1590,11 +1540,6 @@ class TestRemap999To945:
         assert rc == 0
         content = _resolve_log(log).read_text(encoding="utf-8")
         assert "remapped_999_to_945" in content
-
-
-# ---------------------------------------------------------------------------
-# normalize_subfield_9_to_0 -- $9 -> $0
-# ---------------------------------------------------------------------------
 
 
 # ---------------------------------------------------------------------------
@@ -1700,11 +1645,6 @@ class TestNormalizeSubfield9To0:
         results = m.repair_text(m._read_text(str(out)))
         field = next(f for f in results[0].fields if f.tag == "650")
         assert field.subfields == [("a", "Subject"), ("9", "123456")]
-
-
-# ---------------------------------------------------------------------------
-# normalize_smart_characters -- typographic Unicode -> plain ASCII
-# ---------------------------------------------------------------------------
 
 
 # ---------------------------------------------------------------------------
@@ -1825,11 +1765,6 @@ class TestNormalizeSmartCharacters:
 # find_and_fix_mojibake -- double-encoded UTF-8
 # ---------------------------------------------------------------------------
 
-
-# ---------------------------------------------------------------------------
-# find_and_fix_mojibake -- double-encoded UTF-8
-# ---------------------------------------------------------------------------
-
 class TestFindAndFixMojibake:
     def _record(self, data, leader9="a"):
         leader = list(_SYNTHETIC_LEADER)
@@ -1919,11 +1854,6 @@ class TestFindAndFixMojibake:
         results = m.repair_text(m._read_text(str(out)))
         field = next(f for f in results[0].fields if f.tag == "500")
         assert field.subfields == [("a", "GroÃŸbritannien")]
-
-
-# ---------------------------------------------------------------------------
-# strip_duplicate_non_repeatable_fields
-# ---------------------------------------------------------------------------
 
 
 # ---------------------------------------------------------------------------
@@ -2134,11 +2064,6 @@ class TestStripDuplicateNonRepeatableFields:
 # fix_008_length
 # ---------------------------------------------------------------------------
 
-
-# ---------------------------------------------------------------------------
-# fix_008_length
-# ---------------------------------------------------------------------------
-
 class TestFix008Length:
     def test_pads_short_008(self):
         parsed = m.ParsedRecord(
@@ -2198,11 +2123,6 @@ class TestFix008Length:
 # find_invalid_indicator_values
 # ---------------------------------------------------------------------------
 
-
-# ---------------------------------------------------------------------------
-# find_invalid_indicator_values
-# ---------------------------------------------------------------------------
-
 class TestFindInvalidIndicatorValues:
     def test_flags_non_digit_non_blank_indicator(self):
         parsed = m.ParsedRecord(
@@ -2247,11 +2167,6 @@ class TestFindInvalidIndicatorValues:
 # find_invalid_bibliographic_level
 # ---------------------------------------------------------------------------
 
-
-# ---------------------------------------------------------------------------
-# find_invalid_bibliographic_level
-# ---------------------------------------------------------------------------
-
 class TestFindInvalidBibliographicLevel:
     def test_flags_invalid_byte_07(self):
         leader = _VALID_LEADER[:7] + "9" + _VALID_LEADER[8:]
@@ -2263,11 +2178,6 @@ class TestFindInvalidBibliographicLevel:
     def test_valid_byte_07_not_flagged(self):
         parsed = m.ParsedRecord(leader=_VALID_LEADER, entries=[], fields=[])
         assert m.find_invalid_bibliographic_level(parsed) == []
-
-
-# ---------------------------------------------------------------------------
-# find_dangling_880_links
-# ---------------------------------------------------------------------------
 
 
 # ---------------------------------------------------------------------------
@@ -2295,11 +2205,6 @@ class TestFindDangling880Links:
             ],
         )
         assert m.find_dangling_880_links(parsed) == []
-
-
-# ---------------------------------------------------------------------------
-# find_invalid_isbn_issn_checksums
-# ---------------------------------------------------------------------------
 
 
 # ---------------------------------------------------------------------------

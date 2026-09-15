@@ -182,11 +182,6 @@ class TestModeStrippedDelimiters:
 # Mode 1 -- intact delimiters, corrupted leader/directory ("bad length")
 # ---------------------------------------------------------------------------
 
-
-# ---------------------------------------------------------------------------
-# Mode 1 -- intact delimiters, corrupted leader/directory ("bad length")
-# ---------------------------------------------------------------------------
-
 class TestModeIntactDelimiters:
     @pytest.mark.parametrize(
         "fixture",
@@ -409,11 +404,6 @@ class TestOversizedRecordGuard:
 # write_log -- grouped, labeled log output
 # ---------------------------------------------------------------------------
 
-
-# ---------------------------------------------------------------------------
-# write_log -- grouped, labeled log output
-# ---------------------------------------------------------------------------
-
 class TestFindDuplicateIdentifiers:
     def test_no_entries_when_all_ids_unique(self):
         id_records = [(0, "u1", "00100"), (1, "u2", "00200"), (2, "u3", "00300")]
@@ -586,11 +576,6 @@ class TestWriteLog:
 # ProgressReporter.maybe_print_estimate -- early one-time runtime estimate
 # ---------------------------------------------------------------------------
 
-
-# ---------------------------------------------------------------------------
-# ProgressReporter.maybe_print_estimate -- early one-time runtime estimate
-# ---------------------------------------------------------------------------
-
 class TestProgressEstimate:
     def test_does_not_fire_before_thresholds(self, capsys):
         reporter = m.ProgressReporter(total_bytes=1_000_000)
@@ -691,11 +676,6 @@ class TestCLIHelpers:
         # added_default_245/added_default_008, both INFORMATIONAL and
         # off by default -- nothing else fired, so no log file at all
         assert not _resolve_log(log).exists()
-
-
-# ---------------------------------------------------------------------------
-# count_records / --count -- fast record count, no parsing
-# ---------------------------------------------------------------------------
 
 
 # ---------------------------------------------------------------------------
