@@ -419,7 +419,7 @@ class TestTranscodeMarc8:
         assert converted == "כתאב אלחגה"
         assert "\x1b" not in converted  # no leftover raw escape byte
 
-    def test_runs_by_default_via_cli(self, tmp_path):
+    def test_runs_by_default_via_cli_but_not_logged_unless_flagged(self, tmp_path):
         pytest.importorskip("pymarc")
         leader = list(_SYNTHETIC_LEADER)
         leader[9] = " "
@@ -901,7 +901,7 @@ class TestFixInvalidLeaderBytes:
         assert parsed.leader[8] == " "
         assert parsed.leader[17] == " "
 
-    def test_runs_by_default_via_cli(self, tmp_path):
+    def test_runs_by_default_via_cli_and_logged_as_informational(self, tmp_path):
         leader = _VALID_LEADER[:5] + "0" + _VALID_LEADER[6:]
         parsed = m.ParsedRecord(
             leader=leader,
@@ -1083,7 +1083,7 @@ class TestLeaderEntryMapCorrection:
         raw[20:24] = b"45x0"
         return bytes(raw)
 
-    def test_fix_runs_by_default_but_not_logged_unless_flagged(self, tmp_path):
+    def test_runs_by_default_via_cli_but_not_logged_unless_flagged(self, tmp_path):
         src = tmp_path / "badmap.mrc"
         src.write_bytes(self._corrupted_entry_map_bytes())
         out = tmp_path / "out.mrc"
@@ -1576,7 +1576,7 @@ class TestNormalizeSubfield9To0:
         assert details == []
         assert parsed.fields[0].subfields == [("a", "Subject")]
 
-    def test_runs_by_default_but_not_logged_unless_flagged(self, tmp_path):
+    def test_runs_by_default_via_cli_but_not_logged_unless_flagged(self, tmp_path):
         parsed = m.ParsedRecord(
             leader=_SYNTHETIC_LEADER,
             entries=[],
@@ -1691,7 +1691,7 @@ class TestNormalizeSmartCharacters:
         m.normalize_smart_characters(parsed)
         assert parsed.fields[0].subfields == [("a", "a bc")]
 
-    def test_runs_by_default_via_cli_but_is_not_logged(self, tmp_path):
+    def test_runs_by_default_via_cli_but_not_logged_unless_flagged(self, tmp_path):
         parsed = m.ParsedRecord(
             leader=_SYNTHETIC_LEADER,
             entries=[],
@@ -1816,7 +1816,7 @@ class TestFindAndFixMojibake:
         assert len(details) == 1
         assert parsed.fields[0].content == "Großbritannien"
 
-    def test_runs_by_default_via_cli(self, tmp_path):
+    def test_runs_by_default_via_cli_and_logged_as_informational(self, tmp_path):
         parsed = m.ParsedRecord(
             leader=_SYNTHETIC_LEADER,
             entries=[],
@@ -2120,10 +2120,17 @@ class TestFix008Length:
 
 
 # ---------------------------------------------------------------------------
-# find_invalid_indicator_values
+# Detect-only checks: find_invalid_indicator_values,
+# find_invalid_bibliographic_level, find_dangling_880_links,
+# find_invalid_isbn_issn_checksums -- no fix, no CLI wiring of their own
+# to speak of (see TestLogInformational and each function's own
+# --check-*/--log-* flag tests elsewhere for that), so grouped here as
+# one class of small, purely-detection unit tests.
 # ---------------------------------------------------------------------------
 
-class TestFindInvalidIndicatorValues:
+class TestDetectOnlyChecks:
+    # -- find_invalid_indicator_values --
+
     def test_flags_non_digit_non_blank_indicator(self):
         parsed = m.ParsedRecord(
             leader="0" * 24,
@@ -2154,7 +2161,7 @@ class TestFindInvalidIndicatorValues:
         )
         assert m.find_invalid_indicator_values(parsed) == []
 
-    def test_control_fields_are_skipped(self):
+    def test_indicator_values_control_fields_are_skipped(self):
         parsed = m.ParsedRecord(
             leader="0" * 24,
             entries=[],
@@ -2162,12 +2169,8 @@ class TestFindInvalidIndicatorValues:
         )
         assert m.find_invalid_indicator_values(parsed) == []
 
+    # -- find_invalid_bibliographic_level --
 
-# ---------------------------------------------------------------------------
-# find_invalid_bibliographic_level
-# ---------------------------------------------------------------------------
-
-class TestFindInvalidBibliographicLevel:
     def test_flags_invalid_byte_07(self):
         leader = _VALID_LEADER[:7] + "9" + _VALID_LEADER[8:]
         parsed = m.ParsedRecord(leader=leader, entries=[], fields=[])
@@ -2179,12 +2182,8 @@ class TestFindInvalidBibliographicLevel:
         parsed = m.ParsedRecord(leader=_VALID_LEADER, entries=[], fields=[])
         assert m.find_invalid_bibliographic_level(parsed) == []
 
+    # -- find_dangling_880_links --
 
-# ---------------------------------------------------------------------------
-# find_dangling_880_links
-# ---------------------------------------------------------------------------
-
-class TestFindDangling880Links:
     def test_flags_reference_to_missing_field(self):
         parsed = m.ParsedRecord(
             leader="0" * 24,
@@ -2195,7 +2194,7 @@ class TestFindDangling880Links:
         assert len(findings) == 1
         assert findings[0][0] == "dangling_880_link"
 
-    def test_does_not_flag_valid_reference(self):
+    def test_does_not_flag_valid_880_reference(self):
         parsed = m.ParsedRecord(
             leader="0" * 24,
             entries=[],
@@ -2206,12 +2205,8 @@ class TestFindDangling880Links:
         )
         assert m.find_dangling_880_links(parsed) == []
 
+    # -- find_invalid_isbn_issn_checksums --
 
-# ---------------------------------------------------------------------------
-# find_invalid_isbn_issn_checksums
-# ---------------------------------------------------------------------------
-
-class TestFindInvalidIsbnIssnChecksums:
     def test_flags_bad_isbn10_checksum(self):
         parsed = m.ParsedRecord(
             leader="0" * 24,
