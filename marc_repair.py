@@ -289,18 +289,6 @@ class Ambiguous(Exception):
         super().__init__(f"tag {tag}: {len(candidates)} possible subfield splits for {content!r}")
 
 
-class NoSolution(Exception):
-    """No valid subfield split found for a field -- needs a manual override."""
-
-    def __init__(self, tag: str, content: str, n_subfields: int):
-        self.tag = tag
-        self.content = content
-        self.n_subfields = n_subfields
-        super().__init__(
-            f"tag {tag}: no split into {n_subfields} subfield(s) found for {content!r}"
-        )
-
-
 @dataclass
 class DirEntry:
     tag: str
@@ -1473,13 +1461,6 @@ def iter_repair_stream(
             yield placeholder, chunk
             pos = next_pos
             idx += 1
-
-
-def repair_text_with_originals(
-    text: str, overrides: dict[int, OverridesByField] | None = None
-) -> list[tuple[ParsedRecord, str]]:
-    """Deprecated alias for `iter_repair` (kept for backward compatibility)."""
-    return iter_repair(text, overrides)
 
 
 def repair_text(
