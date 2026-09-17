@@ -3947,6 +3947,32 @@ class TestRepairHoldingsRecords:
         assert "holdings_multiple_004" in content
         assert "[INFORMATIONAL]" in content
 
+    def test_multiple_852_flagged_not_fixed(self, tmp_path):
+        fields = [
+            m.Field_("004", None, None, content="local123"),
+            m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
+            m.Field_("852", "  ", [("b", "Main Library"), ("h", "ABC123")]),
+            m.Field_("852", "  ", [("b", "Annex"), ("h", "XYZ789")]),
+        ]
+        result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
+        assert result["not_fixed"] == 1
+        content = _resolve_log(log).read_text(encoding="utf-8")
+        assert "holdings_multiple_852" in content
+        assert "[NOT FIXED]" in content
+        parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
+        assert sum(1 for f in parsed.fields if f.tag == "852") == 2
+
+    def test_single_852_not_flagged(self, tmp_path):
+        fields = [
+            m.Field_("004", None, None, content="local123"),
+            m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
+            m.Field_("852", "  ", [("b", "Main Library"), ("h", "ABC123")]),
+        ]
+        result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
+        if _resolve_log(log).exists():
+            content = _resolve_log(log).read_text(encoding="utf-8")
+            assert "holdings_multiple_852" not in content
+
     def test_fix_missing_852c_off_by_default(self, tmp_path):
         fields = [
             m.Field_("004", None, None, content="ocm123"),

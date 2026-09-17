@@ -83,6 +83,7 @@ FIXED.
 | Null identifier (empty subfield) | Flagged only, no change | detect-only | `holdings_null_identifier` | NOT FIXED | **Yes** | -- (detect-only, no switch) |
 | Missing 004 (link to bib record) | Flagged only, no change | detect-only | `holdings_missing_004` | NOT FIXED | **Yes** | -- (detect-only, no switch) |
 | Multiple 004 fields | Flagged only, no change | detect-only | `holdings_multiple_004` | INFORMATIONAL | **Yes** | -- (detect-only, no switch) |
+| Multiple 852 (Location) fields | Flagged only, no change | detect-only | `holdings_multiple_852` | NOT FIXED | **Yes** | -- (detect-only, no switch) |
 | Unresolvable record (passed through unchanged) | Passed through unchanged | n/a (only if it occurs) | `unresolved_record` | NOT FIXED | **Yes** | `--overrides` (Mode 2 only -- supplies the split the automatic solver couldn't determine) |
 | Unfixable oversized field/base address | Left record unchanged | n/a (only if it occurs) | `oversized_unfixable` | NOT FIXED | **Yes** | -- (no switch -- genuinely unfixable) |
 | Duplicate identifier across records | Flagged only, no change | detect-only | `duplicate_identifier` | DUPLICATE RECORDS | **Yes** | -- (detect-only, no switch) |
