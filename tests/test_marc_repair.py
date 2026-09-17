@@ -4039,7 +4039,7 @@ class TestRepairHoldingsRecords:
 
     def test_852_missing_location_gets_migration_placeholder_in_b(self, tmp_path):
         fields = [
-            m.Field_("004", None, None, content="ocm123"),
+            m.Field_("004", None, None, content="local123"),
             m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
             m.Field_("852", "  ", [("h", "ABC123")]),
         ]
@@ -4053,7 +4053,7 @@ class TestRepairHoldingsRecords:
 
     def test_852_punctuation_only_b_is_replaced_with_migration(self, tmp_path):
         fields = [
-            m.Field_("004", None, None, content="ocm123"),
+            m.Field_("004", None, None, content="local123"),
             m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
             m.Field_("852", "  ", [("b", "--"), ("h", "ABC123")]),
         ]
@@ -4109,13 +4109,50 @@ class TestRepairHoldingsRecords:
 
     def test_852_with_none_of_a_b_c_gets_placeholder_in_b(self, tmp_path):
         fields = [
-            m.Field_("004", None, None, content="ocm123"),
+            m.Field_("004", None, None, content="local123"),
             m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
             m.Field_("852", "  ", [("h", "ABC123"), ("t", "Copy 1")]),
         ]
         result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
         content = _resolve_log(log).read_text(encoding="utf-8")
         assert "added_missing_852_location" in content
+        parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
+        f852 = next(f for f in parsed.fields if f.tag == "852")
+        assert ("b", "Migration") in f852.subfields
+
+    def test_852_placeholder_goes_in_c_for_wms_ocm_prefixed_004(self, tmp_path):
+        fields = [
+            m.Field_("004", None, None, content="ocm123456"),
+            m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
+            m.Field_("852", "  ", [("h", "ABC123")]),
+        ]
+        result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
+        content = _resolve_log(log).read_text(encoding="utf-8")
+        assert "added missing 852 $c" in content
+        parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
+        f852 = next(f for f in parsed.fields if f.tag == "852")
+        assert ("c", "Migration") in f852.subfields
+        assert not any(code == "b" for code, _ in f852.subfields)
+
+    @pytest.mark.parametrize("prefix", ["on", "ocn", "ocm", "OCM", "Ocn"])
+    def test_852_placeholder_goes_in_c_for_every_wms_prefix(self, tmp_path, prefix):
+        fields = [
+            m.Field_("004", None, None, content=f"{prefix}9999"),
+            m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
+            m.Field_("852", "  ", [("h", "ABC123")]),
+        ]
+        result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
+        parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
+        f852 = next(f for f in parsed.fields if f.tag == "852")
+        assert ("c", "Migration") in f852.subfields
+
+    def test_852_placeholder_stays_in_b_for_non_wms_004(self, tmp_path):
+        fields = [
+            m.Field_("004", None, None, content="sirsi123"),
+            m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
+            m.Field_("852", "  ", [("h", "ABC123")]),
+        ]
+        result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
         parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
         f852 = next(f for f in parsed.fields if f.tag == "852")
         assert ("b", "Migration") in f852.subfields
