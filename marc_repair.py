@@ -340,6 +340,13 @@ class ParsedRecord:
     # caller, this correction has to happen inside Mode 1's own parse, so
     # it's carried here for the caller to log.
     indicator_fixes: list[tuple[str, int]] = field(default_factory=list)
+    # (tag, detail) for each field appended by reattach_orphaned_trailing_
+    # fields -- that runs as a wrapper around the whole record stream
+    # (after this record was already fully parsed), not as part of Mode
+    # 1/2 parsing itself, but is carried here the same way indicator_fixes
+    # is so the caller (main()) can log it without the wrapper needing to
+    # know anything about logging.
+    reattached_orphaned_fields: list[tuple[str, str]] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -1487,6 +1494,115 @@ def iter_repair_stream(
             yield placeholder, chunk
             pos = next_pos
             idx += 1
+
+
+#: A real defect seen in production data: a record's own leader/directory
+#: is fully self-consistent, but genuinely falls one field short of the
+#: record's real byte content -- whatever wrote the file appended one more
+#: field's bytes without ever adding a directory entry for it (so neither
+#: the directory nor the declared length account for those bytes). Mode 1
+#: correctly stops after exactly as many real fields as the directory
+#: has entries for (see _read_intact_at), leaving that trailing field's
+#: bytes dangling right after -- with no leader/directory of their own,
+#: they can't be attributed to any tag, so iter_repair_stream reports
+#: them UNRESOLVED, immediately after the record they actually belong to.
+#:
+#: Reattaching those bytes to that record requires *guessing* the tag
+#: that would have been in the missing directory entry -- something this
+#: tool otherwise never does. The one shape narrow enough to guess safely
+#: is a personal name heading: subfields drawn only from this set, with
+#: $a (the name itself) always present, is essentially unambiguous as tag
+#: 700 (Added Entry -- Personal Name) -- $b numeration, $c titles/other
+#: words, $d dates, $e relator term, $q fuller form of name, $4 relator
+#: code are, together, specific enough to this one heading type that no
+#: other common tag's content looks like this by coincidence.
+_ORPHANED_FIELD_TAG = "700"
+_ORPHANED_FIELD_VALID_CODES = set("abcdeq4")
+
+
+def _try_parse_orphaned_field(chunk: str) -> tuple[str, list[tuple[str, str]]] | None:
+    """If `chunk` (an UNRESOLVED record/chunk with no leader or directory
+    of its own) is exactly the real bytes of one intact MARC data field --
+    2 indicator characters, then a subfield-delimited body, terminated by
+    exactly one 0x1E, optionally followed by a trailing 0x1D -- return its
+    (indicators, subfields). Returns None for anything else, including
+    more than one field's worth of content: reattach_orphaned_trailing_
+    fields only ever reattaches a single trailing field, the one shape
+    this defect (see above) actually produces."""
+    text = chunk[:-1] if chunk.endswith(RECTERM) else chunk
+    if not text.endswith(FIELDTERM):
+        return None
+    body_all = text[:-1]
+    if FIELDTERM in body_all or len(body_all) < 2:
+        return None
+    indicators, body = body_all[:2], body_all[2:]
+    if not body.startswith(SUBFIELD):
+        return None
+    parts = body.split(SUBFIELD)
+    if parts[0] != "":
+        return None
+    subfields = [(p[0], p[1:]) for p in parts[1:] if p]
+    if not subfields:
+        return None
+    return indicators, subfields
+
+
+def reattach_orphaned_trailing_fields(
+    record_stream: Iterator[tuple[ParsedRecord, str]],
+) -> Iterator[tuple[ParsedRecord, str]]:
+    """Wrap a repair stream (iter_repair_stream's or iter_repair's output)
+    to fix the defect described above `_ORPHANED_FIELD_TAG`: merge an
+    UNRESOLVED chunk into the record immediately before it, as a new tag
+    700 field, whenever that chunk is exactly one field's worth of real
+    bytes shaped like a personal name heading (see
+    `_try_parse_orphaned_field`) and the record before it parsed
+    successfully. The merged record's `reattached_orphaned_fields` records
+    (tag, detail) so the caller can log it -- under FIXED/REQUIRES
+    ATTENTION, since the tag is a guess, however confident.
+
+    Every other UNRESOLVED chunk (multi-field, not personal-name-shaped,
+    or not immediately following a resolved record) passes through
+    unchanged, exactly as before this wrapper existed. This does mean a
+    successful merge yields one fewer (parsed, rec_text) pair than the
+    stream it wraps produced for that same input -- seen as `main`'s own
+    output record count deliberately, since the two chunks were never
+    really two separate records to begin with, just one record whose
+    trailing field lost its directory entry.
+    """
+    pending: tuple[ParsedRecord, str] | None = None
+    for parsed, rec_text in record_stream:
+        if pending is not None:
+            prev_parsed, prev_text = pending
+            merged = False
+            if not prev_parsed.unresolved and parsed.unresolved:
+                field_shape = _try_parse_orphaned_field(rec_text)
+                if field_shape is not None:
+                    indicators, subfields = field_shape
+                    codes = {code for code, _ in subfields}
+                    if "a" in codes and codes <= _ORPHANED_FIELD_VALID_CODES:
+                        new_field = Field_(_ORPHANED_FIELD_TAG, indicators, subfields)
+                        prev_parsed.fields.append(new_field)
+                        prev_parsed.entries.append(
+                            DirEntry(_ORPHANED_FIELD_TAG, len(new_field.delimited()), 0)
+                        )
+                        detail = (
+                            f"reattached a trailing ={_ORPHANED_FIELD_TAG} field, "
+                            f"present in the file but missing its own directory "
+                            f"entry (so excluded from this record's own declared "
+                            f"length): {new_field.delimited()!r}"
+                        )
+                        prev_parsed.reattached_orphaned_fields.append(
+                            (_ORPHANED_FIELD_TAG, detail)
+                        )
+                        pending = (prev_parsed, prev_text + rec_text)
+                        merged = True
+            if not merged:
+                yield pending
+                pending = (parsed, rec_text)
+        else:
+            pending = (parsed, rec_text)
+    if pending is not None:
+        yield pending
 
 
 def repair_text_with_originals(
@@ -3011,6 +3127,7 @@ _FIXED_REQUIRES_ATTENTION = {
     "field_removed_because_missing_a",
     "added_field",
     "holdings_leader_byte_defaulted",
+    "reattached_orphaned_field",
 }
 
 #: INFORMATIONAL, at the very bottom: a fix applied via a fixed
@@ -3676,6 +3793,21 @@ def main(argv: list[str] | None = None) -> int:
         "logged (see --log); pass this flag to leave them as-is instead",
     )
     parser.add_argument(
+        "--no-reattach-orphaned-fields",
+        dest="reattach_orphaned_fields",
+        action="store_false",
+        default=True,
+        help="do NOT reattach a trailing field that's physically present "
+        "in the file but missing its own directory entry (so excluded "
+        "from its record's own declared length) -- a real defect seen "
+        "in production data, always shaped like a personal name heading "
+        "(see reattach_orphaned_trailing_fields). By default such a "
+        "field is reattached to the record right before it as a new =700 "
+        "and logged under FIXED/REQUIRES ATTENTION (see --log), since the "
+        "tag is a guess (however confident); with this flag it's left "
+        "exactly as before -- an UNRESOLVED chunk passed through unchanged",
+    )
+    parser.add_argument(
         "--no-add-default-245",
         dest="add_default_245",
         action="store_false",
@@ -4048,6 +4180,8 @@ def main(argv: list[str] | None = None) -> int:
             on_progress=progress.on_progress,
             fix_bad_indicators=args.fix_bad_indicators,
         )
+        if args.reattach_orphaned_fields:
+            record_stream = reattach_orphaned_trailing_fields(record_stream)
         for i, (parsed, rec_text) in enumerate(record_stream):
             n_total += 1
             # errors="surrogateescape" here and below: rec_text is the raw,
@@ -4080,6 +4214,9 @@ def main(argv: list[str] | None = None) -> int:
                         "padded_indicators", True, i, rec_id,
                         f"padded {spaces_added} space(s) into short indicators on ={tag}",
                     )
+                for tag, detail in parsed.reattached_orphaned_fields:
+                    rec_id = record_identifier(parsed)
+                    log("reattached_orphaned_field", True, i, rec_id, detail)
                 for category, detail in find_suspect_marc8_escapes(parsed):
                     rec_id = record_identifier(parsed)
                     log(category, False, i, rec_id, detail)

@@ -130,8 +130,9 @@ literal `4500` and never copied through from the original leader.
 | An 880 field's `$6` linking subfield references a tag that doesn't exist elsewhere in the record | Off by default — pass `--check-dangling-880-links` to detect and log it as `dangling_880_link` (INFORMATIONAL); never auto-fixed — breaks the record's own romanized/original-script pairing |
 | A 020 (ISBN) or 022 (ISSN) `$a` whose check digit fails the standard checksum for its length | Off by default — pass `--check-isbn-issn-checksum` to detect and log it as `invalid_isbn_issn_checksum` (INFORMATIONAL); never auto-fixed — no safe way to know which digit was wrong |
 | A record that can't be auto-repaired by either mode at all | Passed through to the output unchanged (never dropped), logged as `UNRESOLVED` (NOT FIXED) |
+| A trailing field physically present in the file but missing its own directory entry (so excluded from its record's declared length) — always shaped like a personal name heading ($a plus any of $b/$c/$d/$e/$q/$4) immediately after the record it belongs to | Reattached to that record as a new `=700` by default — the tag itself is a guess (however confident: this subfield-code shape is essentially unambiguous), so it's logged in full as `reattached_orphaned_field` under **FIXED/REQUIRES ATTENTION**; `--no-reattach-orphaned-fields` to leave it as `UNRESOLVED` instead |
 
-The output file always has the same number of records as the input.
+The output file always has the same number of records as the input — except for a successful `reattached_orphaned_field` fix, which by design merges two records-worth of input bytes (a real record, plus a trailing fragment that was never really a separate record to begin with) into one output record.
 
 ### Smart-character normalization
 

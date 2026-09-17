@@ -1364,6 +1364,170 @@ class TestLeaderEntryMapCorrection:
 
 
 # ---------------------------------------------------------------------------
+# reattach_orphaned_trailing_fields -- a trailing field physically present
+# in the file but missing its own directory entry (so excluded from its
+# record's own declared length), always shaped like a personal name
+# heading -- a real defect found in a University of Bahamas bib export.
+# ---------------------------------------------------------------------------
+
+class TestTryParseOrphanedField:
+    def test_valid_single_field_parses(self):
+        result = m._try_parse_orphaned_field("1 \x1faQuinn, Frances,\x1fd1963-\x1e")
+        assert result == ("1 ", [("a", "Quinn, Frances,"), ("d", "1963-")])
+
+    def test_valid_single_field_with_trailing_recterm(self):
+        result = m._try_parse_orphaned_field("1 \x1faQuinn, Frances,\x1fd1963-\x1e\x1d")
+        assert result == ("1 ", [("a", "Quinn, Frances,"), ("d", "1963-")])
+
+    def test_multi_field_chunk_rejected(self):
+        chunk = "1 \x1faOne\x1e1 \x1faTwo\x1e"
+        assert m._try_parse_orphaned_field(chunk) is None
+
+    def test_no_field_terminator_rejected(self):
+        assert m._try_parse_orphaned_field("1 \x1faNo terminator") is None
+
+    def test_data_before_first_subfield_rejected(self):
+        assert m._try_parse_orphaned_field("1 garbage\x1faReal\x1e") is None
+
+    def test_no_subfields_rejected(self):
+        assert m._try_parse_orphaned_field("1 \x1e") is None
+
+    def test_too_short_rejected(self):
+        assert m._try_parse_orphaned_field("1\x1e") is None
+
+
+class TestReattachOrphanedTrailingFields:
+    def _resolved(self):
+        parsed = m.ParsedRecord(
+            leader=_SYNTHETIC_LEADER, entries=[],
+            fields=[m.Field_("245", "00", [("a", "Title.")])],
+        )
+        return parsed, m.assemble_marc(parsed).decode("utf-8")
+
+    def _orphan_chunk(self, indicators, subfields):
+        text = indicators + "".join(f"\x1f{c}{d}" for c, d in subfields) + m.FIELDTERM
+        placeholder = m.ParsedRecord(leader="?" * 24, entries=[])
+        placeholder.unresolved.append((
+            0, m.DirEntry("???", len(text), 0), text[:200],
+            m.RepairError("no consistent directory found for this record at all"),
+        ))
+        return placeholder, text + m.RECTERM
+
+    def test_merges_personal_name_shaped_orphan_into_preceding_record(self):
+        prev = self._resolved()
+        orphan = self._orphan_chunk("1 ", [("a", "Quinn, Frances,"), ("d", "1963-")])
+        results = list(m.reattach_orphaned_trailing_fields(iter([prev, orphan])))
+        assert len(results) == 1
+        parsed, text = results[0]
+        assert not parsed.unresolved
+        assert parsed.fields[-1].tag == "700"
+        assert parsed.fields[-1].subfields == [("a", "Quinn, Frances,"), ("d", "1963-")]
+        assert parsed.reattached_orphaned_fields
+        assert text == prev[1] + orphan[1]
+
+    def test_does_not_merge_when_preceding_record_is_itself_unresolved(self):
+        orphan1 = self._orphan_chunk("1 ", [("a", "no home record")])
+        orphan2 = self._orphan_chunk("1 ", [("a", "Quinn, Frances,"), ("d", "1963-")])
+        results = list(m.reattach_orphaned_trailing_fields(iter([orphan1, orphan2])))
+        assert len(results) == 2
+        assert results[0][0].unresolved
+        assert results[1][0].unresolved
+
+    def test_does_not_merge_subfield_codes_outside_personal_name_whitelist(self):
+        prev = self._resolved()
+        # $u (URL) isn't a personal-name-heading code -- too ambiguous to
+        # safely guess tag 700 for.
+        orphan = self._orphan_chunk("4 ", [("u", "http://example.com/resource")])
+        results = list(m.reattach_orphaned_trailing_fields(iter([prev, orphan])))
+        assert len(results) == 2
+        assert results[1][0].unresolved
+
+    def test_does_not_merge_without_dollar_a(self):
+        prev = self._resolved()
+        orphan = self._orphan_chunk("1 ", [("d", "1963-")])  # no $a at all
+        results = list(m.reattach_orphaned_trailing_fields(iter([prev, orphan])))
+        assert len(results) == 2
+        assert results[1][0].unresolved
+
+    def test_does_not_merge_multi_field_chunks(self):
+        prev = self._resolved()
+        text = "1 \x1faOne\x1e1 \x1faTwo\x1e"
+        placeholder = m.ParsedRecord(leader="?" * 24, entries=[])
+        placeholder.unresolved.append((
+            0, m.DirEntry("???", len(text), 0), text[:200],
+            m.RepairError("no consistent directory found for this record at all"),
+        ))
+        results = list(
+            m.reattach_orphaned_trailing_fields(iter([prev, (placeholder, text + m.RECTERM)]))
+        )
+        assert len(results) == 2
+
+    def test_unresolved_chunk_at_start_of_stream_passes_through(self):
+        orphan = self._orphan_chunk("1 ", [("a", "Quinn, Frances,"), ("d", "1963-")])
+        results = list(m.reattach_orphaned_trailing_fields(iter([orphan])))
+        assert len(results) == 1
+        assert results[0][0].unresolved
+
+    def test_passthrough_when_wrapping_empty_stream(self):
+        assert list(m.reattach_orphaned_trailing_fields(iter([]))) == []
+
+
+class TestReattachOrphanedFieldsCLI:
+    def _record_with_orphaned_trailing_field(self) -> bytes:
+        """Build a record via assemble_marc (self-consistent leader,
+        directory, and declared length), then splice one extra field's
+        real bytes in directly before the trailing record terminator --
+        bypassing assemble_marc so the directory/length never account
+        for it. This is exactly the real-world shape found in
+        production: internally self-consistent leader/directory, but a
+        genuine trailing field's bytes still physically in the file,
+        unaccounted for by either."""
+        parsed = m.ParsedRecord(
+            leader=_SYNTHETIC_LEADER, entries=[],
+            fields=[
+                m.Field_("001", None, None, content="orphantest"),
+                m.Field_("245", "00", [("a", "Title.")]),
+            ],
+        )
+        raw = bytearray(m.assemble_marc(parsed))
+        assert raw[-1:] == b"\x1d"
+        orphan = m.Field_(
+            "700", "1 ", [("a", "Quinn, Frances,"), ("d", "1963-")]
+        ).delimited().encode("utf-8")
+        return bytes(raw[:-1]) + orphan + b"\x1d"
+
+    def test_reattached_by_default_and_logged(self, tmp_path):
+        src = tmp_path / "orphan.mrc"
+        src.write_bytes(self._record_with_orphaned_trailing_field())
+        out = tmp_path / "out.mrc"
+        log = tmp_path / "run.log"
+        rc = m.main([str(src), "-o", str(out), "--log", str(log)])
+        assert rc == 0
+        assert m.count_records(str(out)) == 1
+        content = _resolve_log(log).read_text(encoding="utf-8")
+        assert "reattached_orphaned_field" in content
+        assert "[FIXED/REQUIRES ATTENTION]" in content
+        parsed = m.read_intact_record(m._read_text(str(out)))
+        assert parsed.fields[-1].tag == "700"
+        assert parsed.fields[-1].subfields == [("a", "Quinn, Frances,"), ("d", "1963-")]
+
+    def test_disabled_via_flag_leaves_unresolved(self, tmp_path):
+        src = tmp_path / "orphan.mrc"
+        src.write_bytes(self._record_with_orphaned_trailing_field())
+        out = tmp_path / "out.mrc"
+        log = tmp_path / "run.log"
+        rc = m.main([
+            str(src), "-o", str(out), "--log", str(log),
+            "--no-reattach-orphaned-fields",
+        ])
+        assert rc == 1  # an UNRESOLVED record makes the CLI exit non-zero
+        assert m.count_records(str(out)) == 2
+        content = _resolve_log(log).read_text(encoding="utf-8")
+        assert "unresolved_record" in content
+        assert "reattached_orphaned_field" not in content
+
+
+# ---------------------------------------------------------------------------
 # add_default_245 -- placeholder 245 for records missing one entirely
 # ---------------------------------------------------------------------------
 
