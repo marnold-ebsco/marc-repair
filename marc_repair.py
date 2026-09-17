@@ -2410,6 +2410,25 @@ DEFAULT_852_LOCATION_CONTENT = "Migration"
 DEFAULT_852_C_CONTENT = "Migration"
 
 
+#: OCLC control-number prefixes ("on"/"ocn"/"ocm" + digits, e.g.
+#: "ocm12345678") -- a holdings record's 004 (the linked bib record's
+#: control number) starting with one of these means the record came
+#: from OCLC WMS, the one common convention where 852's location lives
+#: in $c instead of $b (see `_is_wms_holdings_record`,
+#: `fix_missing_852_location`).
+_WMS_004_PREFIXES = ("on", "ocn", "ocm")
+
+
+def _is_wms_holdings_record(parsed: ParsedRecord) -> bool:
+    """True if this holdings record's 004 starts with a WMS/OCLC
+    control-number prefix (see `_WMS_004_PREFIXES`)."""
+    return any(
+        f.tag == "004" and f.is_control() and f.content
+        and f.content.lower().startswith(_WMS_004_PREFIXES)
+        for f in parsed.fields
+    )
+
+
 def fix_missing_852_location(parsed: ParsedRecord) -> list[str]:
     """Ensure every 852 (Location) field has a usable location in $a,
     $b (sublocation), or $c (shelving location) -- which one actually
@@ -2417,34 +2436,33 @@ def fix_missing_852_location(parsed: ParsedRecord) -> list[str]:
     standardized: Alma and Sierra/Millennium primarily use $b (library/
     location code) with $c as secondary context; Koha, FOLIO, and
     Symphony/Horizon primarily use $c (shelving location/collection
-    code) with $b as secondary context -- none of them treat $a as the
-    live location subfield. Real production data confirms this: $a
-    essentially unused throughout one entire 71.6MB export, $b alone
-    carrying the location on nearly every record instead.
+    code) with $b as secondary context; OCLC WMS uses $c only, never
+    $b. Real production data confirms $a itself is essentially unused:
+    one entire 71.6MB export had $b carrying the location on nearly
+    every record instead.
 
     Only when NONE of $a/$b/$c has usable (non-empty, non-punctuation-
     only -- see `_is_punctuation_only`, the same "no real content" rule
     `strip_missing_required_a` uses for bib heading fields' $a) content
-    does this insert a placeholder -- into $b specifically, not $a,
-    since $b is the one subfield every listed system above treats as
-    location-bearing (primary or secondary), so a placeholder there
-    matches the convention the rest of a given file already uses rather
-    than introducing a subfield code that convention never touches. The
-    one known exception is OCLC WMS, which uses $c only, never $b -- but
-    this only ever fires on a record with NO location data in $a, $b,
-    or $c to begin with, already a serious enough problem to need a
-    human's attention regardless of which of the two this placeholder
-    lands in.
+    does this insert a placeholder -- never into $a, since none of the
+    systems above treat it as the live location subfield. The target is
+    $c for a record `_is_wms_holdings_record` identifies as WMS-sourced
+    (matching that system's own convention exactly), $b otherwise (the
+    subfield every *other* listed system above treats as location-
+    bearing, primary or secondary) -- so the placeholder always matches
+    the convention the rest of a given file already uses rather than
+    introducing a subfield code that convention never touches.
     Always runs (no opt-in flag, unlike --fix-missing-852c): a location
-    this tool can't find in any of the three is missing, not just
+    this tool can't find in any of $a/$b/$c is missing, not just
     missing a shelving detail. Logged (category
     "added_missing_852_location") every time it runs, since it's adding
     content -- not just correcting structure -- and a placeholder
     rather than a value recovered from the record's own data. A
-    punctuation-only $b is replaced in place (keeping its position); a
-    missing $b is prepended. No-op for an 852 that already has a usable
-    $a, $b, or $c.
+    punctuation-only target subfield is replaced in place (keeping its
+    position); a missing one is prepended. No-op for an 852 that
+    already has a usable $a, $b, or $c.
     """
+    target_code = "c" if _is_wms_holdings_record(parsed) else "b"
     details = []
     for f in parsed.fields:
         if f.tag != "852" or f.is_control():
@@ -2454,18 +2472,20 @@ def fix_missing_852_location(parsed: ParsedRecord) -> list[str]:
             for code, data in f.subfields
         ):
             continue
-        if any(code == "b" for code, _ in f.subfields):
+        if any(code == target_code for code, _ in f.subfields):
             f.subfields = [
-                (code, DEFAULT_852_LOCATION_CONTENT) if code == "b" else (code, data)
+                (code, DEFAULT_852_LOCATION_CONTENT) if code == target_code else (code, data)
                 for code, data in f.subfields
             ]
             details.append(
-                f"replaced empty/punctuation-only 852 $b with: "
+                f"replaced empty/punctuation-only 852 ${target_code} with: "
                 f"{DEFAULT_852_LOCATION_CONTENT!r}"
             )
         else:
-            f.subfields = [("b", DEFAULT_852_LOCATION_CONTENT)] + list(f.subfields)
-            details.append(f"added missing 852 $b: {DEFAULT_852_LOCATION_CONTENT!r}")
+            f.subfields = [(target_code, DEFAULT_852_LOCATION_CONTENT)] + list(f.subfields)
+            details.append(
+                f"added missing 852 ${target_code}: {DEFAULT_852_LOCATION_CONTENT!r}"
+            )
     return details
 
 
@@ -3594,9 +3614,11 @@ def repair_holdings_records(
       * an 852 field that survives the above but has no usable location
         in $a, $b, or $c -- which subfield actually carries it is
         source-system-dependent (see `fix_missing_852_location`) --
-        always gets a placeholder inserted into $b specifically (the
-        one subfield most systems treat as location-bearing); unlike
-        $c below this isn't opt-in
+        always gets a placeholder inserted into $c if the record's own
+        004 identifies it as OCLC WMS-sourced (see
+        `_is_wms_holdings_record`), $b otherwise (the subfield most
+        other systems treat as location-bearing); unlike $c below this
+        isn't opt-in
       * if `fix_missing_852c` is set (off by default -- see
         --fix-missing-852c), an 852 (Location) field missing $c
         (shelving location) gets a placeholder $c appended (see
