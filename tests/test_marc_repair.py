@@ -1231,12 +1231,43 @@ class TestFixMisplacedSubfieldCodes:
         src.write_bytes(m.assemble_marc(parsed))
         out = tmp_path / "out.mrc"
         log = tmp_path / "run.log"
-        rc = m.main([str(src), "-o", str(out), "--log", str(log)])
+        rc = m.main([
+            str(src), "-o", str(out), "--log", str(log),
+            "--log-informational", "--log-fixed-misplaced-subfield-code",
+        ])
         assert rc == 0
         content = _resolve_log(log).read_text(encoding="utf-8")
         assert "fixed_misplaced_subfield_code" in content
-        assert "[FIXED/REQUIRES ATTENTION]" in content
+        assert "[INFORMATIONAL]" in content
         assert "removed_invalid_subfield" not in content
+        parsed_out = m.read_intact_record(m._read_text(str(out)))
+        f260 = next(f for f in parsed_out.fields if f.tag == "260")
+        assert ("c", "2000.") in f260.subfields
+
+    def test_fix_still_applies_but_not_logged_by_default(self, tmp_path):
+        # Not FIXED/REQUIRES ATTENTION anymore -- this doesn't need a
+        # human's attention (nothing is discarded or guessed), so by
+        # default it's not even in the log, even though the fix itself
+        # always runs.
+        parsed = m.ParsedRecord(
+            leader=_SYNTHETIC_LEADER, entries=[],
+            fields=[
+                m.Field_("001", None, None, content="misplacedtest"),
+                m.Field_("245", "00", [("a", "Title.")]),
+                m.Field_("260", "  ", [
+                    ("a", "New York :"), ("b", "Wiley,"), (" ", "c2000."),
+                ]),
+            ],
+        )
+        src = tmp_path / "in.mrc"
+        src.write_bytes(m.assemble_marc(parsed))
+        out = tmp_path / "out.mrc"
+        log = tmp_path / "run.log"
+        rc = m.main([str(src), "-o", str(out), "--log", str(log)])
+        assert rc == 0
+        resolved_log = _resolve_log(log)
+        content = resolved_log.read_text(encoding="utf-8") if resolved_log.exists() else ""
+        assert "fixed_misplaced_subfield_code" not in content
         parsed_out = m.read_intact_record(m._read_text(str(out)))
         f260 = next(f for f in parsed_out.fields if f.tag == "260")
         assert ("c", "2000.") in f260.subfields

@@ -3204,19 +3204,19 @@ _FIXED_REQUIRES_ATTENTION = {
     "added_field",
     "holdings_leader_byte_defaulted",
     "reattached_orphaned_field",
-    "fixed_misplaced_subfield_code",
 }
 
 #: INFORMATIONAL, at the very bottom: a fix applied via a fixed
 #: default/constant or a systematic, file-wide transformation rather
 #: than judgment applied to that record's own content (a placeholder
 #: 008/245, a leader byte reset to a default code, $9 promoted to $0,
-#: the leader's entry-map constant restored, an unparseable tag
-#: renamed to an unused 9XX slot, typographic punctuation flattened,
-#: a record transcoded MARC-8 -> UTF-8, double-encoded UTF-8
-#: corrected, 999 remapped to 945, an oversized record's leader
-#: sentinel applied, short indicators padded with spaces) -- or a
-#: detect-only finding not urgent enough for NOT FIXED.
+#: a misplaced subfield code corrected, the leader's entry-map constant
+#: restored, an unparseable tag renamed to an unused 9XX slot,
+#: typographic punctuation flattened, a record transcoded MARC-8 ->
+#: UTF-8, double-encoded UTF-8 corrected, 999 remapped to 945, an
+#: oversized record's leader sentinel applied, short indicators padded
+#: with spaces) -- or a detect-only finding not urgent enough for NOT
+#: FIXED.
 _INFORMATIONAL = {
     "added_default_008",
     "added_default_holdings_008",
@@ -3226,6 +3226,7 @@ _INFORMATIONAL = {
     "leader_byte_defaulted",
     "leader_entry_map_fixed",
     "normalized_subfield_9_to_0",
+    "fixed_misplaced_subfield_code",
     "invalid_tag",
     "normalized_smart_characters",
     "transcoded_marc8",
@@ -3844,11 +3845,20 @@ def main(argv: list[str] | None = None) -> int:
         "(e.g. raw \"\\x1f c2000.\" -- code ' ', data 'c2000.' -- really "
         "meant $c \"c2000.\"; a real, high-volume defect in some source "
         "data). By default this runs BEFORE --strip-invalid-subfield-"
-        "codes so these are recovered rather than discarded, each fix "
-        "logged in full as fixed_misplaced_subfield_code under "
-        "FIXED/REQUIRES ATTENTION (see --log); pass this flag to leave "
-        "such subfields for --strip-invalid-subfield-codes to remove "
-        "instead",
+        "codes so these are recovered rather than discarded; pass this "
+        "flag to leave such subfields for --strip-invalid-subfield-codes "
+        "to remove instead. Not logged per-record by default (see "
+        "--log-fixed-misplaced-subfield-code) since this can be a large "
+        "fraction of a file with this defect",
+    )
+    parser.add_argument(
+        "--log-fixed-misplaced-subfield-code",
+        action="store_true",
+        help="log each individual misplaced-subfield-code fix (see "
+        "--no-fix-misplaced-subfield-codes). Off by default since this "
+        "can be a large fraction of a file with this defect, which "
+        "would otherwise dominate the log; the fix itself always runs "
+        "regardless of this flag (also needs --log-informational)",
     )
     parser.add_argument(
         "--no-strip-invalid-subfield-codes",
@@ -4380,8 +4390,10 @@ def main(argv: list[str] | None = None) -> int:
                             log("normalized_smart_characters", True, i, rec_id, detail)
                 if args.fix_misplaced_subfield_codes:
                     rec_id = record_identifier(parsed)
-                    for detail in fix_misplaced_subfield_codes(parsed):
-                        log("fixed_misplaced_subfield_code", True, i, rec_id, detail)
+                    details = fix_misplaced_subfield_codes(parsed)
+                    if args.log_fixed_misplaced_subfield_code:
+                        for detail in details:
+                            log("fixed_misplaced_subfield_code", True, i, rec_id, detail)
                 if args.strip_invalid_subfield_codes:
                     rec_id = record_identifier(parsed)
                     for detail in strip_invalid_subfield_codes(parsed):
