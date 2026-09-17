@@ -3802,11 +3802,29 @@ class TestRepairHoldingsRecords:
         ]
         result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert "fixed_misplaced_subfield_code" in content
+        assert "fixed_misplaced_subfield_code" not in content
         assert "removed_invalid_subfield" not in content
         parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
         f852 = next(f for f in parsed.fields if f.tag == "852")
         assert ("z", " Microfilm: 1983-1999") in f852.subfields
+
+    def test_misplaced_subfield_code_logged_when_flag_enabled(self, tmp_path):
+        fields = [
+            m.Field_("004", None, None, content="ocm123"),
+            m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
+            m.Field_("852", "  ", [
+                ("a", "Main Library"), ("h", "ABC123"),
+                (" ", "z Microfilm: 1983-1999"),
+            ]),
+        ]
+        src = self._write_holdings_file(tmp_path, [self._holdings_record(fields=fields)])
+        out = tmp_path / "out.mrc"
+        log = tmp_path / "out.log"
+        m.repair_holdings_records(
+            str(src), str(out), str(log), log_fixed_misplaced_subfield_code=True,
+        )
+        content = _resolve_log(log).read_text(encoding="utf-8")
+        assert "fixed_misplaced_subfield_code" in content
 
     def test_null_identifier_flagged_not_fixed(self, tmp_path):
         # $b is the null identifier under test; $a is real, non-empty
