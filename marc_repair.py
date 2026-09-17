@@ -3624,6 +3624,10 @@ def repair_holdings_records(
         one is flagged INFORMATIONAL (category "holdings_multiple_004",
         since a legitimate multi-bib link isn't necessarily wrong) --
         see `_find_004_issues`; neither is ever invented or trimmed
+      * more than one 852 (Location) field is flagged NOT FIXED
+        (category "holdings_multiple_852") -- detect-only, never
+        trimmed; unlike 004's multiple case, this isn't downgraded to
+        INFORMATIONAL
       * 863/864/865/866/867/868 (Enumeration and Chronology / Textual
         Holdings, all three "levels") missing a non-empty, non-
         punctuation-only $a are removed the same way bib's
@@ -3806,6 +3810,12 @@ def repair_holdings_records(
             n_004 = sum(1 for f in parsed.fields if f.tag == "004")
             for category, detail in _find_004_issues(n_004):
                 log(category, False, i, rec_id, detail)
+            n_852 = sum(1 for f in parsed.fields if f.tag == "852")
+            if n_852 > 1:
+                log(
+                    "holdings_multiple_852", False, i, rec_id,
+                    f"record has {n_852} 852 (Location) fields",
+                )
 
             try:
                 assembled = assemble_marc(parsed)
