@@ -1385,7 +1385,21 @@ def iter_repair_stream(
     """
     overrides = overrides or {}
     encoding = detect_encoding(path)
-    decoder = codecs.getincrementaldecoder("utf-8")() if encoding == "utf-8" else None
+    # errors="surrogateescape" rather than strict: real exports occasionally
+    # have a single corrupted byte that isn't valid UTF-8 (seen in practice --
+    # a leader's fixed "4500" entry-map constant with one byte replaced by
+    # 0x92) even though the file as a whole is genuinely UTF-8 (which is why
+    # `detect_encoding`'s probe didn't already route the whole file to
+    # latin-1). Surrogate-escaping that byte instead of raising loses nothing
+    # (it round-trips 1:1 back to the original byte on re-encode) and lets
+    # parsing continue -- it only looks for real delimiters, never byte
+    # validity -- so the usual repair logic (e.g. assemble_marc's hardcoded
+    # "4500", never copied through from the original leader) can fix it same
+    # as any other corrupted leader byte, instead of the whole run dying.
+    decoder = (
+        codecs.getincrementaldecoder("utf-8")(errors="surrogateescape")
+        if encoding == "utf-8" else None
+    )
 
     buf = ""
     pos = 0
