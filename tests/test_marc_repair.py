@@ -1148,6 +1148,133 @@ class TestFixInvalidLeaderBytes:
 # strip_invalid_subfield_codes -- remove unusable subfield codes
 # ---------------------------------------------------------------------------
 
+class TestFixMisplacedSubfieldCodes:
+    def test_recovers_letter_code_with_stray_space(self):
+        # Raw bytes "\x1f c2000." parse as code=" ", data="c2000." --
+        # real production defect: the actual intended subfield is $c
+        # "c2000." (a common AACR2-era copyright-date convention) with
+        # one extra space accidentally inserted before its code.
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[m.Field_("260", "  ", [("a", "New York :"), (" ", "c2000.")])],
+        )
+        details = m.fix_misplaced_subfield_codes(parsed)
+        assert len(details) == 1
+        assert parsed.fields[0].subfields == [("a", "New York :"), ("c", "2000.")]
+
+    def test_recovers_digit_code_with_stray_space(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[m.Field_("035", "  ", [(" ", "2 21")])],
+        )
+        details = m.fix_misplaced_subfield_codes(parsed)
+        assert len(details) == 1
+        assert parsed.fields[0].subfields == [("2", " 21")]
+
+    def test_leaves_valid_codes_untouched(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[m.Field_("650", " 0", [("a", "Subject"), ("2", "local")])],
+        )
+        details = m.fix_misplaced_subfield_codes(parsed)
+        assert details == []
+        assert parsed.fields[0].subfields == [("a", "Subject"), ("2", "local")]
+
+    def test_leaves_unrecoverable_space_code_alone(self):
+        # Code is a space, but the very next character isn't a valid
+        # code either -- nothing safe to recover here, so this is left
+        # for strip_invalid_subfield_codes to remove instead.
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[m.Field_("500", "  ", [(" ", " still no valid code")])],
+        )
+        details = m.fix_misplaced_subfield_codes(parsed)
+        assert details == []
+        assert parsed.fields[0].subfields == [(" ", " still no valid code")]
+
+    def test_leaves_empty_data_after_space_alone(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[m.Field_("500", "  ", [(" ", "")])],
+        )
+        details = m.fix_misplaced_subfield_codes(parsed)
+        assert details == []
+        assert parsed.fields[0].subfields == [(" ", "")]
+
+    def test_control_fields_are_left_alone(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[m.Field_("001", None, None, content="abc123")],
+        )
+        details = m.fix_misplaced_subfield_codes(parsed)
+        assert details == []
+        assert parsed.fields[0].content == "abc123"
+
+    def test_runs_before_strip_invalid_subfield_codes_in_the_cli(self, tmp_path):
+        parsed = m.ParsedRecord(
+            leader=_SYNTHETIC_LEADER, entries=[],
+            fields=[
+                m.Field_("001", None, None, content="misplacedtest"),
+                m.Field_("245", "00", [("a", "Title.")]),
+                m.Field_("260", "  ", [
+                    ("a", "New York :"), ("b", "Wiley,"), (" ", "c2000."),
+                ]),
+            ],
+        )
+        src = tmp_path / "in.mrc"
+        src.write_bytes(m.assemble_marc(parsed))
+        out = tmp_path / "out.mrc"
+        log = tmp_path / "run.log"
+        rc = m.main([str(src), "-o", str(out), "--log", str(log)])
+        assert rc == 0
+        content = _resolve_log(log).read_text(encoding="utf-8")
+        assert "fixed_misplaced_subfield_code" in content
+        assert "[FIXED/REQUIRES ATTENTION]" in content
+        assert "removed_invalid_subfield" not in content
+        parsed_out = m.read_intact_record(m._read_text(str(out)))
+        f260 = next(f for f in parsed_out.fields if f.tag == "260")
+        assert ("c", "2000.") in f260.subfields
+
+    def test_disabled_via_flag_falls_back_to_removal(self, tmp_path):
+        parsed = m.ParsedRecord(
+            leader=_SYNTHETIC_LEADER, entries=[],
+            fields=[
+                m.Field_("001", None, None, content="misplacedtest"),
+                m.Field_("245", "00", [("a", "Title.")]),
+                m.Field_("260", "  ", [
+                    ("a", "New York :"), ("b", "Wiley,"), (" ", "c2000."),
+                ]),
+            ],
+        )
+        src = tmp_path / "in.mrc"
+        src.write_bytes(m.assemble_marc(parsed))
+        out = tmp_path / "out.mrc"
+        log = tmp_path / "run.log"
+        rc = m.main([
+            str(src), "-o", str(out), "--log", str(log),
+            "--no-fix-misplaced-subfield-codes",
+        ])
+        assert rc == 0
+        content = _resolve_log(log).read_text(encoding="utf-8")
+        assert "fixed_misplaced_subfield_code" not in content
+        assert "removed_invalid_subfield" in content
+        parsed_out = m.read_intact_record(m._read_text(str(out)))
+        f260 = next(f for f in parsed_out.fields if f.tag == "260")
+        assert all(code != "c" for code, _ in f260.subfields)
+
+
+# ---------------------------------------------------------------------------
+# strip_invalid_subfield_codes -- remove subfields with genuinely
+# unrecoverable codes (see fix_misplaced_subfield_codes above for the one
+# recoverable shape)
+# ---------------------------------------------------------------------------
+
 class TestStripInvalidSubfieldCodes:
     def test_removes_bad_subfield_keeps_good_ones(self):
         parsed = m.ParsedRecord(

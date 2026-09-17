@@ -2727,6 +2727,42 @@ def strip_missing_required_a(parsed: ParsedRecord, required_a_tags: set[str]) ->
     return details
 
 
+def fix_misplaced_subfield_codes(parsed: ParsedRecord) -> list[str]:
+    """Fix a subfield whose code is a single stray space, immediately
+    followed by what's unmistakably the REAL, intended code -- e.g. raw
+    bytes "\\x1f c2000." parse (correctly, by the letter of the format)
+    as code=" ", data="c2000.", when the actual intended subfield was
+    $c "c2000." (a common AACR2-era copyright-date convention: "c" is
+    literal data, not the code, but here one extra space got inserted
+    between the delimiter and its real code). A real, high-volume defect
+    in production data -- 199 of 203 removed_invalid_subfield hits in one
+    71.6MB file were exactly this shape -- and unlike most invalid-code
+    cases, this one isn't a guess: the intended code is simply the very
+    next character, still physically present, so recovering it discards
+    nothing (not even the stray space, which was never real data to
+    begin with). Must run before `strip_invalid_subfield_codes`, which
+    would otherwise discard every one of these outright. Returns a list
+    of detail strings, one per subfield fixed (category
+    "fixed_misplaced_subfield_code" -- see `main`)."""
+    details = []
+    for f in parsed.fields:
+        if f.is_control():
+            continue
+        new_subfields = []
+        for code, data in f.subfields:
+            if code == " " and data and data[0] in VALID_SUBFIELD_CODE_CHARS:
+                real_code, real_data = data[0], data[1:]
+                details.append(
+                    f"={f.tag}: subfield code was a stray space before "
+                    f"${real_code} -- corrected to ${real_code}{real_data!r}"
+                )
+                new_subfields.append((real_code, real_data))
+            else:
+                new_subfields.append((code, data))
+        f.subfields = new_subfields
+    return details
+
+
 def strip_invalid_subfield_codes(parsed: ParsedRecord) -> list[str]:
     """Remove subfields whose code isn't a lowercase letter or digit (see
     `VALID_SUBFIELD_CODE_CHARS`) -- a code that isn't one of those is
@@ -3168,6 +3204,7 @@ _FIXED_REQUIRES_ATTENTION = {
     "added_field",
     "holdings_leader_byte_defaulted",
     "reattached_orphaned_field",
+    "fixed_misplaced_subfield_code",
 }
 
 #: INFORMATIONAL, at the very bottom: a fix applied via a fixed
@@ -3798,6 +3835,22 @@ def main(argv: list[str] | None = None) -> int:
         "either way, only the log content changes",
     )
     parser.add_argument(
+        "--no-fix-misplaced-subfield-codes",
+        dest="fix_misplaced_subfield_codes",
+        action="store_false",
+        default=True,
+        help="do NOT recover a subfield whose code is a single stray "
+        "space immediately followed by its real, still-present code "
+        "(e.g. raw \"\\x1f c2000.\" -- code ' ', data 'c2000.' -- really "
+        "meant $c \"c2000.\"; a real, high-volume defect in some source "
+        "data). By default this runs BEFORE --strip-invalid-subfield-"
+        "codes so these are recovered rather than discarded, each fix "
+        "logged in full as fixed_misplaced_subfield_code under "
+        "FIXED/REQUIRES ATTENTION (see --log); pass this flag to leave "
+        "such subfields for --strip-invalid-subfield-codes to remove "
+        "instead",
+    )
+    parser.add_argument(
         "--no-strip-invalid-subfield-codes",
         dest="strip_invalid_subfield_codes",
         action="store_false",
@@ -4325,6 +4378,10 @@ def main(argv: list[str] | None = None) -> int:
                     if args.log_normalized_smart_characters:
                         for detail in details:
                             log("normalized_smart_characters", True, i, rec_id, detail)
+                if args.fix_misplaced_subfield_codes:
+                    rec_id = record_identifier(parsed)
+                    for detail in fix_misplaced_subfield_codes(parsed):
+                        log("fixed_misplaced_subfield_code", True, i, rec_id, detail)
                 if args.strip_invalid_subfield_codes:
                     rec_id = record_identifier(parsed)
                     for detail in strip_invalid_subfield_codes(parsed):

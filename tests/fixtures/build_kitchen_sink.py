@@ -244,6 +244,21 @@ def build_bib_records() -> list[bytes]:
         m.Field_("500", "  ", [("Z", "bad code"), ("a", "Good note.")]),
     ]))
 
+    # fixed_misplaced_subfield_code: a stray space right after the
+    # delimiter, immediately followed by the real code -- raw
+    # "\x1f c2000." means $c "c2000." (a common AACR2-era copyright-date
+    # convention), corrected instead of discarded (real defect found at
+    # scale -- 199 of 203 removed_invalid_subfield hits in one production
+    # file were exactly this shape).
+    records.append(_record(_BIB_LEADER, [
+        m.Field_("001", None, None, content="ks-misplacedcode"),
+        m.Field_("008", None, None, content="x" * 40),
+        m.Field_("245", "00", [("a", "Title.")]),
+        m.Field_("260", "  ", [
+            ("a", "New York :"), ("b", "Wiley,"), (" ", "c2000."),
+        ]),
+    ]))
+
     # field_removed_because_missing_a: 650 (in the default required-$a tag list) with
     # no $a subfield at all -- removed and logged since it has other,
     # non-empty content.
