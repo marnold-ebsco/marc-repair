@@ -3566,6 +3566,79 @@ class TestSplitBibHoldings:
         assert repaired == 1
 
 
+# ---------------------------------------------------------------------------
+# _sniff_record_types / main()'s holdings-misroute guard -- refuse to run
+# the default bib pipeline against a holdings-only file, which would
+# otherwise silently corrupt it (e.g. forcing every 008 to bib's 40 bytes
+# instead of holdings' own 32) -- a real production mistake.
+# ---------------------------------------------------------------------------
+
+class TestHoldingsMisrouteGuard:
+    def _holdings_record(self) -> bytes:
+        parsed = m.ParsedRecord(
+            leader=_HOLDINGS_LEADER, entries=[],
+            fields=[
+                m.Field_("004", None, None, content="ocm123"),
+                m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
+                m.Field_("852", "  ", [("b", "Main Library"), ("h", "ABC123")]),
+            ],
+        )
+        return m.assemble_marc(parsed)
+
+    def _bib_record(self) -> bytes:
+        parsed = m.ParsedRecord(
+            leader=_SYNTHETIC_LEADER, entries=[],
+            fields=[m.Field_("245", "00", [("a", "Title.")])],
+        )
+        return m.assemble_marc(parsed)
+
+    def test_sniff_record_types_counts_bib_and_holdings(self, tmp_path):
+        src = tmp_path / "mixed.mrc"
+        src.write_bytes(self._bib_record() * 2 + self._holdings_record() * 3)
+        n_bib, n_holdings = m._sniff_record_types(str(src))
+        assert (n_bib, n_holdings) == (2, 3)
+
+    def test_holdings_only_file_refused_by_default_pipeline(self, tmp_path, capsys):
+        src = tmp_path / "holdings_only.mrc"
+        src.write_bytes(self._holdings_record() * 5)
+        rc = m.main([str(src), "-o", str(tmp_path / "out.mrc")])
+        assert rc == 2
+        assert not (tmp_path / "out.mrc").exists()
+        err = capsys.readouterr().err
+        assert "holdings-only" in err
+        assert "--repair-holdings" in err
+
+    def test_holdings_only_file_still_works_via_repair_holdings_flag(self, tmp_path):
+        src = tmp_path / "holdings_only.mrc"
+        src.write_bytes(self._holdings_record() * 5)
+        rc = m.main([str(src), "--repair-holdings"])
+        assert rc == 0
+        out = tmp_path / "holdings_only_repaired.mrc"
+        assert out.exists()
+        parsed = m.read_intact_record(
+            out.read_bytes().split(b"\x1d")[0].decode("utf-8") + "\x1d"
+        )
+        field008 = next(f for f in parsed.fields if f.tag == "008")
+        assert len(field008.content) == m.HOLDINGS_008_LENGTH
+
+    def test_normal_bib_file_is_unaffected(self, tmp_path):
+        src = tmp_path / "bib_only.mrc"
+        src.write_bytes(self._bib_record() * 5)
+        rc = m.main([str(src), "-o", str(tmp_path / "out.mrc")])
+        assert rc == 0
+        assert m.count_records(str(tmp_path / "out.mrc")) == 5
+
+    def test_mixed_file_is_unaffected(self, tmp_path):
+        # At least one bib-classified record in the sample -- not
+        # holdings-only, so the guard must not fire (--split-bib-holdings
+        # remains the documented path for a genuinely mixed file, but the
+        # guard's job here is only to catch the holdings-ONLY mistake).
+        src = tmp_path / "mixed.mrc"
+        src.write_bytes(self._bib_record() + self._holdings_record() * 4)
+        rc = m.main([str(src), "-o", str(tmp_path / "out.mrc")])
+        assert rc == 0
+
+
 class TestCheckHoldingsRecord:
     def _holdings_text(self, fields) -> str:
         parsed = m.ParsedRecord(leader=_HOLDINGS_LEADER, entries=[], fields=fields)
@@ -3711,6 +3784,29 @@ class TestRepairHoldingsRecords:
         parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
         field008 = next(f for f in parsed.fields if f.tag == "008")
         assert len(field008.content) == m.HOLDINGS_008_LENGTH
+
+    def test_misplaced_subfield_code_recovered_not_discarded(self, tmp_path):
+        # Real defect found in production holdings data: a stray space
+        # right after the delimiter, immediately followed by the real
+        # code -- e.g. raw "\x1f z Microfilm..." parses as code=" ",
+        # data="z Microfilm..." when it really means $z "Microfilm...".
+        # Must be recovered before strip_invalid_subfield_codes gets a
+        # chance to discard it outright, same as the bib pipeline.
+        fields = [
+            m.Field_("004", None, None, content="ocm123"),
+            m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
+            m.Field_("852", "  ", [
+                ("a", "Main Library"), ("h", "ABC123"),
+                (" ", "z Microfilm: 1983-1999"),
+            ]),
+        ]
+        result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
+        content = _resolve_log(log).read_text(encoding="utf-8")
+        assert "fixed_misplaced_subfield_code" in content
+        assert "removed_invalid_subfield" not in content
+        parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
+        f852 = next(f for f in parsed.fields if f.tag == "852")
+        assert ("z", " Microfilm: 1983-1999") in f852.subfields
 
     def test_null_identifier_flagged_not_fixed(self, tmp_path):
         # $b is the null identifier under test; $a is real, non-empty
@@ -4012,7 +4108,7 @@ class TestRepairHoldingsRecords:
         parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
         assert not any(f.tag == "854" for f in parsed.fields)
 
-    def test_852_missing_h_is_removed_and_logged_as_missing_call_number(self, tmp_path):
+    def test_852_missing_h_entirely_is_flagged_not_fixed_and_left_alone(self, tmp_path):
         fields = [
             m.Field_("004", None, None, content="ocm123"),
             m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
@@ -4021,9 +4117,27 @@ class TestRepairHoldingsRecords:
         result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
         content = _resolve_log(log).read_text(encoding="utf-8")
         assert "missing_call_number" in content
-        assert "[FIXED/REQUIRES ATTENTION]" in content
+        assert "[NOT FIXED]" in content
+        assert "removed_bad_call_number" not in content
         parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
-        assert not any(f.tag == "852" for f in parsed.fields)
+        f852 = next(f for f in parsed.fields if f.tag == "852")
+        assert ("a", "Main Library") in f852.subfields
+
+    def test_852_unusable_h_is_removed_but_rest_of_field_kept(self, tmp_path):
+        fields = [
+            m.Field_("004", None, None, content="ocm123"),
+            m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
+            m.Field_("852", "  ", [("a", "Main Library"), ("h", "--")]),
+        ]
+        result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
+        content = _resolve_log(log).read_text(encoding="utf-8")
+        assert "removed_bad_call_number" in content
+        assert "[FIXED/REQUIRES ATTENTION]" in content
+        assert "missing_call_number" not in content
+        parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
+        f852 = next(f for f in parsed.fields if f.tag == "852")
+        assert ("a", "Main Library") in f852.subfields
+        assert not any(code == "h" for code, _ in f852.subfields)
 
     def test_852_with_h_is_kept(self, tmp_path):
         fields = [
@@ -4157,23 +4271,25 @@ class TestRepairHoldingsRecords:
         f852 = next(f for f in parsed.fields if f.tag == "852")
         assert ("b", "Migration") in f852.subfields
 
-    def test_852_missing_both_h_and_location_is_only_logged_as_missing_call_number(
+    def test_852_missing_h_with_usable_b_flags_call_number_but_skips_location_fix(
         self, tmp_path,
     ):
-        # Removed for missing $h before fix_missing_852_location ever
-        # runs on it -- must not ALSO get an added_missing_852_location
-        # log line for a field that no longer exists.
+        # $h missing (flagged, field left alone) but $b already usable
+        # -- fix_missing_852_location must not ALSO insert a placeholder
+        # here, since the field already has a usable location.
         fields = [
-            m.Field_("004", None, None, content="ocm123"),
+            m.Field_("004", None, None, content="local123"),
             m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
             m.Field_("852", "  ", [("b", "Annex")]),
         ]
         result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
         content = _resolve_log(log).read_text(encoding="utf-8")
         assert "missing_call_number" in content
+        assert "[NOT FIXED]" in content
         assert "added_missing_852_location" not in content
         parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
-        assert not any(f.tag == "852" for f in parsed.fields)
+        f852 = next(f for f in parsed.fields if f.tag == "852")
+        assert ("b", "Annex") in f852.subfields
 
     def test_repairs_real_short_bucknell_holdings_file(self):
         # Regression/integration check against real production data
