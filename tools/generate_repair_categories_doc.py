@@ -29,6 +29,12 @@ itself runs by default, and (2) whether its section is shown by default --
 the bib pipeline hides the whole INFORMATIONAL section unless
 `--log-informational` is passed. **The holdings pipeline has no such gate at
 all -- every holdings INFORMATIONAL entry is always written.**
+
+In the bib pipeline, a record that's genuinely `unfixable` (see below) is
+never written into the main output at all -- it's diverted, byte-for-byte
+unchanged, to a separate `<output>_error.mrc` file next to it, and logged
+in its own UNFIXABLE section at the very top of the log, above even NOT
+FIXED.
 """
 
 TABLE_COLUMNS = [
@@ -117,6 +123,20 @@ BIB_ROWS = [
         "`--log-informational`",
     ),
     CategoryRow(
+        "Misplaced subfield code (a stray space right after the delimiter, "
+        "immediately followed by the real code, e.g. raw `\\x1f c2000.` "
+        'meaning `$c` "c2000.")',
+        "Corrected code/data split -- runs before invalid-code removal "
+        "below, so these are recovered instead of discarded",
+        "Yes (`--no-fix-misplaced-subfield-codes`)",
+        "`fixed_misplaced_subfield_code`", "INFORMATIONAL",
+        "No (needs `--log-fixed-misplaced-subfield-code` *and* "
+        "`--log-informational`)",
+        "`--no-fix-misplaced-subfield-codes` (leaves it for invalid "
+        "subfield code removal below instead); "
+        "`--log-fixed-misplaced-subfield-code`; `--log-informational`",
+    ),
+    CategoryRow(
         "Invalid subfield code removal", "Removed subfield",
         "Yes (`--no-strip-invalid-subfield-codes`)",
         "`removed_invalid_subfield`", "FIXED/REQUIRES ATTENTION", "**Yes**",
@@ -168,6 +188,15 @@ BIB_ROWS = [
         "FIXED/REQUIRES ATTENTION", "**Yes**", "`--no-fix-008-length`",
     ),
     CategoryRow(
+        "Orphaned trailing field (present in the file, no directory entry "
+        "of its own) reattached as `700`",
+        "Merged into the preceding record, as a new field",
+        "Yes (`--no-reattach-orphaned-fields`)",
+        "`reattached_orphaned_field`", "FIXED/REQUIRES ATTENTION", "**Yes**",
+        "`--no-reattach-orphaned-fields` (leaves it `unfixable`/`UNFIXABLE` "
+        "instead)",
+    ),
+    CategoryRow(
         "Invalid (non-numeric) tag -> 9XX rename", "Renamed field tag",
         "Yes (`--no-fix-invalid-tags`)", "`invalid_tag`", "INFORMATIONAL",
         "No", "`--no-fix-invalid-tags`; `--log-informational`",
@@ -193,16 +222,19 @@ BIB_ROWS = [
         "`--log-informational` (no disable switch -- always runs)",
     ),
     CategoryRow(
-        "Unfixable oversized field/base address", "Left record unchanged",
-        "n/a (only if it occurs)", "`oversized_unfixable`", "NOT FIXED",
+        "Unfixable oversized field/base address",
+        "Diverted to `<output>_error.mrc`, unchanged",
+        "n/a (only if it occurs)", "`unfixable`", "UNFIXABLE",
         "**Yes**", "-- (no switch -- genuinely unfixable)",
     ),
     CategoryRow(
-        "Unresolvable record (passed through unchanged)",
-        "Passed through unchanged", "n/a (only if it occurs)",
-        "`unresolved_record`", "NOT FIXED", "**Yes**",
+        "Unresolvable record (no consistent directory found by either mode)",
+        "Diverted to `<output>_error.mrc`, unchanged",
+        "n/a (only if it occurs)",
+        "`unfixable`", "UNFIXABLE", "**Yes**",
         "`--overrides` (Mode 2 only -- supplies the split the automatic "
-        "solver couldn't determine)",
+        "solver couldn't determine); `--no-reattach-orphaned-fields` "
+        "widens which of these land here instead of being auto-repaired",
     ),
     CategoryRow(
         "Suspect MARC-8 escape (miskeyed diacritic)",

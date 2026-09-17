@@ -900,6 +900,164 @@ class TestFixInvalidLeaderBytes:
 # strip_invalid_subfield_codes -- remove unusable subfield codes
 # ---------------------------------------------------------------------------
 
+class TestFixMisplacedSubfieldCodes:
+    def test_recovers_letter_code_with_stray_space(self):
+        # Raw bytes "\x1f c2000." parse as code=" ", data="c2000." --
+        # real production defect: the actual intended subfield is $c
+        # "c2000." (a common AACR2-era copyright-date convention) with
+        # one extra space accidentally inserted before its code.
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[m.Field_("260", "  ", [("a", "New York :"), (" ", "c2000.")])],
+        )
+        details = m.fix_misplaced_subfield_codes(parsed)
+        assert len(details) == 1
+        assert parsed.fields[0].subfields == [("a", "New York :"), ("c", "2000.")]
+
+    def test_recovers_digit_code_with_stray_space(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[m.Field_("035", "  ", [(" ", "2 21")])],
+        )
+        details = m.fix_misplaced_subfield_codes(parsed)
+        assert len(details) == 1
+        assert parsed.fields[0].subfields == [("2", " 21")]
+
+    def test_leaves_valid_codes_untouched(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[m.Field_("650", " 0", [("a", "Subject"), ("2", "local")])],
+        )
+        details = m.fix_misplaced_subfield_codes(parsed)
+        assert details == []
+        assert parsed.fields[0].subfields == [("a", "Subject"), ("2", "local")]
+
+    def test_leaves_unrecoverable_space_code_alone(self):
+        # Code is a space, but the very next character isn't a valid
+        # code either -- nothing safe to recover here, so this is left
+        # for strip_invalid_subfield_codes to remove instead.
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[m.Field_("500", "  ", [(" ", " still no valid code")])],
+        )
+        details = m.fix_misplaced_subfield_codes(parsed)
+        assert details == []
+        assert parsed.fields[0].subfields == [(" ", " still no valid code")]
+
+    def test_leaves_empty_data_after_space_alone(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[m.Field_("500", "  ", [(" ", "")])],
+        )
+        details = m.fix_misplaced_subfield_codes(parsed)
+        assert details == []
+        assert parsed.fields[0].subfields == [(" ", "")]
+
+    def test_control_fields_are_left_alone(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[m.Field_("001", None, None, content="abc123")],
+        )
+        details = m.fix_misplaced_subfield_codes(parsed)
+        assert details == []
+        assert parsed.fields[0].content == "abc123"
+
+    def test_runs_before_strip_invalid_subfield_codes_in_the_cli(self, tmp_path):
+        parsed = m.ParsedRecord(
+            leader=_SYNTHETIC_LEADER, entries=[],
+            fields=[
+                m.Field_("001", None, None, content="misplacedtest"),
+                m.Field_("245", "00", [("a", "Title.")]),
+                m.Field_("260", "  ", [
+                    ("a", "New York :"), ("b", "Wiley,"), (" ", "c2000."),
+                ]),
+            ],
+        )
+        src = tmp_path / "in.mrc"
+        src.write_bytes(m.assemble_marc(parsed))
+        out = tmp_path / "out.mrc"
+        log = tmp_path / "run.log"
+        rc = m.main([
+            str(src), "-o", str(out), "--log", str(log),
+            "--log-informational", "--log-fixed-misplaced-subfield-code",
+        ])
+        assert rc == 0
+        content = _resolve_log(log).read_text(encoding="utf-8")
+        assert "fixed_misplaced_subfield_code" in content
+        assert "[INFORMATIONAL]" in content
+        assert "removed_invalid_subfield" not in content
+        parsed_out = m.read_intact_record(m._read_text(str(out)))
+        f260 = next(f for f in parsed_out.fields if f.tag == "260")
+        assert ("c", "2000.") in f260.subfields
+
+    def test_fix_still_applies_but_not_logged_by_default(self, tmp_path):
+        # Not FIXED/REQUIRES ATTENTION anymore -- this doesn't need a
+        # human's attention (nothing is discarded or guessed), so by
+        # default it's not even in the log, even though the fix itself
+        # always runs.
+        parsed = m.ParsedRecord(
+            leader=_SYNTHETIC_LEADER, entries=[],
+            fields=[
+                m.Field_("001", None, None, content="misplacedtest"),
+                m.Field_("245", "00", [("a", "Title.")]),
+                m.Field_("260", "  ", [
+                    ("a", "New York :"), ("b", "Wiley,"), (" ", "c2000."),
+                ]),
+            ],
+        )
+        src = tmp_path / "in.mrc"
+        src.write_bytes(m.assemble_marc(parsed))
+        out = tmp_path / "out.mrc"
+        log = tmp_path / "run.log"
+        rc = m.main([str(src), "-o", str(out), "--log", str(log)])
+        assert rc == 0
+        resolved_log = _resolve_log(log)
+        content = resolved_log.read_text(encoding="utf-8") if resolved_log.exists() else ""
+        assert "fixed_misplaced_subfield_code" not in content
+        parsed_out = m.read_intact_record(m._read_text(str(out)))
+        f260 = next(f for f in parsed_out.fields if f.tag == "260")
+        assert ("c", "2000.") in f260.subfields
+
+    def test_disabled_via_flag_falls_back_to_removal(self, tmp_path):
+        parsed = m.ParsedRecord(
+            leader=_SYNTHETIC_LEADER, entries=[],
+            fields=[
+                m.Field_("001", None, None, content="misplacedtest"),
+                m.Field_("245", "00", [("a", "Title.")]),
+                m.Field_("260", "  ", [
+                    ("a", "New York :"), ("b", "Wiley,"), (" ", "c2000."),
+                ]),
+            ],
+        )
+        src = tmp_path / "in.mrc"
+        src.write_bytes(m.assemble_marc(parsed))
+        out = tmp_path / "out.mrc"
+        log = tmp_path / "run.log"
+        rc = m.main([
+            str(src), "-o", str(out), "--log", str(log),
+            "--no-fix-misplaced-subfield-codes",
+        ])
+        assert rc == 0
+        content = _resolve_log(log).read_text(encoding="utf-8")
+        assert "fixed_misplaced_subfield_code" not in content
+        assert "removed_invalid_subfield" in content
+        parsed_out = m.read_intact_record(m._read_text(str(out)))
+        f260 = next(f for f in parsed_out.fields if f.tag == "260")
+        assert all(code != "c" for code, _ in f260.subfields)
+
+
+# ---------------------------------------------------------------------------
+# strip_invalid_subfield_codes -- remove subfields with genuinely
+# unrecoverable codes (see fix_misplaced_subfield_codes above for the one
+# recoverable shape)
+# ---------------------------------------------------------------------------
+
 class TestStripInvalidSubfieldCodes:
     def test_removes_bad_subfield_keeps_good_ones(self):
         parsed = m.ParsedRecord(
@@ -1053,6 +1211,334 @@ class TestLeaderEntryMapCorrection:
         assert rc == 0
         content = _resolve_log(log).read_text(encoding="utf-8")
         assert "leader_entry_map_fixed" in content
+
+    def _corrupted_entry_map_bytes_invalid_utf8(self):
+        # Same idea as `_corrupted_entry_map_bytes`, but the corrupted byte
+        # (0x92) isn't valid UTF-8 anywhere in the sequence -- unlike "45x0",
+        # which is still plain ASCII. Real production data has been seen
+        # with exactly this: the file as a whole is genuine UTF-8, but one
+        # byte inside the leader's fixed "4500" constant is corrupted.
+        parsed = m.ParsedRecord(
+            leader=_SYNTHETIC_LEADER,
+            entries=[],
+            fields=[m.Field_("008", None, None, content="x" * 40)],
+        )
+        raw = bytearray(m.assemble_marc(parsed))
+        raw[20:24] = b"45\x920"
+        return bytes(raw)
+
+    def test_invalid_utf8_byte_in_entry_map_does_not_crash_the_stream(self, tmp_path, monkeypatch):
+        # Regression test: `iter_repair_stream`'s UTF-8 decoder used to be
+        # strict, so this byte raised UnicodeDecodeError and killed the
+        # whole run before the leader-repair logic above ever got a chance
+        # to run -- even though the file as a whole is meant to be read as
+        # UTF-8. `detect_encoding` only probes the first 4MB, so in the real
+        # production file this crash came from, the file-wide guess came
+        # back "utf-8" despite one bad byte tens of MB in; a tiny test file
+        # would instead get correctly probed in full and fall back to
+        # latin-1 on its own, sidestepping the bug entirely -- so
+        # `detect_encoding` is forced to "utf-8" here to isolate exactly
+        # what's actually being regression-tested: the streaming decoder
+        # itself, not the probe heuristic. A tiny chunk_size forces the bad
+        # byte into a chunk of its own, exercising the decoder the same way
+        # a real 32MB chunk boundary did in production.
+        monkeypatch.setattr(m, "detect_encoding", lambda path: "utf-8")
+        src = tmp_path / "badmap_invalid_utf8.mrc"
+        src.write_bytes(self._corrupted_entry_map_bytes_invalid_utf8())
+        records = list(m.iter_repair_stream(str(src), chunk_size=5))
+        assert len(records) == 1
+        parsed, _ = records[0]
+        assert m.assemble_marc(parsed)[20:24] == b"4500"
+
+    def test_invalid_utf8_byte_in_entry_map_fixed_via_cli(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(m, "detect_encoding", lambda path: "utf-8")
+        src = tmp_path / "badmap_invalid_utf8.mrc"
+        src.write_bytes(self._corrupted_entry_map_bytes_invalid_utf8())
+        out = tmp_path / "out.mrc"
+        log = tmp_path / "run.log"
+        rc = m.main([str(src), "-o", str(out), "--log", str(log)])
+        assert rc == 0
+        assert out.read_bytes()[20:24] == b"4500"
+
+
+# ---------------------------------------------------------------------------
+# reattach_orphaned_trailing_fields -- a trailing field physically present
+# in the file but missing its own directory entry (so excluded from its
+# record's own declared length), always shaped like a personal name
+# heading -- a real defect found in a University of Bahamas bib export.
+# ---------------------------------------------------------------------------
+
+class TestTryParseOrphanedField:
+    def test_valid_single_field_parses(self):
+        result = m._try_parse_orphaned_field("1 \x1faQuinn, Frances,\x1fd1963-\x1e")
+        assert result == ("1 ", [("a", "Quinn, Frances,"), ("d", "1963-")])
+
+    def test_valid_single_field_with_trailing_recterm(self):
+        result = m._try_parse_orphaned_field("1 \x1faQuinn, Frances,\x1fd1963-\x1e\x1d")
+        assert result == ("1 ", [("a", "Quinn, Frances,"), ("d", "1963-")])
+
+    def test_multi_field_chunk_rejected(self):
+        chunk = "1 \x1faOne\x1e1 \x1faTwo\x1e"
+        assert m._try_parse_orphaned_field(chunk) is None
+
+    def test_no_field_terminator_rejected(self):
+        assert m._try_parse_orphaned_field("1 \x1faNo terminator") is None
+
+    def test_data_before_first_subfield_rejected(self):
+        assert m._try_parse_orphaned_field("1 garbage\x1faReal\x1e") is None
+
+    def test_no_subfields_rejected(self):
+        assert m._try_parse_orphaned_field("1 \x1e") is None
+
+    def test_too_short_rejected(self):
+        assert m._try_parse_orphaned_field("1\x1e") is None
+
+
+class TestReattachOrphanedTrailingFields:
+    def _resolved(self):
+        parsed = m.ParsedRecord(
+            leader=_SYNTHETIC_LEADER, entries=[],
+            fields=[m.Field_("245", "00", [("a", "Title.")])],
+        )
+        return parsed, m.assemble_marc(parsed).decode("utf-8")
+
+    def _orphan_chunk(self, indicators, subfields):
+        text = indicators + "".join(f"\x1f{c}{d}" for c, d in subfields) + m.FIELDTERM
+        placeholder = m.ParsedRecord(leader="?" * 24, entries=[])
+        placeholder.unresolved.append((
+            0, m.DirEntry("???", len(text), 0), text[:200],
+            m.RepairError("no consistent directory found for this record at all"),
+        ))
+        return placeholder, text + m.RECTERM
+
+    def test_merges_personal_name_shaped_orphan_into_preceding_record(self):
+        prev = self._resolved()
+        orphan = self._orphan_chunk("1 ", [("a", "Quinn, Frances,"), ("d", "1963-")])
+        results = list(m.reattach_orphaned_trailing_fields(iter([prev, orphan])))
+        assert len(results) == 1
+        parsed, text = results[0]
+        assert not parsed.unresolved
+        assert parsed.fields[-1].tag == "700"
+        assert parsed.fields[-1].subfields == [("a", "Quinn, Frances,"), ("d", "1963-")]
+        assert parsed.reattached_orphaned_fields
+        assert text == prev[1] + orphan[1]
+
+    def test_does_not_merge_when_preceding_record_is_itself_unresolved(self):
+        orphan1 = self._orphan_chunk("1 ", [("a", "no home record")])
+        orphan2 = self._orphan_chunk("1 ", [("a", "Quinn, Frances,"), ("d", "1963-")])
+        results = list(m.reattach_orphaned_trailing_fields(iter([orphan1, orphan2])))
+        assert len(results) == 2
+        assert results[0][0].unresolved
+        assert results[1][0].unresolved
+
+    def test_does_not_merge_subfield_codes_outside_personal_name_whitelist(self):
+        prev = self._resolved()
+        # $u (URL) isn't a personal-name-heading code -- too ambiguous to
+        # safely guess tag 700 for.
+        orphan = self._orphan_chunk("4 ", [("u", "http://example.com/resource")])
+        results = list(m.reattach_orphaned_trailing_fields(iter([prev, orphan])))
+        assert len(results) == 2
+        assert results[1][0].unresolved
+
+    def test_does_not_merge_without_dollar_a(self):
+        prev = self._resolved()
+        orphan = self._orphan_chunk("1 ", [("d", "1963-")])  # no $a at all
+        results = list(m.reattach_orphaned_trailing_fields(iter([prev, orphan])))
+        assert len(results) == 2
+        assert results[1][0].unresolved
+
+    def test_does_not_merge_multi_field_chunks(self):
+        prev = self._resolved()
+        text = "1 \x1faOne\x1e1 \x1faTwo\x1e"
+        placeholder = m.ParsedRecord(leader="?" * 24, entries=[])
+        placeholder.unresolved.append((
+            0, m.DirEntry("???", len(text), 0), text[:200],
+            m.RepairError("no consistent directory found for this record at all"),
+        ))
+        results = list(
+            m.reattach_orphaned_trailing_fields(iter([prev, (placeholder, text + m.RECTERM)]))
+        )
+        assert len(results) == 2
+
+    def test_unresolved_chunk_at_start_of_stream_passes_through(self):
+        orphan = self._orphan_chunk("1 ", [("a", "Quinn, Frances,"), ("d", "1963-")])
+        results = list(m.reattach_orphaned_trailing_fields(iter([orphan])))
+        assert len(results) == 1
+        assert results[0][0].unresolved
+
+    def test_passthrough_when_wrapping_empty_stream(self):
+        assert list(m.reattach_orphaned_trailing_fields(iter([]))) == []
+
+
+class TestReattachOrphanedFieldsCLI:
+    def _record_with_orphaned_trailing_field(self) -> bytes:
+        """Build a record via assemble_marc (self-consistent leader,
+        directory, and declared length), then splice one extra field's
+        real bytes in directly before the trailing record terminator --
+        bypassing assemble_marc so the directory/length never account
+        for it. This is exactly the real-world shape found in
+        production: internally self-consistent leader/directory, but a
+        genuine trailing field's bytes still physically in the file,
+        unaccounted for by either."""
+        parsed = m.ParsedRecord(
+            leader=_SYNTHETIC_LEADER, entries=[],
+            fields=[
+                m.Field_("001", None, None, content="orphantest"),
+                m.Field_("245", "00", [("a", "Title.")]),
+            ],
+        )
+        raw = bytearray(m.assemble_marc(parsed))
+        assert raw[-1:] == b"\x1d"
+        orphan = m.Field_(
+            "700", "1 ", [("a", "Quinn, Frances,"), ("d", "1963-")]
+        ).delimited().encode("utf-8")
+        return bytes(raw[:-1]) + orphan + b"\x1d"
+
+    def test_reattached_by_default_and_logged(self, tmp_path):
+        src = tmp_path / "orphan.mrc"
+        src.write_bytes(self._record_with_orphaned_trailing_field())
+        out = tmp_path / "out.mrc"
+        log = tmp_path / "run.log"
+        rc = m.main([str(src), "-o", str(out), "--log", str(log)])
+        assert rc == 0
+        assert m.count_records(str(out)) == 1
+        content = _resolve_log(log).read_text(encoding="utf-8")
+        assert "reattached_orphaned_field" in content
+        assert "[FIXED/REQUIRES ATTENTION]" in content
+        parsed = m.read_intact_record(m._read_text(str(out)))
+        assert parsed.fields[-1].tag == "700"
+        assert parsed.fields[-1].subfields == [("a", "Quinn, Frances,"), ("d", "1963-")]
+
+    def test_disabled_via_flag_diverts_to_error_file(self, tmp_path):
+        src = tmp_path / "orphan.mrc"
+        src.write_bytes(self._record_with_orphaned_trailing_field())
+        out = tmp_path / "out.mrc"
+        log = tmp_path / "run.log"
+        rc = m.main([
+            str(src), "-o", str(out), "--log", str(log),
+            "--no-reattach-orphaned-fields",
+        ])
+        assert rc == 1  # an UNFIXABLE record makes the CLI exit non-zero
+        assert m.count_records(str(out)) == 1
+        assert m.count_records(str(tmp_path / "out_error.mrc")) == 1
+        content = _resolve_log(log).read_text(encoding="utf-8")
+        assert "unfixable" in content
+        assert "[UNFIXABLE]" in content
+        assert "reattached_orphaned_field" not in content
+
+
+# ---------------------------------------------------------------------------
+# UNFIXABLE -- a record neither mode can repair at all (no consistent
+# directory found, or a field/base address too large for ISO 2709) is
+# diverted to a separate "_error" file instead of the main output, and
+# logged at the very top of the log.
+# ---------------------------------------------------------------------------
+
+class TestUnfixableErrorFile:
+    def _clean_record(self, id_="clean") -> bytes:
+        parsed = m.ParsedRecord(
+            leader=_SYNTHETIC_LEADER, entries=[],
+            fields=[
+                m.Field_("001", None, None, content=id_),
+                m.Field_("245", "00", [("a", "Title.")]),
+            ],
+        )
+        return m.assemble_marc(parsed)
+
+    def _unresolvable_garbage(self) -> bytes:
+        return b"not a marc record at all, no leader here whatsoever\x1d"
+
+    def _oversized_field_record(self) -> bytes:
+        placeholder = "P" * 50
+        parsed = m.ParsedRecord(
+            leader=_SYNTHETIC_LEADER, entries=[],
+            fields=[
+                m.Field_("001", None, None, content="oversized"),
+                m.Field_("500", "  ", [("a", placeholder)]),
+            ],
+        )
+        raw = m.assemble_marc(parsed)
+        needle = placeholder.encode()
+        assert raw.count(needle) == 1
+        return raw.replace(needle, b"x" * 10000)
+
+    def test_unresolvable_record_diverted_to_error_file(self, tmp_path):
+        src = tmp_path / "in.mrc"
+        src.write_bytes(self._clean_record() + self._unresolvable_garbage())
+        out = tmp_path / "out.mrc"
+        log = tmp_path / "run.log"
+        rc = m.main([str(src), "-o", str(out), "--log", str(log)])
+        assert rc == 1
+        assert m.count_records(str(out)) == 1
+        error_path = tmp_path / "out_error.mrc"
+        assert error_path.exists()
+        assert m.count_records(str(error_path)) == 1
+        assert error_path.read_bytes() == self._unresolvable_garbage()
+        content = _resolve_log(log).read_text(encoding="utf-8")
+        assert "=== UNFIXABLE: unfixable" in content
+        assert "no consistent directory found for this record at all" in content
+
+    def test_oversized_field_diverted_to_error_file(self, tmp_path):
+        raw = self._oversized_field_record()
+        src = tmp_path / "in.mrc"
+        src.write_bytes(raw)
+        out = tmp_path / "out.mrc"
+        log = tmp_path / "run.log"
+        rc = m.main([str(src), "-o", str(out), "--log", str(log)])
+        assert rc == 1
+        assert m.count_records(str(out)) == 0
+        error_path = tmp_path / "out_error.mrc"
+        assert error_path.read_bytes() == raw
+        content = _resolve_log(log).read_text(encoding="utf-8")
+        assert "=== UNFIXABLE: unfixable" in content
+        # the log explains *why* -- the same reason assemble_marc itself raises
+        assert "directory's length field is only 4 digits" in content
+
+    def test_error_file_not_created_when_nothing_unfixable(self, tmp_path):
+        src = tmp_path / "in.mrc"
+        src.write_bytes(self._clean_record())
+        out = tmp_path / "out.mrc"
+        rc = m.main([str(src), "-o", str(out)])
+        assert rc == 0
+        assert not (tmp_path / "out_error.mrc").exists()
+
+    def test_unfixable_section_appears_before_every_other_section(self, tmp_path):
+        # A file with one of everything: unresolvable garbage (UNFIXABLE),
+        # a record missing 245 (INFORMATIONAL, added_default_245), and a
+        # clean record -- UNFIXABLE must render first regardless of
+        # write_log's usual NOT FIXED-first ordering.
+        missing_245 = m.assemble_marc(m.ParsedRecord(
+            leader=_SYNTHETIC_LEADER, entries=[],
+            fields=[m.Field_("001", None, None, content="no245")],
+        ))
+        src = tmp_path / "in.mrc"
+        # Leading garbage before any real leader is silently skipped by
+        # iter_repair_stream (nothing to resync *from* yet), so the
+        # unresolvable chunk needs a real record ahead of it to exercise
+        # the UNFIXABLE path at all -- same as
+        # test_unresolvable_record_diverted_to_error_file above.
+        src.write_bytes(
+            self._clean_record() + self._unresolvable_garbage() + missing_245
+        )
+        out = tmp_path / "out.mrc"
+        log = tmp_path / "run.log"
+        rc = m.main([str(src), "-o", str(out), "--log", str(log), "--log-informational"])
+        assert rc == 1
+        content = _resolve_log(log).read_text(encoding="utf-8")
+        assert content.index("=== UNFIXABLE") < content.index("=== INFORMATIONAL")
+
+    def test_clean_records_unaffected_by_a_later_unfixable_one(self, tmp_path):
+        src = tmp_path / "in.mrc"
+        src.write_bytes(
+            self._clean_record("first") + self._unresolvable_garbage()
+            + self._clean_record("second")
+        )
+        out = tmp_path / "out.mrc"
+        rc = m.main([str(src), "-o", str(out)])
+        assert rc == 1
+        assert m.count_records(str(out)) == 2
+        text = m._read_text(str(out))
+        assert "first" in text and "second" in text
 
 
 # ---------------------------------------------------------------------------

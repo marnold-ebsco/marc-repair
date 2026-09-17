@@ -122,14 +122,19 @@ default:
     single field over 9,999 bytes or a base address over 99,999 (the
     directory's own length/position fields have no such sentinel, and a
     reader needs the real base address to find field data at all) --
-    those are passed through unchanged with a log entry.
+    those, like any record neither mode can parse at all, are UNFIXABLE
+    (see below).
 
 Every removal, warning, transcode, and added-field notice from a run goes
 into ONE combined, timestamped log file (default OUT_log_TIMESTAMP.log, see
---log). A record that can't be auto-repaired at all is still written to the
-output -- unchanged, exactly as it came in -- rather than being dropped, and
-gets its own UNRESOLVED line in that same log; the output file always has
-the same number of records as the input.
+--log). A record that can't be auto-repaired at all is never written into
+the main output -- doing so would silently mix a badly mangled record into
+an otherwise-clean load file. Instead it's written, byte-for-byte unchanged
+(never dropped), to a second file next to the main output (INPUT_fixed.mrc
+gets a sibling INPUT_fixed_error.mrc, created only if this ever actually
+happens), and logged as `unfixable` in its own UNFIXABLE section at the
+very top of that same log -- above even NOT FIXED, since it's the one
+thing that needs a look before the run's output is usable at all.
 
 ===============================================================================
 """
@@ -328,6 +333,13 @@ class ParsedRecord:
     # caller, this correction has to happen inside Mode 1's own parse, so
     # it's carried here for the caller to log.
     indicator_fixes: list[tuple[str, int]] = field(default_factory=list)
+    # (tag, detail) for each field appended by reattach_orphaned_trailing_
+    # fields -- that runs as a wrapper around the whole record stream
+    # (after this record was already fully parsed), not as part of Mode
+    # 1/2 parsing itself, but is carried here the same way indicator_fixes
+    # is so the caller (main()) can log it without the wrapper needing to
+    # know anything about logging.
+    reattached_orphaned_fields: list[tuple[str, str]] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -1373,7 +1385,21 @@ def iter_repair_stream(
     """
     overrides = overrides or {}
     encoding = detect_encoding(path)
-    decoder = codecs.getincrementaldecoder("utf-8")() if encoding == "utf-8" else None
+    # errors="surrogateescape" rather than strict: real exports occasionally
+    # have a single corrupted byte that isn't valid UTF-8 (seen in practice --
+    # a leader's fixed "4500" entry-map constant with one byte replaced by
+    # 0x92) even though the file as a whole is genuinely UTF-8 (which is why
+    # `detect_encoding`'s probe didn't already route the whole file to
+    # latin-1). Surrogate-escaping that byte instead of raising loses nothing
+    # (it round-trips 1:1 back to the original byte on re-encode) and lets
+    # parsing continue -- it only looks for real delimiters, never byte
+    # validity -- so the usual repair logic (e.g. assemble_marc's hardcoded
+    # "4500", never copied through from the original leader) can fix it same
+    # as any other corrupted leader byte, instead of the whole run dying.
+    decoder = (
+        codecs.getincrementaldecoder("utf-8")(errors="surrogateescape")
+        if encoding == "utf-8" else None
+    )
 
     buf = ""
     pos = 0
@@ -1463,6 +1489,115 @@ def iter_repair_stream(
             idx += 1
 
 
+#: A real defect seen in production data: a record's own leader/directory
+#: is fully self-consistent, but genuinely falls one field short of the
+#: record's real byte content -- whatever wrote the file appended one more
+#: field's bytes without ever adding a directory entry for it (so neither
+#: the directory nor the declared length account for those bytes). Mode 1
+#: correctly stops after exactly as many real fields as the directory
+#: has entries for (see _read_intact_at), leaving that trailing field's
+#: bytes dangling right after -- with no leader/directory of their own,
+#: they can't be attributed to any tag, so iter_repair_stream reports
+#: them UNRESOLVED, immediately after the record they actually belong to.
+#:
+#: Reattaching those bytes to that record requires *guessing* the tag
+#: that would have been in the missing directory entry -- something this
+#: tool otherwise never does. The one shape narrow enough to guess safely
+#: is a personal name heading: subfields drawn only from this set, with
+#: $a (the name itself) always present, is essentially unambiguous as tag
+#: 700 (Added Entry -- Personal Name) -- $b numeration, $c titles/other
+#: words, $d dates, $e relator term, $q fuller form of name, $4 relator
+#: code are, together, specific enough to this one heading type that no
+#: other common tag's content looks like this by coincidence.
+_ORPHANED_FIELD_TAG = "700"
+_ORPHANED_FIELD_VALID_CODES = set("abcdeq4")
+
+
+def _try_parse_orphaned_field(chunk: str) -> tuple[str, list[tuple[str, str]]] | None:
+    """If `chunk` (an UNRESOLVED record/chunk with no leader or directory
+    of its own) is exactly the real bytes of one intact MARC data field --
+    2 indicator characters, then a subfield-delimited body, terminated by
+    exactly one 0x1E, optionally followed by a trailing 0x1D -- return its
+    (indicators, subfields). Returns None for anything else, including
+    more than one field's worth of content: reattach_orphaned_trailing_
+    fields only ever reattaches a single trailing field, the one shape
+    this defect (see above) actually produces."""
+    text = chunk[:-1] if chunk.endswith(RECTERM) else chunk
+    if not text.endswith(FIELDTERM):
+        return None
+    body_all = text[:-1]
+    if FIELDTERM in body_all or len(body_all) < 2:
+        return None
+    indicators, body = body_all[:2], body_all[2:]
+    if not body.startswith(SUBFIELD):
+        return None
+    parts = body.split(SUBFIELD)
+    if parts[0] != "":
+        return None
+    subfields = [(p[0], p[1:]) for p in parts[1:] if p]
+    if not subfields:
+        return None
+    return indicators, subfields
+
+
+def reattach_orphaned_trailing_fields(
+    record_stream: Iterator[tuple[ParsedRecord, str]],
+) -> Iterator[tuple[ParsedRecord, str]]:
+    """Wrap a repair stream (iter_repair_stream's or iter_repair's output)
+    to fix the defect described above `_ORPHANED_FIELD_TAG`: merge an
+    UNRESOLVED chunk into the record immediately before it, as a new tag
+    700 field, whenever that chunk is exactly one field's worth of real
+    bytes shaped like a personal name heading (see
+    `_try_parse_orphaned_field`) and the record before it parsed
+    successfully. The merged record's `reattached_orphaned_fields` records
+    (tag, detail) so the caller can log it -- under FIXED/REQUIRES
+    ATTENTION, since the tag is a guess, however confident.
+
+    Every other UNRESOLVED chunk (multi-field, not personal-name-shaped,
+    or not immediately following a resolved record) passes through
+    unchanged, exactly as before this wrapper existed. This does mean a
+    successful merge yields one fewer (parsed, rec_text) pair than the
+    stream it wraps produced for that same input -- seen as `main`'s own
+    output record count deliberately, since the two chunks were never
+    really two separate records to begin with, just one record whose
+    trailing field lost its directory entry.
+    """
+    pending: tuple[ParsedRecord, str] | None = None
+    for parsed, rec_text in record_stream:
+        if pending is not None:
+            prev_parsed, prev_text = pending
+            merged = False
+            if not prev_parsed.unresolved and parsed.unresolved:
+                field_shape = _try_parse_orphaned_field(rec_text)
+                if field_shape is not None:
+                    indicators, subfields = field_shape
+                    codes = {code for code, _ in subfields}
+                    if "a" in codes and codes <= _ORPHANED_FIELD_VALID_CODES:
+                        new_field = Field_(_ORPHANED_FIELD_TAG, indicators, subfields)
+                        prev_parsed.fields.append(new_field)
+                        prev_parsed.entries.append(
+                            DirEntry(_ORPHANED_FIELD_TAG, len(new_field.delimited()), 0)
+                        )
+                        detail = (
+                            f"reattached a trailing ={_ORPHANED_FIELD_TAG} field, "
+                            f"present in the file but missing its own directory "
+                            f"entry (so excluded from this record's own declared "
+                            f"length): {new_field.delimited()!r}"
+                        )
+                        prev_parsed.reattached_orphaned_fields.append(
+                            (_ORPHANED_FIELD_TAG, detail)
+                        )
+                        pending = (prev_parsed, prev_text + rec_text)
+                        merged = True
+            if not merged:
+                yield pending
+                pending = (parsed, rec_text)
+        else:
+            pending = (parsed, rec_text)
+    if pending is not None:
+        yield pending
+
+
 def repair_text(
     text: str, overrides: dict[int, OverridesByField] | None = None
 ) -> list[ParsedRecord]:
@@ -1498,7 +1633,15 @@ def assemble_marc(parsed: ParsedRecord) -> bytes:
     # field for its length, once more as part of the whole record at the
     # end) -- this doubled encode() work was a real, measurable cost on
     # a real 91MB/48k-record file.
-    field_byte_chunks = [f.delimited().encode(encoding) for f in parsed.fields]
+    # errors="surrogateescape": a field's (or, below, the leader's own
+    # untouched bytes') text can contain a surrogate-escaped character if
+    # the source file had a corrupted byte that wasn't valid UTF-8 (see
+    # iter_repair_stream's matching comment) -- round-tripping it back to
+    # its original byte here, rather than raising, keeps that corruption
+    # exactly as harmless on the way out as it already is on the way in.
+    field_byte_chunks = [
+        f.delimited().encode(encoding, errors="surrogateescape") for f in parsed.fields
+    ]
     # build directory from field lengths (they must match declared lengths --
     # verified already during parsing, but recompute here to be self-consistent)
     dir_entries = []
@@ -1556,7 +1699,7 @@ def assemble_marc(parsed: ParsedRecord) -> bytes:
         # using real delimiters and looser leader checks instead) but must
         # not be written back out uncorrected.
     )
-    header = (new_leader + directory).encode(encoding)
+    header = (new_leader + directory).encode(encoding, errors="surrogateescape")
     return header + field_data_bytes + RECTERM.encode(encoding)
 
 
@@ -2565,6 +2708,42 @@ def strip_missing_required_a(parsed: ParsedRecord, required_a_tags: set[str]) ->
     return details
 
 
+def fix_misplaced_subfield_codes(parsed: ParsedRecord) -> list[str]:
+    """Fix a subfield whose code is a single stray space, immediately
+    followed by what's unmistakably the REAL, intended code -- e.g. raw
+    bytes "\\x1f c2000." parse (correctly, by the letter of the format)
+    as code=" ", data="c2000.", when the actual intended subfield was
+    $c "c2000." (a common AACR2-era copyright-date convention: "c" is
+    literal data, not the code, but here one extra space got inserted
+    between the delimiter and its real code). A real, high-volume defect
+    in production data -- 199 of 203 removed_invalid_subfield hits in one
+    71.6MB file were exactly this shape -- and unlike most invalid-code
+    cases, this one isn't a guess: the intended code is simply the very
+    next character, still physically present, so recovering it discards
+    nothing (not even the stray space, which was never real data to
+    begin with). Must run before `strip_invalid_subfield_codes`, which
+    would otherwise discard every one of these outright. Returns a list
+    of detail strings, one per subfield fixed (category
+    "fixed_misplaced_subfield_code" -- see `main`)."""
+    details = []
+    for f in parsed.fields:
+        if f.is_control():
+            continue
+        new_subfields = []
+        for code, data in f.subfields:
+            if code == " " and data and data[0] in VALID_SUBFIELD_CODE_CHARS:
+                real_code, real_data = data[0], data[1:]
+                details.append(
+                    f"={f.tag}: subfield code was a stray space before "
+                    f"${real_code} -- corrected to ${real_code}{real_data!r}"
+                )
+                new_subfields.append((real_code, real_data))
+            else:
+                new_subfields.append((code, data))
+        f.subfields = new_subfields
+    return details
+
+
 def strip_invalid_subfield_codes(parsed: ParsedRecord) -> list[str]:
     """Remove subfields whose code isn't a lowercase letter or digit (see
     `VALID_SUBFIELD_CODE_CHARS`) -- a code that isn't one of those is
@@ -2895,6 +3074,41 @@ def _null_writer():
     yield None
 
 
+def _error_output_path(out_path: str) -> str:
+    """Insert "_error" right before `out_path`'s extension -- e.g.
+    "bib_fixed.mrc" -> "bib_fixed_error.mrc" -- mirroring
+    `_timestamped_log_path`'s own insert-before-extension convention.
+    Records this tool concludes it truly can't repair at all (see the
+    UNFIXABLE section) are written here, byte-for-byte unchanged,
+    instead of the main output -- so a badly mangled record can never
+    end up silently mixed into an otherwise-clean load file."""
+    base, ext = os.path.splitext(out_path)
+    return f"{base}_error{ext}"
+
+
+class _LazyBinaryWriter:
+    """A binary file opened only on its first `write()` -- so a run with
+    no UNFIXABLE records never creates an empty "_error" file that never
+    needed to exist. Usable as its own context manager, alongside the
+    other `with open(...) as ...` handles in `main`."""
+
+    def __init__(self, path: str):
+        self.path = path
+        self._fh = None
+
+    def __enter__(self) -> "_LazyBinaryWriter":
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        if self._fh is not None:
+            self._fh.close()
+
+    def write(self, data: bytes) -> None:
+        if self._fh is None:
+            self._fh = open(self.path, "wb")
+        self._fh.write(data)
+
+
 def _read_text(path: str) -> str:
     """Read a MARC file or pasted-text file. See `_read_text_with_encoding`;
     this just discards which encoding was used, for callers that don't need
@@ -2970,18 +3184,20 @@ _FIXED_REQUIRES_ATTENTION = {
     "field_removed_because_missing_a",
     "added_field",
     "holdings_leader_byte_defaulted",
+    "reattached_orphaned_field",
 }
 
 #: INFORMATIONAL, at the very bottom: a fix applied via a fixed
 #: default/constant or a systematic, file-wide transformation rather
 #: than judgment applied to that record's own content (a placeholder
 #: 008/245, a leader byte reset to a default code, $9 promoted to $0,
-#: the leader's entry-map constant restored, an unparseable tag
-#: renamed to an unused 9XX slot, typographic punctuation flattened,
-#: a record transcoded MARC-8 -> UTF-8, double-encoded UTF-8
-#: corrected, 999 remapped to 945, an oversized record's leader
-#: sentinel applied, short indicators padded with spaces) -- or a
-#: detect-only finding not urgent enough for NOT FIXED.
+#: a misplaced subfield code corrected, the leader's entry-map constant
+#: restored, an unparseable tag renamed to an unused 9XX slot,
+#: typographic punctuation flattened, a record transcoded MARC-8 ->
+#: UTF-8, double-encoded UTF-8 corrected, 999 remapped to 945, an
+#: oversized record's leader sentinel applied, short indicators padded
+#: with spaces) -- or a detect-only finding not urgent enough for NOT
+#: FIXED.
 _INFORMATIONAL = {
     "added_default_008",
     "added_default_holdings_008",
@@ -2991,6 +3207,7 @@ _INFORMATIONAL = {
     "leader_byte_defaulted",
     "leader_entry_map_fixed",
     "normalized_subfield_9_to_0",
+    "fixed_misplaced_subfield_code",
     "invalid_tag",
     "normalized_smart_characters",
     "transcoded_marc8",
@@ -3004,7 +3221,19 @@ _INFORMATIONAL = {
     "padded_indicators",
 }
 
+#: UNFIXABLE, above even NOT FIXED: a record this tool concluded it
+#: genuinely can't repair at all (no consistent directory found by
+#: either mode, or a field/base address too large for ISO 2709 to
+#: represent) -- see reattach_orphaned_trailing_fields above for the one
+#: narrow case that's safely recoverable instead of landing here. Such a
+#: record is no longer written into the main output at all: it goes,
+#: byte-for-byte unchanged, to a separate "_error" file next to it (see
+#: `_error_output_path`), so a badly mangled record can never end up
+#: silently mixed into an otherwise-clean load file. Sorted first
+#: because it's the one thing a human MUST look at -- everything else
+#: in the output is at least loadable as MARC.
 _DEDICATED_SECTIONS: dict[str, tuple[int, str]] = {
+    "unfixable": (-1, "UNFIXABLE"),
     "duplicate_identifier": (3, "DUPLICATE RECORDS"),
 }
 for _cat in _FIXED_REQUIRES_ATTENTION:
@@ -3015,12 +3244,12 @@ del _cat
 
 
 def _section_for(entry: LogEntry) -> tuple[int, str]:
-    """(sort_order, section_label) for `entry` -- NOT FIXED, then
-    FIXED/REQUIRES ATTENTION, then any other dedicated sections (see
-    `_DEDICATED_SECTIONS`) like DUPLICATE RECORDS, then INFORMATIONAL.
-    There is no plain "FIXED" section -- an unrecognized category
-    logged with fixed=True falls back to INFORMATIONAL rather than a
-    generic bucket, so every new fix category must be added to
+    """(sort_order, section_label) for `entry` -- UNFIXABLE, then NOT
+    FIXED, then FIXED/REQUIRES ATTENTION, then any other dedicated
+    sections (see `_DEDICATED_SECTIONS`) like DUPLICATE RECORDS, then
+    INFORMATIONAL. There is no plain "FIXED" section -- an unrecognized
+    category logged with fixed=True falls back to INFORMATIONAL rather
+    than a generic bucket, so every new fix category must be added to
     `_FIXED_REQUIRES_ATTENTION` or `_INFORMATIONAL` above to land
     somewhere deliberate."""
     dedicated = _DEDICATED_SECTIONS.get(entry.category)
@@ -3274,14 +3503,22 @@ def repair_holdings_records(
             n_total += 1
             if on_record is not None:
                 on_record(n_total)
+            # errors="surrogateescape" here and below: rec_text is the raw,
+            # untouched original text, so it can still carry a
+            # surrogate-escaped byte from a source-file corruption that
+            # wasn't valid UTF-8 (see iter_repair_stream) -- round-tripping
+            # it back to that same original byte, rather than raising, is
+            # exactly what "passed through unchanged" already means here.
             if on_estimate is not None:
-                bytes_consumed_for_estimate += len(rec_text.encode(encoding_used))
+                bytes_consumed_for_estimate += len(
+                    rec_text.encode(encoding_used, errors="surrogateescape")
+                )
                 on_estimate(n_total, bytes_consumed_for_estimate)
 
             if parsed.unresolved:
                 reason = parsed.unresolved[0][3]
                 log("unresolved_record", False, i, "", f"passed through unchanged: {reason}")
-                out_fh.write(rec_text.encode(encoding_used))
+                out_fh.write(rec_text.encode(encoding_used, errors="surrogateescape"))
                 n_unresolved += 1
                 continue
 
@@ -3341,7 +3578,7 @@ def repair_holdings_records(
                 assembled = assemble_marc(parsed)
             except RepairError as exc:
                 log("oversized_unfixable", False, i, rec_id, f"passed through unchanged: {exc}")
-                out_fh.write(rec_text.encode(encoding_used))
+                out_fh.write(rec_text.encode(encoding_used, errors="surrogateescape"))
                 n_unresolved += 1
                 if rec_id:
                     id_records.append((i, rec_id, rec_text[:5]))
@@ -3580,6 +3817,31 @@ def main(argv: list[str] | None = None) -> int:
         "either way, only the log content changes",
     )
     parser.add_argument(
+        "--no-fix-misplaced-subfield-codes",
+        dest="fix_misplaced_subfield_codes",
+        action="store_false",
+        default=True,
+        help="do NOT recover a subfield whose code is a single stray "
+        "space immediately followed by its real, still-present code "
+        "(e.g. raw \"\\x1f c2000.\" -- code ' ', data 'c2000.' -- really "
+        "meant $c \"c2000.\"; a real, high-volume defect in some source "
+        "data). By default this runs BEFORE --strip-invalid-subfield-"
+        "codes so these are recovered rather than discarded; pass this "
+        "flag to leave such subfields for --strip-invalid-subfield-codes "
+        "to remove instead. Not logged per-record by default (see "
+        "--log-fixed-misplaced-subfield-code) since this can be a large "
+        "fraction of a file with this defect",
+    )
+    parser.add_argument(
+        "--log-fixed-misplaced-subfield-code",
+        action="store_true",
+        help="log each individual misplaced-subfield-code fix (see "
+        "--no-fix-misplaced-subfield-codes). Off by default since this "
+        "can be a large fraction of a file with this defect, which "
+        "would otherwise dominate the log; the fix itself always runs "
+        "regardless of this flag (also needs --log-informational)",
+    )
+    parser.add_argument(
         "--no-strip-invalid-subfield-codes",
         dest="strip_invalid_subfield_codes",
         action="store_false",
@@ -3625,6 +3887,22 @@ def main(argv: list[str] | None = None) -> int:
         "value outside their valid MARC21 code set. By default each is "
         "reset to a fixed default (see fix_invalid_leader_bytes()) and "
         "logged (see --log); pass this flag to leave them as-is instead",
+    )
+    parser.add_argument(
+        "--no-reattach-orphaned-fields",
+        dest="reattach_orphaned_fields",
+        action="store_false",
+        default=True,
+        help="do NOT reattach a trailing field that's physically present "
+        "in the file but missing its own directory entry (so excluded "
+        "from its record's own declared length) -- a real defect seen "
+        "in production data, always shaped like a personal name heading "
+        "(see reattach_orphaned_trailing_fields). By default such a "
+        "field is reattached to the record right before it as a new =700 "
+        "and logged under FIXED/REQUIRES ATTENTION (see --log), since the "
+        "tag is a guess (however confident); with this flag it's left "
+        "unfixable instead -- diverted to the _error output file like any "
+        "other record neither mode can resolve",
     )
     parser.add_argument(
         "--no-add-default-245",
@@ -3970,7 +4248,8 @@ def main(argv: list[str] | None = None) -> int:
     # pathological run where every single record has something to log is
     # nowhere near the size of holding every record itself would be.
     n_total = 0
-    n_unresolved = 0
+    n_unfixable = 0
+    error_path = _error_output_path(out_path)
     # Only accumulated until the one-time early estimate fires (see
     # ProgressReporter.maybe_print_estimate) -- cheap to compute (just
     # len() on text already in hand) but no reason to keep paying it for
@@ -3989,30 +4268,48 @@ def main(argv: list[str] | None = None) -> int:
         log_entries.append(LogEntry(category, fixed, ts, record_idx, rec_id, detail))
 
     with open(out_path, "wb") as out_fh, \
-            (open(mrk_path, "w", encoding="utf-8") if mrk_path else _null_writer()) as mrk_fh:
+            (
+                open(mrk_path, "w", encoding="utf-8", errors="surrogateescape")
+                if mrk_path else _null_writer()
+            ) as mrk_fh, \
+            _LazyBinaryWriter(error_path) as error_fh:
         record_stream = iter_repair_stream(
             args.input,
             normalized_overrides,
             on_progress=progress.on_progress,
             fix_bad_indicators=args.fix_bad_indicators,
         )
+        if args.reattach_orphaned_fields:
+            record_stream = reattach_orphaned_trailing_fields(record_stream)
         for i, (parsed, rec_text) in enumerate(record_stream):
             n_total += 1
+            # errors="surrogateescape" here and below: rec_text is the raw,
+            # untouched original text, so it can still carry a
+            # surrogate-escaped byte from a source-file corruption that
+            # wasn't valid UTF-8 (see iter_repair_stream) -- round-tripping
+            # it back to that same original byte, rather than raising, is
+            # exactly what "passed through unchanged" already means here.
             if not progress.estimate_shown:
-                bytes_consumed_for_estimate += len(rec_text.encode(encoding_used))
+                bytes_consumed_for_estimate += len(
+                    rec_text.encode(encoding_used, errors="surrogateescape")
+                )
                 progress.maybe_print_estimate(n_total, bytes_consumed_for_estimate)
             progress.maybe_print(n_total)
             ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
             if parsed.unresolved:
                 reason = parsed.unresolved[0][3]
-                print(f"record {i}: UNRESOLVED ({reason}) -- passing through unchanged",
-                      file=sys.stderr)
-                log("unresolved_record", False, i, "", f"passed through unchanged: {reason}")
-                out_fh.write(rec_text.encode(encoding_used))
+                print(
+                    f"record {i}: UNFIXABLE ({reason}) -- writing to {error_path} instead",
+                    file=sys.stderr,
+                )
+                log("unfixable", False, i, "", f"written to {error_path} unchanged: {reason}")
+                error_fh.write(rec_text.encode(encoding_used, errors="surrogateescape"))
                 if mrk_fh:
-                    mrk_fh.write("=UNRESOLVED  (passed through unchanged)\n\n")
-                n_unresolved += 1
+                    mrk_fh.write(
+                        f"=UNFIXABLE  (written to {os.path.basename(error_path)} instead)\n\n"
+                    )
+                n_unfixable += 1
             else:
                 for tag, spaces_added in parsed.indicator_fixes:
                     rec_id = record_identifier(parsed)
@@ -4020,6 +4317,9 @@ def main(argv: list[str] | None = None) -> int:
                         "padded_indicators", True, i, rec_id,
                         f"padded {spaces_added} space(s) into short indicators on ={tag}",
                     )
+                for tag, detail in parsed.reattached_orphaned_fields:
+                    rec_id = record_identifier(parsed)
+                    log("reattached_orphaned_field", True, i, rec_id, detail)
                 for category, detail in find_suspect_marc8_escapes(parsed):
                     rec_id = record_identifier(parsed)
                     log(category, False, i, rec_id, detail)
@@ -4069,6 +4369,12 @@ def main(argv: list[str] | None = None) -> int:
                     if args.log_normalized_smart_characters:
                         for detail in details:
                             log("normalized_smart_characters", True, i, rec_id, detail)
+                if args.fix_misplaced_subfield_codes:
+                    rec_id = record_identifier(parsed)
+                    details = fix_misplaced_subfield_codes(parsed)
+                    if args.log_fixed_misplaced_subfield_code:
+                        for detail in details:
+                            log("fixed_misplaced_subfield_code", True, i, rec_id, detail)
                 if args.strip_invalid_subfield_codes:
                     rec_id = record_identifier(parsed)
                     for detail in strip_invalid_subfield_codes(parsed):
@@ -4135,17 +4441,22 @@ def main(argv: list[str] | None = None) -> int:
                 except RepairError as exc:
                     # e.g. a single field or the base address too large for
                     # ISO 2709's fixed-width fields to represent at all --
-                    # can't write a valid leader/directory for it, so fall
-                    # back to the original bytes, same as an UNRESOLVED
-                    # record. (Total record length alone has a documented
-                    # sentinel and doesn't hit this -- see assemble_marc.)
-                    print(f"record {i}: {exc} -- passing through unchanged",
-                          file=sys.stderr)
-                    log("oversized_unfixable", False, i, "", f"passed through unchanged: {exc}")
-                    out_fh.write(rec_text.encode(encoding_used))
+                    # can't write a valid leader/directory for it, so this
+                    # is UNFIXABLE the same as a record with no consistent
+                    # directory at all. (Total record length alone has a
+                    # documented sentinel and doesn't hit this -- see
+                    # assemble_marc.)
+                    print(
+                        f"record {i}: {exc} -- writing to {error_path} instead",
+                        file=sys.stderr,
+                    )
+                    log("unfixable", False, i, "", f"written to {error_path} unchanged: {exc}")
+                    error_fh.write(rec_text.encode(encoding_used, errors="surrogateescape"))
                     if mrk_fh:
-                        mrk_fh.write("=UNRESOLVED  (passed through unchanged)\n\n")
-                    n_unresolved += 1
+                        mrk_fh.write(
+                            f"=UNFIXABLE  (written to {os.path.basename(error_path)} instead)\n\n"
+                        )
+                    n_unfixable += 1
                     rec_id = record_identifier(parsed)
                     if rec_id:
                         id_records.append((i, rec_id, rec_text[:5]))
@@ -4238,8 +4549,12 @@ def main(argv: list[str] | None = None) -> int:
         # raw `fixed` flag -- INFORMATIONAL can now include detect-only
         # findings (e.g. invalid_indicator_value) logged with
         # fixed=False for correct section placement, which would
-        # otherwise inflate this "not fixed" count.
-        n_not_fixed = sum(1 for e in log_entries if _section_for(e)[1] == "NOT FIXED")
+        # otherwise inflate this "not fixed" count. UNFIXABLE counts as
+        # not fixed too -- it's the same "still needs a human" idea,
+        # just urgent enough to also be diverted out of the main output.
+        n_not_fixed = sum(
+            1 for e in log_entries if _section_for(e)[1] in ("NOT FIXED", "UNFIXABLE")
+        )
         n_fixed = n_log_lines - n_not_fixed
         print(
             f"{n_log_lines} log line(s) written to {log_path} "
@@ -4248,16 +4563,14 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     elapsed = time.perf_counter() - start_time
-    print(
-        f"Wrote {n_total}/{n_total} record(s) to {out_path} "
-        f"({n_total - n_unresolved} corrected/passed clean, "
-        f"{n_unresolved} passed through unchanged) in {elapsed:.2f}s"
-    )
-    if n_unresolved:
+    n_clean = n_total - n_unfixable
+    print(f"Wrote {n_clean}/{n_total} record(s) to {out_path} in {elapsed:.2f}s")
+    if n_unfixable:
         print(
-            f"{n_unresolved} record(s) could not be auto-repaired and were kept "
-            "unchanged in the output (see stderr above) -- supply overrides via "
-            "--overrides and re-run to fix them too.",
+            f"{n_unfixable} record(s) could not be auto-repaired at all -- written, "
+            f"byte-for-byte unchanged, to {error_path} instead of {out_path} (see "
+            "stderr above for why each one); supply overrides via --overrides and "
+            "re-run to fix them too.",
             file=sys.stderr,
         )
         return 1

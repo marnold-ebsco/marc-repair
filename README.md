@@ -82,17 +82,55 @@ use stays bounded by roughly one chunk plus one record's worth of parsed
 data at a time, regardless of whether the input has a thousand records or
 ten million.
 
+### Tolerating a corrupted byte in an otherwise-UTF-8 file
+
+Real exports can be almost entirely valid UTF-8 but still have a single
+byte somewhere that isn't — seen in production data as a legacy byte
+standing in for one digit of a leader's fixed `4500` entry-map constant.
+`detect_encoding` only samples the first few MB to decide whether to read
+a file as UTF-8 or Latin-1, so a bad byte much further into a large file
+doesn't change that file-wide guess (correctly — falling back to Latin-1
+for the *whole* file just to route around one bad byte would silently
+mangle every genuine multi-byte UTF-8 character elsewhere in it). Instead,
+the streaming decoder treats an invalid byte as data to carry through
+losslessly (via `errors="surrogateescape"`), not a fatal error: parsing
+never depended on that byte being valid in the first place (Mode 1 finds
+record boundaries from real delimiters), and writing a record back out
+round-trips the byte to its original value unless normal repair already
+replaces it outright — e.g. the entry map, which is always rewritten as
+literal `4500` and never copied through from the original leader.
+
+### Records that truly can't be fixed go to a separate `_error` file
+
+A record neither mode can parse at all (no consistent directory found),
+or one with a field/base address too large for ISO 2709's fixed-width
+directory to represent, is never written into the main output file —
+doing so would silently mix a badly mangled record into an otherwise
+clean load file. Instead it's written, byte-for-byte unchanged, to a
+second file next to the main output: `--out INPUT_fixed.mrc` (or
+whatever `-o` was given) gets a sibling `INPUT_fixed_error.mrc`, created
+only if at least one such record actually occurs. Every one is logged
+under category `unfixable`, in its own UNFIXABLE section — sorted above
+even NOT FIXED, since it's the one thing in the log that requires action
+before the run's output is usable at all — with the underlying reason
+(the same detail Mode 1/2 or `assemble_marc` itself already produce)
+included in full, e.g. "no consistent directory found for this record
+at all" or "field is 10005 bytes, but the directory's length field is
+only 4 digits". The CLI exits with status 1 whenever this happens, the
+same as it always has for a record needing manual attention.
+
 ### What gets fixed automatically vs. flagged
 
 | Issue | Behavior |
 |---|---|
 | Corrupted leader/directory (Mode 1) | Fixed automatically — no flag needed |
 | Record too large for the leader's 5-digit length field | Fixed automatically, using MARC21's own documented sentinel (`99999`); nothing is lost since the real end is always found from the terminator; logged as `oversized_sentinel_fixed` (INFORMATIONAL) |
-| Single field or base address too large to represent at all | Not fixable — no sentinel exists for these; record passed through unchanged, logged as `oversized_unfixable` (NOT FIXED) |
+| Single field or base address too large to represent at all | Not fixable — no sentinel exists for these; diverted to a separate `_error` file unchanged, logged as `unfixable` (UNFIXABLE, see above) |
 | Missing 245, or a 245 present but missing $a | Placeholder `$aNo title` added by default — many real-world imports reject a record with no title at all — either as a new field or, if a 245 already exists (e.g. one with only `$h[electronic resource]`), patched into the existing field alongside its other subfields, not stripped and rebuilt; `--ensure-field "245:..."` takes priority per-record if supplied; `--no-add-default-245` to leave such records untouched instead; logged as `added_default_245` (INFORMATIONAL) |
 | Missing any other field | `--ensure-field` (opt-in; you supply the content); logged as `added_field` under **FIXED/REQUIRES ATTENTION** since a human-supplied value is worth double-checking |
 | Missing 008 | Placeholder inserted by default (a fixed, material-type-agnostic default — real content still needs `--ensure-field "008:..."`, which takes priority per-record); `--no-add-default-008` to leave such records with no 008 instead; logged as `added_default_008` (INFORMATIONAL) |
 | Fields missing a required `$a` | Removed by default (see `required_a_tags.txt`, editable); `--no-strip-missing-required-a` to leave them instead; the exact removed content is logged in full as `field_removed_because_missing_a` under **FIXED/REQUIRES ATTENTION** since real data was discarded |
+| Subfield code is a stray space immediately followed by its real, still-present code (e.g. raw `\x1f c2000.` really meaning `$c` "c2000." — a common AACR2-era copyright-date convention, corrupted by one extra inserted space; seen at real scale in production data) | Corrected by default, before invalid-code removal below gets a chance to discard it — nothing is guessed or lost, the real code is simply the very next character; `--no-fix-misplaced-subfield-codes` to leave it for invalid-code removal to strip instead. Not logged per-record by default (this can be a large fraction of a file with this defect) — pass `--log-fixed-misplaced-subfield-code` to log each one as `fixed_misplaced_subfield_code` (INFORMATIONAL) |
 | Invalid subfield codes (not `[a-z0-9]`) | Removed by default; `--no-strip-invalid-subfield-codes` to leave them instead; the exact removed content is logged in full as `removed_invalid_subfield` under **FIXED/REQUIRES ATTENTION** since real data was discarded |
 | A field where every subfield's data is empty (any tag) | Removed by default (not logged since nothing is discarded); `--no-strip-empty-fields` to leave them instead |
 | Data field with 0 or 1 indicator characters instead of 2 | Padded with spaces by default; `--no-fix-bad-indicators` to leave it instead (such a field then fails Mode 1 and falls back to Mode 2/UNRESOLVED); logged as `padded_indicators` (INFORMATIONAL) |
@@ -111,9 +149,10 @@ ten million.
 | Leader byte 07 (bibliographic level) outside its valid MARC21 code set | Always detected and logged as `invalid_bibliographic_level` (INFORMATIONAL), never auto-fixed |
 | An 880 field's `$6` linking subfield references a tag that doesn't exist elsewhere in the record | Off by default — pass `--check-dangling-880-links` to detect and log it as `dangling_880_link` (INFORMATIONAL); never auto-fixed — breaks the record's own romanized/original-script pairing |
 | A 020 (ISBN) or 022 (ISSN) `$a` whose check digit fails the standard checksum for its length | Off by default — pass `--check-isbn-issn-checksum` to detect and log it as `invalid_isbn_issn_checksum` (INFORMATIONAL); never auto-fixed — no safe way to know which digit was wrong |
-| A record that can't be auto-repaired by either mode at all | Passed through to the output unchanged (never dropped), logged as `UNRESOLVED` (NOT FIXED) |
+| A record that can't be auto-repaired by either mode at all | Never dropped, but not written into the main output either — diverted unchanged to a separate `_error` file (see above), logged as `unfixable` (UNFIXABLE) |
+| A trailing field physically present in the file but missing its own directory entry (so excluded from its record's declared length) — always shaped like a personal name heading ($a plus any of $b/$c/$d/$e/$q/$4) immediately after the record it belongs to | Reattached to that record as a new `=700` by default — the tag itself is a guess (however confident: this subfield-code shape is essentially unambiguous), so it's logged in full as `reattached_orphaned_field` under **FIXED/REQUIRES ATTENTION**; `--no-reattach-orphaned-fields` to leave it `unfixable` (diverted to the `_error` file) instead |
 
-The output file always has the same number of records as the input.
+The main output file has the same number of records as the input, minus any diverted to the `_error` file (every input record still ends up in exactly one of the two) and minus one for every successful `reattached_orphaned_field` fix, which by design merges two records-worth of input bytes (a real record, plus a trailing fragment that was never really a separate record to begin with) into one output record.
 
 ### Smart-character normalization
 

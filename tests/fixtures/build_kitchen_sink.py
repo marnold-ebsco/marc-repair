@@ -21,6 +21,17 @@ so it's documented and present; a separate CLI invocation with
 the runbook in the task instructions / README for the two-invocation
 bib run shape).
 
+A third record can't be exercised in kitchen_sink_bib.mrc at all, not even
+via a second invocation: a leader entry-map byte corrupted to something
+that isn't valid UTF-8 anywhere in the byte sequence (as opposed to the
+ASCII "45x0" the "ks-entrymap" record above already covers). Merging that
+into kitchen_sink_bib.mrc would flip detect_encoding's whole-file guess to
+latin-1 (see _ansel()'s docstring below for the identical concern, already
+worked around there for MARC-8 records) -- silently corrupting every
+*other* record's genuine multi-byte UTF-8 content (ks-moji, ks-smartchar)
+in the process. It gets its own single-record output file instead:
+    kitchen_sink_bib_entrymap_invalid_utf8_witness.mrc
+
 Run: python tests/fixtures/build_kitchen_sink.py
 """
 
@@ -38,6 +49,9 @@ REPO_ROOT = os.path.dirname(os.path.dirname(FIXTURES))
 
 BIB_OUT = os.path.join(FIXTURES, "kitchen_sink_bib.mrc")
 HOLDINGS_OUT = os.path.join(FIXTURES, "kitchen_sink_holdings.mrc")
+BIB_INVALID_UTF8_ENTRYMAP_OUT = os.path.join(
+    FIXTURES, "kitchen_sink_bib_entrymap_invalid_utf8_witness.mrc"
+)
 
 BIB_PADDING_SOURCE = os.path.join(
     FIXTURES, "bad_bib_mandatoryfieldsnashvillestate_bibs_202693_me_fixed.mrc"
@@ -97,6 +111,21 @@ def _splice_entry_map(raw: bytes) -> bytes:
     tests/test_marc_repair_bib.py's _corrupted_entry_map_bytes."""
     raw = bytearray(raw)
     raw[20:24] = b"45x0"
+    return bytes(raw)
+
+
+def _splice_entry_map_invalid_utf8(raw: bytes) -> bytes:
+    """Same corruption as `_splice_entry_map`, but with a byte (0x92) that
+    isn't valid UTF-8 anywhere in the sequence, rather than plain ASCII
+    "x" -- see tests/test_marc_repair.py's
+    _corrupted_entry_map_bytes_invalid_utf8. Real production data has
+    been seen with exactly this: a file that's genuinely UTF-8 overall,
+    with one byte inside the leader's fixed entry-map constant
+    corrupted. Kept out of kitchen_sink_bib.mrc itself -- see the module
+    docstring -- since it would flip that whole file's detected encoding
+    to latin-1."""
+    raw = bytearray(raw)
+    raw[20:24] = b"45\x920"
     return bytes(raw)
 
 
@@ -215,6 +244,21 @@ def build_bib_records() -> list[bytes]:
         m.Field_("500", "  ", [("Z", "bad code"), ("a", "Good note.")]),
     ]))
 
+    # fixed_misplaced_subfield_code: a stray space right after the
+    # delimiter, immediately followed by the real code -- raw
+    # "\x1f c2000." means $c "c2000." (a common AACR2-era copyright-date
+    # convention), corrected instead of discarded (real defect found at
+    # scale -- 199 of 203 removed_invalid_subfield hits in one production
+    # file were exactly this shape).
+    records.append(_record(_BIB_LEADER, [
+        m.Field_("001", None, None, content="ks-misplacedcode"),
+        m.Field_("008", None, None, content="x" * 40),
+        m.Field_("245", "00", [("a", "Title.")]),
+        m.Field_("260", "  ", [
+            ("a", "New York :"), ("b", "Wiley,"), (" ", "c2000."),
+        ]),
+    ]))
+
     # field_removed_because_missing_a: 650 (in the default required-$a tag list) with
     # no $a subfield at all -- removed and logged since it has other,
     # non-empty content.
@@ -303,8 +347,8 @@ def build_bib_records() -> list[bytes]:
     # already present -- otherwise --ensure-field would append one more
     # field at the very end, pushing that field's own starting offset
     # (not just the total length) past the directory's 5-digit cap and
-    # tipping this into oversized_unfixable instead of the sentinel path
-    # this record is meant to exercise.
+    # tipping this into UNFIXABLE instead of the sentinel path this
+    # record is meant to exercise.
     records.append(_record(_BIB_LEADER, [
         m.Field_("001", None, None, content="ks-oversized-ok"),
         m.Field_("008", None, None, content="x" * 40),
@@ -312,8 +356,11 @@ def build_bib_records() -> list[bytes]:
         m.Field_("590", "  ", [("a", "Ensured field")]),
     ] + [m.Field_(f"5{i:02d}", "  ", [("a", "x" * 9000)]) for i in range(12)]))
 
-    # oversized_unfixable: a single field over the 9999-byte cap -- passed
-    # through unchanged, nothing this tool can do safely.
+    # unfixable: a single field over the 9999-byte cap -- nothing this
+    # tool can do safely, so it's diverted to the "_error" output file
+    # instead of the main one (see reattach_orphaned_trailing_fields for
+    # the one narrow "can't fix, but CAN still guess safely" case this
+    # isn't).
     records.append(_oversized_field_record(
         _BIB_LEADER,
         [
@@ -399,10 +446,12 @@ def build_bib_records() -> list[bytes]:
 
 
 def build_bib_unresolved_tail() -> bytes:
-    """unresolved_record: trailing garbage with no MARC leader at all,
-    appended after at least one real record -- iter_repair_stream can't
-    resync to a next leader (there isn't one) and reports it UNRESOLVED,
-    passed through unchanged, rather than getting stuck or dropping it."""
+    """unfixable: trailing garbage with no MARC leader at all, appended
+    after at least one real record -- iter_repair_stream can't resync to
+    a next leader (there isn't one), so this is genuinely UNFIXABLE
+    rather than getting stuck or dropping it: logged at the top of the
+    log and diverted, byte-for-byte unchanged, to kitchen_sink_bib_
+    error.mrc instead of kitchen_sink_bib.mrc itself."""
     return b"not a marc record at all, no leader here whatsoever\x1d"
 
 
@@ -418,6 +467,21 @@ def build_bib_missing_008_witness() -> bytes:
         m.Field_("001", None, None, content="ks-missing008-witness"),
         m.Field_("245", "00", [("a", "Title with no 008 at all.")]),
     ])
+
+
+def build_bib_invalid_utf8_entrymap_witness() -> bytes:
+    """leader_entry_map_fixed, invalid-UTF-8 variant: same category as
+    "ks-entrymap" in build_bib_records(), but the corrupted byte isn't
+    valid UTF-8 at all (see _splice_entry_map_invalid_utf8) -- kept out
+    of kitchen_sink_bib.mrc itself (see module docstring) and written to
+    its own single-record file instead. Confirms the CLI doesn't crash
+    on this and still corrects the entry map back to "4500"."""
+    raw = _record(_BIB_LEADER, [
+        m.Field_("001", None, None, content="ks-entrymap-invalidutf8"),
+        m.Field_("008", None, None, content="x" * 40),
+        m.Field_("245", "00", [("a", "Title.")]),
+    ])
+    return _splice_entry_map_invalid_utf8(raw)
 
 
 # ---------------------------------------------------------------------------
@@ -605,6 +669,10 @@ def main() -> None:
             fh.write(rec)
         fh.write(build_holdings_unresolved_tail())
     print(f"wrote {len(holdings_records)} record(s) + 1 unresolved tail to {HOLDINGS_OUT}")
+
+    with open(BIB_INVALID_UTF8_ENTRYMAP_OUT, "wb") as fh:
+        fh.write(build_bib_invalid_utf8_entrymap_witness())
+    print(f"wrote 1 record to {BIB_INVALID_UTF8_ENTRYMAP_OUT}")
 
 
 if __name__ == "__main__":
