@@ -758,7 +758,7 @@ class TestSplitBibHoldings:
         parsed = m.ParsedRecord(
             leader=_HOLDINGS_LEADER,
             entries=[],
-            fields=fields + [m.Field_("852", "  ", [("a", "Main Library")])],
+            fields=fields + [m.Field_("852", "  ", [("a", "Main Library"), ("h", "ABC123")])],
         )
         return m.assemble_marc(parsed)
 
@@ -848,6 +848,79 @@ class TestSplitBibHoldings:
         assert "added_default_holdings_008" in content
         repaired = m.count_records(str(tmp_path / "mixed_holdings_repaired.mrc"))
         assert repaired == 1
+
+
+# ---------------------------------------------------------------------------
+# _sniff_record_types / main()'s holdings-misroute guard -- refuse to run
+# the default bib pipeline against a holdings-only file, which would
+# otherwise silently corrupt it (e.g. forcing every 008 to bib's 40 bytes
+# instead of holdings' own 32) -- a real production mistake.
+# ---------------------------------------------------------------------------
+
+class TestHoldingsMisrouteGuard:
+    def _holdings_record(self) -> bytes:
+        parsed = m.ParsedRecord(
+            leader=_HOLDINGS_LEADER, entries=[],
+            fields=[
+                m.Field_("004", None, None, content="ocm123"),
+                m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
+                m.Field_("852", "  ", [("b", "Main Library"), ("h", "ABC123")]),
+            ],
+        )
+        return m.assemble_marc(parsed)
+
+    def _bib_record(self) -> bytes:
+        parsed = m.ParsedRecord(
+            leader=_SYNTHETIC_LEADER, entries=[],
+            fields=[m.Field_("245", "00", [("a", "Title.")])],
+        )
+        return m.assemble_marc(parsed)
+
+    def test_sniff_record_types_counts_bib_and_holdings(self, tmp_path):
+        src = tmp_path / "mixed.mrc"
+        src.write_bytes(self._bib_record() * 2 + self._holdings_record() * 3)
+        n_bib, n_holdings = m._sniff_record_types(str(src))
+        assert (n_bib, n_holdings) == (2, 3)
+
+    def test_holdings_only_file_refused_by_default_pipeline(self, tmp_path, capsys):
+        src = tmp_path / "holdings_only.mrc"
+        src.write_bytes(self._holdings_record() * 5)
+        rc = m.main([str(src), "-o", str(tmp_path / "out.mrc")])
+        assert rc == 2
+        assert not (tmp_path / "out.mrc").exists()
+        err = capsys.readouterr().err
+        assert "holdings-only" in err
+        assert "--repair-holdings" in err
+
+    def test_holdings_only_file_still_works_via_repair_holdings_flag(self, tmp_path):
+        src = tmp_path / "holdings_only.mrc"
+        src.write_bytes(self._holdings_record() * 5)
+        rc = m.main([str(src), "--repair-holdings"])
+        assert rc == 0
+        out = tmp_path / "holdings_only_repaired.mrc"
+        assert out.exists()
+        parsed = m.read_intact_record(
+            out.read_bytes().split(b"\x1d")[0].decode("utf-8") + "\x1d"
+        )
+        field008 = next(f for f in parsed.fields if f.tag == "008")
+        assert len(field008.content) == m.HOLDINGS_008_LENGTH
+
+    def test_normal_bib_file_is_unaffected(self, tmp_path):
+        src = tmp_path / "bib_only.mrc"
+        src.write_bytes(self._bib_record() * 5)
+        rc = m.main([str(src), "-o", str(tmp_path / "out.mrc")])
+        assert rc == 0
+        assert m.count_records(str(tmp_path / "out.mrc")) == 5
+
+    def test_mixed_file_is_unaffected(self, tmp_path):
+        # At least one bib-classified record in the sample -- not
+        # holdings-only, so the guard must not fire (--split-bib-holdings
+        # remains the documented path for a genuinely mixed file, but the
+        # guard's job here is only to catch the holdings-ONLY mistake).
+        src = tmp_path / "mixed.mrc"
+        src.write_bytes(self._bib_record() + self._holdings_record() * 4)
+        rc = m.main([str(src), "-o", str(tmp_path / "out.mrc")])
+        assert rc == 0
 
 
 # ---------------------------------------------------------------------------
