@@ -122,14 +122,19 @@ default:
     single field over 9,999 bytes or a base address over 99,999 (the
     directory's own length/position fields have no such sentinel, and a
     reader needs the real base address to find field data at all) --
-    those are passed through unchanged with a log entry.
+    those, like any record neither mode can parse at all, are UNFIXABLE
+    (see below).
 
 Every removal, warning, transcode, and added-field notice from a run goes
 into ONE combined, timestamped log file (default OUT_log_TIMESTAMP.log, see
---log). A record that can't be auto-repaired at all is still written to the
-output -- unchanged, exactly as it came in -- rather than being dropped, and
-gets its own UNRESOLVED line in that same log; the output file always has
-the same number of records as the input.
+--log). A record that can't be auto-repaired at all is never written into
+the main output -- doing so would silently mix a badly mangled record into
+an otherwise-clean load file. Instead it's written, byte-for-byte unchanged
+(never dropped), to a second file next to the main output (INPUT_fixed.mrc
+gets a sibling INPUT_fixed_error.mrc, created only if this ever actually
+happens), and logged as `unfixable` in its own UNFIXABLE section at the
+very top of that same log -- above even NOT FIXED, since it's the one
+thing that needs a look before the run's output is usable at all.
 
 ===============================================================================
 """
@@ -3052,6 +3057,41 @@ def _null_writer():
     yield None
 
 
+def _error_output_path(out_path: str) -> str:
+    """Insert "_error" right before `out_path`'s extension -- e.g.
+    "bib_fixed.mrc" -> "bib_fixed_error.mrc" -- mirroring
+    `_timestamped_log_path`'s own insert-before-extension convention.
+    Records this tool concludes it truly can't repair at all (see the
+    UNFIXABLE section) are written here, byte-for-byte unchanged,
+    instead of the main output -- so a badly mangled record can never
+    end up silently mixed into an otherwise-clean load file."""
+    base, ext = os.path.splitext(out_path)
+    return f"{base}_error{ext}"
+
+
+class _LazyBinaryWriter:
+    """A binary file opened only on its first `write()` -- so a run with
+    no UNFIXABLE records never creates an empty "_error" file that never
+    needed to exist. Usable as its own context manager, alongside the
+    other `with open(...) as ...` handles in `main`."""
+
+    def __init__(self, path: str):
+        self.path = path
+        self._fh = None
+
+    def __enter__(self) -> "_LazyBinaryWriter":
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        if self._fh is not None:
+            self._fh.close()
+
+    def write(self, data: bytes) -> None:
+        if self._fh is None:
+            self._fh = open(self.path, "wb")
+        self._fh.write(data)
+
+
 def _read_text(path: str) -> str:
     """Read a MARC file or pasted-text file. See `_read_text_with_encoding`;
     this just discards which encoding was used, for callers that don't need
@@ -3162,7 +3202,19 @@ _INFORMATIONAL = {
     "padded_indicators",
 }
 
+#: UNFIXABLE, above even NOT FIXED: a record this tool concluded it
+#: genuinely can't repair at all (no consistent directory found by
+#: either mode, or a field/base address too large for ISO 2709 to
+#: represent) -- see reattach_orphaned_trailing_fields above for the one
+#: narrow case that's safely recoverable instead of landing here. Such a
+#: record is no longer written into the main output at all: it goes,
+#: byte-for-byte unchanged, to a separate "_error" file next to it (see
+#: `_error_output_path`), so a badly mangled record can never end up
+#: silently mixed into an otherwise-clean load file. Sorted first
+#: because it's the one thing a human MUST look at -- everything else
+#: in the output is at least loadable as MARC.
 _DEDICATED_SECTIONS: dict[str, tuple[int, str]] = {
+    "unfixable": (-1, "UNFIXABLE"),
     "duplicate_identifier": (3, "DUPLICATE RECORDS"),
 }
 for _cat in _FIXED_REQUIRES_ATTENTION:
@@ -3173,12 +3225,12 @@ del _cat
 
 
 def _section_for(entry: LogEntry) -> tuple[int, str]:
-    """(sort_order, section_label) for `entry` -- NOT FIXED, then
-    FIXED/REQUIRES ATTENTION, then any other dedicated sections (see
-    `_DEDICATED_SECTIONS`) like DUPLICATE RECORDS, then INFORMATIONAL.
-    There is no plain "FIXED" section -- an unrecognized category
-    logged with fixed=True falls back to INFORMATIONAL rather than a
-    generic bucket, so every new fix category must be added to
+    """(sort_order, section_label) for `entry` -- UNFIXABLE, then NOT
+    FIXED, then FIXED/REQUIRES ATTENTION, then any other dedicated
+    sections (see `_DEDICATED_SECTIONS`) like DUPLICATE RECORDS, then
+    INFORMATIONAL. There is no plain "FIXED" section -- an unrecognized
+    category logged with fixed=True falls back to INFORMATIONAL rather
+    than a generic bucket, so every new fix category must be added to
     `_FIXED_REQUIRES_ATTENTION` or `_INFORMATIONAL` above to land
     somewhere deliberate."""
     dedicated = _DEDICATED_SECTIONS.get(entry.category)
@@ -3805,7 +3857,8 @@ def main(argv: list[str] | None = None) -> int:
         "field is reattached to the record right before it as a new =700 "
         "and logged under FIXED/REQUIRES ATTENTION (see --log), since the "
         "tag is a guess (however confident); with this flag it's left "
-        "exactly as before -- an UNRESOLVED chunk passed through unchanged",
+        "unfixable instead -- diverted to the _error output file like any "
+        "other record neither mode can resolve",
     )
     parser.add_argument(
         "--no-add-default-245",
@@ -4151,7 +4204,8 @@ def main(argv: list[str] | None = None) -> int:
     # pathological run where every single record has something to log is
     # nowhere near the size of holding every record itself would be.
     n_total = 0
-    n_unresolved = 0
+    n_unfixable = 0
+    error_path = _error_output_path(out_path)
     # Only accumulated until the one-time early estimate fires (see
     # ProgressReporter.maybe_print_estimate) -- cheap to compute (just
     # len() on text already in hand) but no reason to keep paying it for
@@ -4173,7 +4227,8 @@ def main(argv: list[str] | None = None) -> int:
             (
                 open(mrk_path, "w", encoding="utf-8", errors="surrogateescape")
                 if mrk_path else _null_writer()
-            ) as mrk_fh:
+            ) as mrk_fh, \
+            _LazyBinaryWriter(error_path) as error_fh:
         record_stream = iter_repair_stream(
             args.input,
             normalized_overrides,
@@ -4200,13 +4255,17 @@ def main(argv: list[str] | None = None) -> int:
 
             if parsed.unresolved:
                 reason = parsed.unresolved[0][3]
-                print(f"record {i}: UNRESOLVED ({reason}) -- passing through unchanged",
-                      file=sys.stderr)
-                log("unresolved_record", False, i, "", f"passed through unchanged: {reason}")
-                out_fh.write(rec_text.encode(encoding_used, errors="surrogateescape"))
+                print(
+                    f"record {i}: UNFIXABLE ({reason}) -- writing to {error_path} instead",
+                    file=sys.stderr,
+                )
+                log("unfixable", False, i, "", f"written to {error_path} unchanged: {reason}")
+                error_fh.write(rec_text.encode(encoding_used, errors="surrogateescape"))
                 if mrk_fh:
-                    mrk_fh.write("=UNRESOLVED  (passed through unchanged)\n\n")
-                n_unresolved += 1
+                    mrk_fh.write(
+                        f"=UNFIXABLE  (written to {os.path.basename(error_path)} instead)\n\n"
+                    )
+                n_unfixable += 1
             else:
                 for tag, spaces_added in parsed.indicator_fixes:
                     rec_id = record_identifier(parsed)
@@ -4332,17 +4391,22 @@ def main(argv: list[str] | None = None) -> int:
                 except RepairError as exc:
                     # e.g. a single field or the base address too large for
                     # ISO 2709's fixed-width fields to represent at all --
-                    # can't write a valid leader/directory for it, so fall
-                    # back to the original bytes, same as an UNRESOLVED
-                    # record. (Total record length alone has a documented
-                    # sentinel and doesn't hit this -- see assemble_marc.)
-                    print(f"record {i}: {exc} -- passing through unchanged",
-                          file=sys.stderr)
-                    log("oversized_unfixable", False, i, "", f"passed through unchanged: {exc}")
-                    out_fh.write(rec_text.encode(encoding_used, errors="surrogateescape"))
+                    # can't write a valid leader/directory for it, so this
+                    # is UNFIXABLE the same as a record with no consistent
+                    # directory at all. (Total record length alone has a
+                    # documented sentinel and doesn't hit this -- see
+                    # assemble_marc.)
+                    print(
+                        f"record {i}: {exc} -- writing to {error_path} instead",
+                        file=sys.stderr,
+                    )
+                    log("unfixable", False, i, "", f"written to {error_path} unchanged: {exc}")
+                    error_fh.write(rec_text.encode(encoding_used, errors="surrogateescape"))
                     if mrk_fh:
-                        mrk_fh.write("=UNRESOLVED  (passed through unchanged)\n\n")
-                    n_unresolved += 1
+                        mrk_fh.write(
+                            f"=UNFIXABLE  (written to {os.path.basename(error_path)} instead)\n\n"
+                        )
+                    n_unfixable += 1
                     rec_id = record_identifier(parsed)
                     if rec_id:
                         id_records.append((i, rec_id, rec_text[:5]))
@@ -4435,8 +4499,12 @@ def main(argv: list[str] | None = None) -> int:
         # raw `fixed` flag -- INFORMATIONAL can now include detect-only
         # findings (e.g. invalid_indicator_value) logged with
         # fixed=False for correct section placement, which would
-        # otherwise inflate this "not fixed" count.
-        n_not_fixed = sum(1 for e in log_entries if _section_for(e)[1] == "NOT FIXED")
+        # otherwise inflate this "not fixed" count. UNFIXABLE counts as
+        # not fixed too -- it's the same "still needs a human" idea,
+        # just urgent enough to also be diverted out of the main output.
+        n_not_fixed = sum(
+            1 for e in log_entries if _section_for(e)[1] in ("NOT FIXED", "UNFIXABLE")
+        )
         n_fixed = n_log_lines - n_not_fixed
         print(
             f"{n_log_lines} log line(s) written to {log_path} "
@@ -4445,16 +4513,14 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     elapsed = time.perf_counter() - start_time
-    print(
-        f"Wrote {n_total}/{n_total} record(s) to {out_path} "
-        f"({n_total - n_unresolved} corrected/passed clean, "
-        f"{n_unresolved} passed through unchanged) in {elapsed:.2f}s"
-    )
-    if n_unresolved:
+    n_clean = n_total - n_unfixable
+    print(f"Wrote {n_clean}/{n_total} record(s) to {out_path} in {elapsed:.2f}s")
+    if n_unfixable:
         print(
-            f"{n_unresolved} record(s) could not be auto-repaired and were kept "
-            "unchanged in the output (see stderr above) -- supply overrides via "
-            "--overrides and re-run to fix them too.",
+            f"{n_unfixable} record(s) could not be auto-repaired at all -- written, "
+            f"byte-for-byte unchanged, to {error_path} instead of {out_path} (see "
+            "stderr above for why each one); supply overrides via --overrides and "
+            "re-run to fix them too.",
             file=sys.stderr,
         )
         return 1

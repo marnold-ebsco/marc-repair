@@ -332,8 +332,8 @@ def build_bib_records() -> list[bytes]:
     # already present -- otherwise --ensure-field would append one more
     # field at the very end, pushing that field's own starting offset
     # (not just the total length) past the directory's 5-digit cap and
-    # tipping this into oversized_unfixable instead of the sentinel path
-    # this record is meant to exercise.
+    # tipping this into UNFIXABLE instead of the sentinel path this
+    # record is meant to exercise.
     records.append(_record(_BIB_LEADER, [
         m.Field_("001", None, None, content="ks-oversized-ok"),
         m.Field_("008", None, None, content="x" * 40),
@@ -341,8 +341,11 @@ def build_bib_records() -> list[bytes]:
         m.Field_("590", "  ", [("a", "Ensured field")]),
     ] + [m.Field_(f"5{i:02d}", "  ", [("a", "x" * 9000)]) for i in range(12)]))
 
-    # oversized_unfixable: a single field over the 9999-byte cap -- passed
-    # through unchanged, nothing this tool can do safely.
+    # unfixable: a single field over the 9999-byte cap -- nothing this
+    # tool can do safely, so it's diverted to the "_error" output file
+    # instead of the main one (see reattach_orphaned_trailing_fields for
+    # the one narrow "can't fix, but CAN still guess safely" case this
+    # isn't).
     records.append(_oversized_field_record(
         _BIB_LEADER,
         [
@@ -428,10 +431,12 @@ def build_bib_records() -> list[bytes]:
 
 
 def build_bib_unresolved_tail() -> bytes:
-    """unresolved_record: trailing garbage with no MARC leader at all,
-    appended after at least one real record -- iter_repair_stream can't
-    resync to a next leader (there isn't one) and reports it UNRESOLVED,
-    passed through unchanged, rather than getting stuck or dropping it."""
+    """unfixable: trailing garbage with no MARC leader at all, appended
+    after at least one real record -- iter_repair_stream can't resync to
+    a next leader (there isn't one), so this is genuinely UNFIXABLE
+    rather than getting stuck or dropping it: logged at the top of the
+    log and diverted, byte-for-byte unchanged, to kitchen_sink_bib_
+    error.mrc instead of kitchen_sink_bib.mrc itself."""
     return b"not a marc record at all, no leader here whatsoever\x1d"
 
 

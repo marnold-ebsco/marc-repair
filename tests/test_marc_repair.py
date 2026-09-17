@@ -1511,7 +1511,7 @@ class TestReattachOrphanedFieldsCLI:
         assert parsed.fields[-1].tag == "700"
         assert parsed.fields[-1].subfields == [("a", "Quinn, Frances,"), ("d", "1963-")]
 
-    def test_disabled_via_flag_leaves_unresolved(self, tmp_path):
+    def test_disabled_via_flag_diverts_to_error_file(self, tmp_path):
         src = tmp_path / "orphan.mrc"
         src.write_bytes(self._record_with_orphaned_trailing_field())
         out = tmp_path / "out.mrc"
@@ -1520,11 +1520,127 @@ class TestReattachOrphanedFieldsCLI:
             str(src), "-o", str(out), "--log", str(log),
             "--no-reattach-orphaned-fields",
         ])
-        assert rc == 1  # an UNRESOLVED record makes the CLI exit non-zero
-        assert m.count_records(str(out)) == 2
+        assert rc == 1  # an UNFIXABLE record makes the CLI exit non-zero
+        assert m.count_records(str(out)) == 1
+        assert m.count_records(str(tmp_path / "out_error.mrc")) == 1
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert "unresolved_record" in content
+        assert "unfixable" in content
+        assert "[UNFIXABLE]" in content
         assert "reattached_orphaned_field" not in content
+
+
+# ---------------------------------------------------------------------------
+# UNFIXABLE -- a record neither mode can repair at all (no consistent
+# directory found, or a field/base address too large for ISO 2709) is
+# diverted to a separate "_error" file instead of the main output, and
+# logged at the very top of the log.
+# ---------------------------------------------------------------------------
+
+class TestUnfixableErrorFile:
+    def _clean_record(self, id_="clean") -> bytes:
+        parsed = m.ParsedRecord(
+            leader=_SYNTHETIC_LEADER, entries=[],
+            fields=[
+                m.Field_("001", None, None, content=id_),
+                m.Field_("245", "00", [("a", "Title.")]),
+            ],
+        )
+        return m.assemble_marc(parsed)
+
+    def _unresolvable_garbage(self) -> bytes:
+        return b"not a marc record at all, no leader here whatsoever\x1d"
+
+    def _oversized_field_record(self) -> bytes:
+        placeholder = "P" * 50
+        parsed = m.ParsedRecord(
+            leader=_SYNTHETIC_LEADER, entries=[],
+            fields=[
+                m.Field_("001", None, None, content="oversized"),
+                m.Field_("500", "  ", [("a", placeholder)]),
+            ],
+        )
+        raw = m.assemble_marc(parsed)
+        needle = placeholder.encode()
+        assert raw.count(needle) == 1
+        return raw.replace(needle, b"x" * 10000)
+
+    def test_unresolvable_record_diverted_to_error_file(self, tmp_path):
+        src = tmp_path / "in.mrc"
+        src.write_bytes(self._clean_record() + self._unresolvable_garbage())
+        out = tmp_path / "out.mrc"
+        log = tmp_path / "run.log"
+        rc = m.main([str(src), "-o", str(out), "--log", str(log)])
+        assert rc == 1
+        assert m.count_records(str(out)) == 1
+        error_path = tmp_path / "out_error.mrc"
+        assert error_path.exists()
+        assert m.count_records(str(error_path)) == 1
+        assert error_path.read_bytes() == self._unresolvable_garbage()
+        content = _resolve_log(log).read_text(encoding="utf-8")
+        assert "=== UNFIXABLE: unfixable" in content
+        assert "no consistent directory found for this record at all" in content
+
+    def test_oversized_field_diverted_to_error_file(self, tmp_path):
+        raw = self._oversized_field_record()
+        src = tmp_path / "in.mrc"
+        src.write_bytes(raw)
+        out = tmp_path / "out.mrc"
+        log = tmp_path / "run.log"
+        rc = m.main([str(src), "-o", str(out), "--log", str(log)])
+        assert rc == 1
+        assert m.count_records(str(out)) == 0
+        error_path = tmp_path / "out_error.mrc"
+        assert error_path.read_bytes() == raw
+        content = _resolve_log(log).read_text(encoding="utf-8")
+        assert "=== UNFIXABLE: unfixable" in content
+        # the log explains *why* -- the same reason assemble_marc itself raises
+        assert "directory's length field is only 4 digits" in content
+
+    def test_error_file_not_created_when_nothing_unfixable(self, tmp_path):
+        src = tmp_path / "in.mrc"
+        src.write_bytes(self._clean_record())
+        out = tmp_path / "out.mrc"
+        rc = m.main([str(src), "-o", str(out)])
+        assert rc == 0
+        assert not (tmp_path / "out_error.mrc").exists()
+
+    def test_unfixable_section_appears_before_every_other_section(self, tmp_path):
+        # A file with one of everything: unresolvable garbage (UNFIXABLE),
+        # a record missing 245 (INFORMATIONAL, added_default_245), and a
+        # clean record -- UNFIXABLE must render first regardless of
+        # write_log's usual NOT FIXED-first ordering.
+        missing_245 = m.assemble_marc(m.ParsedRecord(
+            leader=_SYNTHETIC_LEADER, entries=[],
+            fields=[m.Field_("001", None, None, content="no245")],
+        ))
+        src = tmp_path / "in.mrc"
+        # Leading garbage before any real leader is silently skipped by
+        # iter_repair_stream (nothing to resync *from* yet), so the
+        # unresolvable chunk needs a real record ahead of it to exercise
+        # the UNFIXABLE path at all -- same as
+        # test_unresolvable_record_diverted_to_error_file above.
+        src.write_bytes(
+            self._clean_record() + self._unresolvable_garbage() + missing_245
+        )
+        out = tmp_path / "out.mrc"
+        log = tmp_path / "run.log"
+        rc = m.main([str(src), "-o", str(out), "--log", str(log), "--log-informational"])
+        assert rc == 1
+        content = _resolve_log(log).read_text(encoding="utf-8")
+        assert content.index("=== UNFIXABLE") < content.index("=== INFORMATIONAL")
+
+    def test_clean_records_unaffected_by_a_later_unfixable_one(self, tmp_path):
+        src = tmp_path / "in.mrc"
+        src.write_bytes(
+            self._clean_record("first") + self._unresolvable_garbage()
+            + self._clean_record("second")
+        )
+        out = tmp_path / "out.mrc"
+        rc = m.main([str(src), "-o", str(out)])
+        assert rc == 1
+        assert m.count_records(str(out)) == 2
+        text = m._read_text(str(out))
+        assert "first" in text and "second" in text
 
 
 # ---------------------------------------------------------------------------

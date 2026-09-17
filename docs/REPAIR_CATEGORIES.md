@@ -9,6 +9,12 @@ the bib pipeline hides the whole INFORMATIONAL section unless
 `--log-informational` is passed. **The holdings pipeline has no such gate at
 all -- every holdings INFORMATIONAL entry is always written.**
 
+In the bib pipeline, a record that's genuinely `unfixable` (see below) is
+never written into the main output at all -- it's diverted, byte-for-byte
+unchanged, to a separate `<output>_error.mrc` file next to it, and logged
+in its own UNFIXABLE section at the very top of the log, above even NOT
+FIXED.
+
 ## Bib pipeline (`main()`, no split/holdings flags)
 
 | Repair / check | Action taken | On by default? | Category | Section | Logged by default? | Relevant switches |
@@ -30,13 +36,13 @@ all -- every holdings INFORMATIONAL entry is always written.**
 | Placeholder 245 added | Added default field | Yes (`--no-add-default-245`) | `added_default_245` | INFORMATIONAL | No | `--no-add-default-245`; `--ensure-field` (takes priority per-record); `--log-informational` |
 | Placeholder 008 added | Added default field | Yes (`--no-add-default-008`) | `added_default_008` | INFORMATIONAL | No | `--no-add-default-008`; `--ensure-field` (takes priority per-record); `--log-informational` |
 | 008 length pad/truncate (40 bytes) | Padded/truncated field | Yes (`--no-fix-008-length`) | `fixed_008_length` | FIXED/REQUIRES ATTENTION | **Yes** | `--no-fix-008-length` |
-| Orphaned trailing field (present in the file, no directory entry of its own) reattached as `700` | Merged into the preceding record, as a new field | Yes (`--no-reattach-orphaned-fields`) | `reattached_orphaned_field` | FIXED/REQUIRES ATTENTION | **Yes** | `--no-reattach-orphaned-fields` (leaves it `unresolved_record`/`UNRESOLVED` instead) |
+| Orphaned trailing field (present in the file, no directory entry of its own) reattached as `700` | Merged into the preceding record, as a new field | Yes (`--no-reattach-orphaned-fields`) | `reattached_orphaned_field` | FIXED/REQUIRES ATTENTION | **Yes** | `--no-reattach-orphaned-fields` (leaves it `unfixable`/`UNFIXABLE` instead) |
 | Invalid (non-numeric) tag -> 9XX rename | Renamed field tag | Yes (`--no-fix-invalid-tags`) | `invalid_tag` | INFORMATIONAL | No | `--no-fix-invalid-tags`; `--log-informational` |
 | Invalid tag, no 9XX slot free | Left tag unchanged | (fallback of above) | `non_numeric_tag` | NOT FIXED | **Yes** | `--no-fix-invalid-tags` (skips the attempt entirely); `--remap-999-to-945` (frees up a 9XX slot, so can turn this fallback into a successful rename) |
 | Leader entry-map (bytes 20-23) correction | Corrected leader bytes | Yes, always | `leader_entry_map_fixed` | INFORMATIONAL | No (needs `--log-leader-entry-map-fixed` too) | `--log-leader-entry-map-fixed`; `--log-informational` (no disable switch -- always runs) |
 | Oversized record (>99999 bytes) sentinel | Wrote sentinel length | n/a (only if it occurs) | `oversized_sentinel_fixed` | INFORMATIONAL | No | `--log-informational` (no disable switch -- always runs) |
-| Unfixable oversized field/base address | Left record unchanged | n/a (only if it occurs) | `oversized_unfixable` | NOT FIXED | **Yes** | -- (no switch -- genuinely unfixable) |
-| Unresolvable record (passed through unchanged) | Passed through unchanged | n/a (only if it occurs) | `unresolved_record` | NOT FIXED | **Yes** | `--overrides` (Mode 2 only -- supplies the split the automatic solver couldn't determine) |
+| Unfixable oversized field/base address | Diverted to `<output>_error.mrc`, unchanged | n/a (only if it occurs) | `unfixable` | UNFIXABLE | **Yes** | -- (no switch -- genuinely unfixable) |
+| Unresolvable record (no consistent directory found by either mode) | Diverted to `<output>_error.mrc`, unchanged | n/a (only if it occurs) | `unfixable` | UNFIXABLE | **Yes** | `--overrides` (Mode 2 only -- supplies the split the automatic solver couldn't determine); `--no-reattach-orphaned-fields` widens which of these land here instead of being auto-repaired |
 | Suspect MARC-8 escape (miskeyed diacritic) | Flagged only, no change | detect-only | `suspect_marc8_escape` | NOT FIXED | **Yes** | -- (detect-only, no switch) |
 | Missing 008 | Flagged only, no change | detect-only (superseded by add_default_008 fixing it) | `missing_008` | NOT FIXED | **Yes** | `--no-add-default-008` (only way to see this instead of `added_default_008`) |
 | Doubled proxy URL prefix | Flagged only, no change | detect-only | `doubled_proxy_url` | NOT FIXED | **Yes** | -- (detect-only, no switch) |
