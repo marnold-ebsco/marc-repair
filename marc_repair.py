@@ -2393,12 +2393,105 @@ HOLDINGS_008_LENGTH = 32
 DEFAULT_HOLDINGS_008_CONTENT = " " * HOLDINGS_008_LENGTH
 
 
+#: Placeholder content for an 852 (Location) with no usable location in
+#: $a, $b, or $c at all -- see `fix_missing_852a`. Unlike
+#: `add_missing_852c` below (which only ever adds $c, and only when
+#: enabled via --fix-missing-852c), this always runs, no opt-in flag,
+#: and is logged under FIXED/REQUIRES ATTENTION rather than
+#: INFORMATIONAL -- a record with no usable location anywhere is a
+#: bigger problem than one merely missing a shelving detail.
+DEFAULT_852_A_CONTENT = "Migration"
+
 #: Placeholder content for a missing 852 (Location) $c (shelving
 #: location) -- see `add_missing_852c`. Like the 008/245 placeholders
 #: above, this deliberately flags itself as inserted rather than
 #: guessing a real shelving location, which this tool has no way to
 #: know.
 DEFAULT_852_C_CONTENT = "Migration"
+
+
+def fix_missing_852a(parsed: ParsedRecord) -> list[str]:
+    """Ensure every 852 (Location) field has a usable location in $a,
+    $b (sublocation), or $c (shelving location) -- which one actually
+    carries the location code is source-system-dependent, not
+    standardized: real production data has been seen where $a is
+    essentially unused throughout an entire export and $b alone carries
+    it on nearly every record instead, a legitimate institutional
+    convention, not a defect; OCLC WMS exports are a different real
+    convention again, putting location in $c instead. Only when NONE of
+    $a/$b/$c has usable (non-empty, non-punctuation-only -- see
+    `_is_punctuation_only`, the same "no real content" rule
+    `strip_missing_required_a` uses for bib heading fields' $a) content
+    is $a replaced/inserted with `DEFAULT_852_A_CONTENT`. Always runs
+    (no opt-in flag, unlike --fix-missing-852c): a location this tool
+    can't find in any of the three is missing, not just missing a
+    shelving detail. Logged (category "added_missing_852a") every time
+    it runs, since it's adding content -- not just correcting structure
+    -- and a placeholder rather than a value recovered from the
+    record's own data. A punctuation-only $a is replaced in place
+    (keeping its position); a missing $a is prepended, since $a is
+    conventionally 852's first subfield. No-op for an 852 that already
+    has a usable $a, $b, or $c.
+    """
+    details = []
+    for f in parsed.fields:
+        if f.tag != "852" or f.is_control():
+            continue
+        if any(
+            code in ("a", "b", "c") and data and not _is_punctuation_only(data)
+            for code, data in f.subfields
+        ):
+            continue
+        if any(code == "a" for code, _ in f.subfields):
+            f.subfields = [
+                (code, DEFAULT_852_A_CONTENT) if code == "a" else (code, data)
+                for code, data in f.subfields
+            ]
+            details.append(
+                f"replaced empty/punctuation-only 852 $a with: {DEFAULT_852_A_CONTENT!r}"
+            )
+        else:
+            f.subfields = [("a", DEFAULT_852_A_CONTENT)] + list(f.subfields)
+            details.append(f"added missing 852 $a: {DEFAULT_852_A_CONTENT!r}")
+    return details
+
+
+def strip_missing_852_call_number(parsed: ParsedRecord) -> list[str]:
+    """Remove every 852 (Location) field missing $h (Classification
+    part -- the call number), same "can't safely guess it, so remove
+    and log" treatment `strip_missing_required_a` gives a heading field
+    missing $a. Always runs (holdings has no informational gate, and
+    this is content-affecting enough to always be on). Logged (category
+    "missing_call_number", not "field_removed_because_missing_a" --
+    this is $h, not $a) under FIXED/REQUIRES ATTENTION since real data
+    is discarded. A $h whose content is nothing but punctuation is
+    treated the same as a missing $h, same as `strip_missing_required_a`
+    does for $a. No-op for an 852 that already has a usable $h.
+    Unlike `strip_missing_required_a`, there's no "field entirely
+    empty, remove silently" case here -- every 852 missing its call
+    number is logged, whether or not it happened to have other data,
+    since the rest of its location data is still worth a human's
+    attention even without one.
+    """
+    details = []
+    kept = []
+    for f in parsed.fields:
+        if f.tag != "852" or f.is_control():
+            kept.append(f)
+            continue
+        if any(
+            code == "h" and data and not _is_punctuation_only(data)
+            for code, data in f.subfields
+        ):
+            kept.append(f)
+            continue
+        body = "".join(f"${code}{data}" for code, data in f.subfields)
+        details.append(
+            f"removed ={f.tag}  {f.indicators}{body}\t(missing call number; "
+            "content discarded)"
+        )
+    parsed.fields = kept
+    return details
 
 
 def add_missing_852c(parsed: ParsedRecord) -> list[str]:
@@ -2522,6 +2615,17 @@ DEFAULT_REQUIRED_A_TAGS_FILE = os.path.join(
 DEFAULT_NON_REPEATABLE_TAGS_FILE = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "non_repeatable_tags.txt"
 )
+
+DEFAULT_HOLDINGS_REQUIRED_A_TAGS_FILE = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "holdings_required_a_tags.txt"
+)
+
+#: Holdings 853/854/855 (Captions and Pattern -- Basic/Supplementary/
+#: Index) get their own required-content check, separate from
+#: holdings_required_a_tags.txt's plain $a-only tags -- see
+#: `strip_missing_required_a`'s `valid_codes` param.
+HOLDINGS_CAPTION_PATTERN_TAGS = {"853", "854", "855"}
+HOLDINGS_CAPTION_PATTERN_VALID_CODES = frozenset({"a", "g", "i"})
 
 
 def _choose_kept_001(fields_for_tag: list[Field_], is_sirsi: bool) -> Field_:
@@ -2664,12 +2768,24 @@ def _is_punctuation_only(data: str) -> bool:
     return bool(data) and bool(_PUNCTUATION_ONLY_A_RE.match(data))
 
 
-def strip_missing_required_a(parsed: ParsedRecord, required_a_tags: set[str]) -> list[str]:
+def strip_missing_required_a(
+    parsed: ParsedRecord,
+    required_a_tags: set[str],
+    valid_codes: frozenset[str] = frozenset({"a"}),
+) -> list[str]:
     """Remove data fields whose tag is in `required_a_tags` (see
     required_a_tags.txt) but that lack a non-empty, non-punctuation-only $a
     subfield, which is required there. A $a whose content is nothing but
     punctuation (e.g. "." or "--") carries no real data and is treated the
     same as a missing $a.
+
+    `valid_codes` -- normally just {"a"} -- lets a caller widen this to a
+    small set of interchangeable codes for the rare tag where $a has a
+    recognized alternate: e.g. holdings 853/854/855 (Captions and
+    Pattern), which traditionally require $a (or its alternate $g) but
+    also allow $i alone for a chronology-only pattern with no
+    enumeration captions at all (see `repair_holdings_records`, which
+    passes {"a", "g", "i"} for exactly these three tags).
 
     A field that's entirely empty (no non-empty subfield at all, e.g. a bare
     "$a" with nothing after it and nothing else in the field) is removed
@@ -2682,12 +2798,13 @@ def strip_missing_required_a(parsed: ParsedRecord, required_a_tags: set[str]) ->
     """
     details = []
     kept = []
+    code_label = "/".join(f"${c}" for c in sorted(valid_codes))
     for f in parsed.fields:
         if f.is_control() or f.tag not in required_a_tags:
             kept.append(f)
             continue
         if any(
-            code == "a" and data and not _is_punctuation_only(data)
+            code in valid_codes and data and not _is_punctuation_only(data)
             for code, data in f.subfields
         ):
             kept.append(f)
@@ -2695,9 +2812,9 @@ def strip_missing_required_a(parsed: ParsedRecord, required_a_tags: set[str]) ->
         if any(data for code, data in f.subfields):
             body = "".join(f"${code}{data}" for code, data in f.subfields)
             reason = (
-                "$a is punctuation only"
-                if any(code == "a" and data for code, data in f.subfields)
-                else "missing required $a"
+                f"{code_label} is punctuation only"
+                if any(code in valid_codes and data for code, data in f.subfields)
+                else f"missing required {code_label}"
             )
             details.append(
                 f"removed ={f.tag}  {f.indicators}{body}\t({reason}; "
@@ -3185,6 +3302,8 @@ _FIXED_REQUIRES_ATTENTION = {
     "added_field",
     "holdings_leader_byte_defaulted",
     "reattached_orphaned_field",
+    "added_missing_852a",
+    "missing_call_number",
 }
 
 #: INFORMATIONAL, at the very bottom: a fix applied via a fixed
@@ -3442,6 +3561,28 @@ def repair_holdings_records(
         one is flagged INFORMATIONAL (category "holdings_multiple_004",
         since a legitimate multi-bib link isn't necessarily wrong) --
         see `_find_004_issues`; neither is ever invented or trimmed
+      * 863/864/865/866/867/868 (Enumeration and Chronology / Textual
+        Holdings, all three "levels") missing a non-empty, non-
+        punctuation-only $a are removed the same way bib's
+        `strip_missing_required_a` removes a heading field missing $a
+        (see holdings_required_a_tags.txt); 853/854/855 (Captions and
+        Pattern) get the same check but against {$a, $g, $i} instead of
+        just {$a} -- see `HOLDINGS_CAPTION_PATTERN_VALID_CODES` -- since
+        $g is a recognized alternate to $a there, and $i alone is valid
+        for a chronology-only pattern with no enumeration captions at
+        all. Both logged as "field_removed_because_missing_a", same
+        category as the bib pipeline's equivalent
+      * an 852 (Location) field missing $h (Classification part -- the
+        call number) is removed entirely, same "can't safely guess it"
+        treatment as the required-$a fields above -- see
+        `strip_missing_852_call_number`. Logged separately, as
+        "missing_call_number" rather than "field_removed_because_
+        missing_a", since this is $h, not $a
+      * an 852 field that survives the above but is missing a usable $a
+        (location) -- empty, punctuation-only, or absent entirely --
+        always gets $a replaced/inserted with a placeholder (see
+        `fix_missing_852a`) -- $a is 852's defining subfield, so unlike
+        $c below this isn't opt-in
       * if `fix_missing_852c` is set (off by default -- see
         --fix-missing-852c), an 852 (Location) field missing $c
         (shelving location) gets a placeholder $c appended (see
@@ -3459,16 +3600,16 @@ def repair_holdings_records(
 
     Deliberately NOT applied here (bib-specific, would misfire on a
     holdings record): a placeholder 245 (holdings records have no 245),
-    `strip_missing_required_a` / `strip_duplicate_non_repeatable_fields`
-    (their tag lists -- required_a_tags.txt / non_repeatable_tags.txt --
-    were built against bibliographic field semantics), and
-    `remap_999_to_945` (a Sierra/bib-specific convention). MARC-8-to-
-    UTF-8 transcoding is also skipped for now (an explicit, temporary
-    scope decision, not a permanent one) -- an ESC byte is still
-    flagged (category "holdings_escape_sequence", NOT FIXED) rather
-    than silently left in a record declared UTF-8, and a null
-    identifier (subfield present but empty) is still flagged (category
-    "holdings_null_identifier", NOT FIXED) rather than guessed at.
+    `strip_duplicate_non_repeatable_fields` (its tag list --
+    non_repeatable_tags.txt -- was built against bibliographic field
+    semantics), and `remap_999_to_945` (a Sierra/bib-specific
+    convention). MARC-8-to-UTF-8 transcoding is also skipped for now (an
+    explicit, temporary scope decision, not a permanent one) -- an ESC
+    byte is still flagged (category "holdings_escape_sequence", NOT
+    FIXED) rather than silently left in a record declared UTF-8, and a
+    null identifier (subfield present but empty) is still flagged
+    (category "holdings_null_identifier", NOT FIXED) rather than
+    guessed at.
 
     A record that can't be structurally parsed at all is passed through
     unchanged, exactly like the main bib pipeline (category
@@ -3487,6 +3628,7 @@ def repair_holdings_records(
     Returns {"total": n, "unresolved": n, "log_lines": n, "not_fixed": n}.
     """
     encoding_used = detect_encoding(input_path)
+    holdings_required_a_tags = load_tag_list(DEFAULT_HOLDINGS_REQUIRED_A_TAGS_FILE)
     log_entries: list[LogEntry] = []
     used_tags: set[str] = set()
     pending_tag_fixes: list[tuple[int, int, int, str]] = []
@@ -3558,11 +3700,22 @@ def repair_holdings_records(
                 log("fixed_misplaced_subfield_code", True, i, rec_id, detail)
             for detail in strip_invalid_subfield_codes(parsed):
                 log("removed_invalid_subfield", True, i, rec_id, detail)
+            for detail in strip_missing_required_a(parsed, holdings_required_a_tags):
+                log("field_removed_because_missing_a", True, i, rec_id, detail)
+            for detail in strip_missing_required_a(
+                parsed, HOLDINGS_CAPTION_PATTERN_TAGS,
+                valid_codes=HOLDINGS_CAPTION_PATTERN_VALID_CODES,
+            ):
+                log("field_removed_because_missing_a", True, i, rec_id, detail)
             strip_empty_fields(parsed)
             for detail in add_default_holdings_008(parsed):
                 log("added_default_holdings_008", True, i, rec_id, detail)
             for detail in fix_008_length(parsed, expected_len=HOLDINGS_008_LENGTH):
                 log("fixed_holdings_008_length", True, i, rec_id, detail)
+            for detail in strip_missing_852_call_number(parsed):
+                log("missing_call_number", True, i, rec_id, detail)
+            for detail in fix_missing_852a(parsed):
+                log("added_missing_852a", True, i, rec_id, detail)
             if fix_missing_852c:
                 for detail in add_missing_852c(parsed):
                     log("added_missing_852c", True, i, rec_id, detail)

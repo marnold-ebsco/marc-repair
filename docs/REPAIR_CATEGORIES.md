@@ -71,6 +71,10 @@ FIXED.
 | Empty-field removal | Removed field | Yes, always | -- (unlogged) | -- | -- | -- (no switch -- always runs) |
 | Placeholder 008 added (32-byte blank) | Added default field | Yes, always | `added_default_holdings_008` | INFORMATIONAL | **Yes** | -- (no switch -- always runs and always logged) |
 | 008 length pad/truncate (32 bytes) | Padded/truncated field | Yes, always | `fixed_holdings_008_length` | FIXED/REQUIRES ATTENTION | **Yes** | -- (no switch -- always runs and always logged) |
+| 863/864/865/866/867/868 (Enumeration and Chronology / Textual Holdings) missing required $a | Removed field | Yes, always | `field_removed_because_missing_a` | FIXED/REQUIRES ATTENTION | **Yes** | -- (no switch -- always runs and always logged); see `holdings_required_a_tags.txt` |
+| 853/854/855 (Captions and Pattern) missing all of $a/$g/$i | Removed field | Yes, always | `field_removed_because_missing_a` | FIXED/REQUIRES ATTENTION | **Yes** | -- (no switch -- always runs and always logged); $g is $a's recognized alternate, $i alone is valid for a chronology-only pattern |
+| 852 (Location) missing $h (call number) | Removed field | Yes, always | `missing_call_number` | FIXED/REQUIRES ATTENTION | **Yes** | -- (no switch -- always runs and always logged) |
+| 852 $a/$b/$c all missing/empty/punctuation-only (no usable location in any of the three -- which one a given source system actually uses varies) | Placeholder ("Migration") inserted/replaced in $a | Yes, always | `added_missing_852a` | FIXED/REQUIRES ATTENTION | **Yes** | -- (no switch -- always runs and always logged); no-op if $a, $b, or $c already has usable content |
 | 852 $c placeholder ("Migration") added | Added subfield | **No** (`--fix-missing-852c` to enable) | `added_missing_852c` | INFORMATIONAL | **Yes** (once enabled) | `--fix-missing-852c` |
 | Invalid (non-numeric) tag -> 9XX rename | Renamed field tag | Yes, always | `invalid_tag` | INFORMATIONAL | **Yes** | -- (no switch -- always runs and always logged) |
 | Invalid tag, no 9XX slot free | Left tag unchanged | (fallback) | `non_numeric_tag` | NOT FIXED | **Yes** | -- (no switch -- depends only on whether every 900-999 tag is already taken elsewhere in the file) |
@@ -82,7 +86,10 @@ FIXED.
 | Unfixable oversized field/base address | Left record unchanged | n/a (only if it occurs) | `oversized_unfixable` | NOT FIXED | **Yes** | -- (no switch -- genuinely unfixable) |
 | Duplicate identifier across records | Flagged only, no change | detect-only | `duplicate_identifier` | DUPLICATE RECORDS | **Yes** | -- (detect-only, no switch) |
 
-Holdings has no equivalent of bib's `strip_missing_required_a`,
-`strip_duplicate_non_repeatable_fields`, `remap_999_to_945`,
-`add_default_245`, or the ISBN/ISSN/880-link/indicator-value/bib-level
-checks -- those are bib-specific and deliberately not applied.
+Holdings has no equivalent of bib's `strip_duplicate_non_repeatable_fields`,
+`remap_999_to_945`, `add_default_245`, or the
+ISBN/ISSN/880-link/indicator-value/bib-level checks -- those are
+bib-specific and deliberately not applied. It does now reuse bib's
+`strip_missing_required_a` mechanism (see `holdings_required_a_tags.txt`),
+for the specific holdings tags where a missing required subfield is just
+as unambiguous a defect as it is for a bib heading field.
