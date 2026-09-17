@@ -4037,7 +4037,7 @@ class TestRepairHoldingsRecords:
         parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
         assert any(f.tag == "852" for f in parsed.fields)
 
-    def test_852_missing_a_gets_migration_placeholder(self, tmp_path):
+    def test_852_missing_location_gets_migration_placeholder_in_b(self, tmp_path):
         fields = [
             m.Field_("004", None, None, content="ocm123"),
             m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
@@ -4045,27 +4045,40 @@ class TestRepairHoldingsRecords:
         ]
         result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert "added_missing_852a" in content
+        assert "added_missing_852_location" in content
         assert "[FIXED/REQUIRES ATTENTION]" in content
         parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
         f852 = next(f for f in parsed.fields if f.tag == "852")
-        assert ("a", "Migration") in f852.subfields
+        assert ("b", "Migration") in f852.subfields
 
-    def test_852_punctuation_only_a_is_replaced_with_migration(self, tmp_path):
+    def test_852_punctuation_only_b_is_replaced_with_migration(self, tmp_path):
         fields = [
             m.Field_("004", None, None, content="ocm123"),
             m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
-            m.Field_("852", "  ", [("a", "--"), ("h", "ABC123")]),
+            m.Field_("852", "  ", [("b", "--"), ("h", "ABC123")]),
         ]
         result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert "added_missing_852a" in content
+        assert "added_missing_852_location" in content
         parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
         f852 = next(f for f in parsed.fields if f.tag == "852")
-        assert ("a", "Migration") in f852.subfields
-        assert not any(code == "a" and data == "--" for code, data in f852.subfields)
+        assert ("b", "Migration") in f852.subfields
+        assert not any(code == "b" and data == "--" for code, data in f852.subfields)
 
-    def test_852_with_usable_b_is_not_given_a_placeholder(self, tmp_path):
+    def test_852_with_usable_a_is_not_given_a_placeholder(self, tmp_path):
+        fields = [
+            m.Field_("004", None, None, content="ocm123"),
+            m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
+            m.Field_("852", "  ", [("a", "Main Library"), ("h", "ABC123")]),
+        ]
+        result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
+        content = _resolve_log(log).read_text(encoding="utf-8")
+        assert "added_missing_852_location" not in content
+        parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
+        f852 = next(f for f in parsed.fields if f.tag == "852")
+        assert not any(code == "b" for code, _ in f852.subfields)
+
+    def test_852_with_usable_b_is_untouched(self, tmp_path):
         # Real production convention seen at scale: $a unused throughout
         # an entire export, $b alone carrying the actual location code.
         fields = [
@@ -4075,10 +4088,10 @@ class TestRepairHoldingsRecords:
         ]
         result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert "added_missing_852a" not in content
+        assert "added_missing_852_location" not in content
         parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
         f852 = next(f for f in parsed.fields if f.tag == "852")
-        assert not any(code == "a" for code, _ in f852.subfields)
+        assert ("b", "OFC Main") in f852.subfields
 
     def test_852_with_usable_c_is_not_given_a_placeholder(self, tmp_path):
         # Real, different convention: OCLC WMS exports put location in $c.
@@ -4089,12 +4102,12 @@ class TestRepairHoldingsRecords:
         ]
         result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert "added_missing_852a" not in content
+        assert "added_missing_852_location" not in content
         parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
         f852 = next(f for f in parsed.fields if f.tag == "852")
-        assert not any(code == "a" for code, _ in f852.subfields)
+        assert not any(code == "b" for code, _ in f852.subfields)
 
-    def test_852_with_none_of_a_b_c_gets_placeholder(self, tmp_path):
+    def test_852_with_none_of_a_b_c_gets_placeholder_in_b(self, tmp_path):
         fields = [
             m.Field_("004", None, None, content="ocm123"),
             m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
@@ -4102,25 +4115,17 @@ class TestRepairHoldingsRecords:
         ]
         result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert "added_missing_852a" in content
+        assert "added_missing_852_location" in content
         parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
         f852 = next(f for f in parsed.fields if f.tag == "852")
-        assert ("a", "Migration") in f852.subfields
+        assert ("b", "Migration") in f852.subfields
 
-    def test_852_with_usable_a_is_untouched(self, tmp_path):
-        fields = [
-            m.Field_("004", None, None, content="ocm123"),
-            m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
-            m.Field_("852", "  ", [("a", "Main Library"), ("h", "ABC123")]),
-        ]
-        result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
-        content = _resolve_log(log).read_text(encoding="utf-8")
-        assert "added_missing_852a" not in content
-
-    def test_852_missing_both_h_and_a_is_only_logged_as_missing_call_number(self, tmp_path):
-        # Removed for missing $h before fix_missing_852a ever runs on it
-        # -- must not ALSO get an added_missing_852a log line for a
-        # field that no longer exists.
+    def test_852_missing_both_h_and_location_is_only_logged_as_missing_call_number(
+        self, tmp_path,
+    ):
+        # Removed for missing $h before fix_missing_852_location ever
+        # runs on it -- must not ALSO get an added_missing_852_location
+        # log line for a field that no longer exists.
         fields = [
             m.Field_("004", None, None, content="ocm123"),
             m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
@@ -4129,7 +4134,7 @@ class TestRepairHoldingsRecords:
         result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
         content = _resolve_log(log).read_text(encoding="utf-8")
         assert "missing_call_number" in content
-        assert "added_missing_852a" not in content
+        assert "added_missing_852_location" not in content
         parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
         assert not any(f.tag == "852" for f in parsed.fields)
 

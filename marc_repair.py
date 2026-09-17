@@ -2413,13 +2413,13 @@ DEFAULT_HOLDINGS_008_CONTENT = " " * HOLDINGS_008_LENGTH
 
 
 #: Placeholder content for an 852 (Location) with no usable location in
-#: $a, $b, or $c at all -- see `fix_missing_852a`. Unlike
+#: $a, $b, or $c at all -- see `fix_missing_852_location`. Unlike
 #: `add_missing_852c` below (which only ever adds $c, and only when
 #: enabled via --fix-missing-852c), this always runs, no opt-in flag,
 #: and is logged under FIXED/REQUIRES ATTENTION rather than
 #: INFORMATIONAL -- a record with no usable location anywhere is a
 #: bigger problem than one merely missing a shelving detail.
-DEFAULT_852_A_CONTENT = "Migration"
+DEFAULT_852_LOCATION_CONTENT = "Migration"
 
 #: Placeholder content for a missing 852 (Location) $c (shelving
 #: location) -- see `add_missing_852c`. Like the 008/245 placeholders
@@ -2429,28 +2429,40 @@ DEFAULT_852_A_CONTENT = "Migration"
 DEFAULT_852_C_CONTENT = "Migration"
 
 
-def fix_missing_852a(parsed: ParsedRecord) -> list[str]:
+def fix_missing_852_location(parsed: ParsedRecord) -> list[str]:
     """Ensure every 852 (Location) field has a usable location in $a,
     $b (sublocation), or $c (shelving location) -- which one actually
     carries the location code is source-system-dependent, not
-    standardized: real production data has been seen where $a is
-    essentially unused throughout an entire export and $b alone carries
-    it on nearly every record instead, a legitimate institutional
-    convention, not a defect; OCLC WMS exports are a different real
-    convention again, putting location in $c instead. Only when NONE of
-    $a/$b/$c has usable (non-empty, non-punctuation-only -- see
-    `_is_punctuation_only`, the same "no real content" rule
+    standardized: Alma and Sierra/Millennium primarily use $b (library/
+    location code) with $c as secondary context; Koha, FOLIO, and
+    Symphony/Horizon primarily use $c (shelving location/collection
+    code) with $b as secondary context -- none of them treat $a as the
+    live location subfield. Real production data confirms this: $a
+    essentially unused throughout one entire 71.6MB export, $b alone
+    carrying the location on nearly every record instead.
+
+    Only when NONE of $a/$b/$c has usable (non-empty, non-punctuation-
+    only -- see `_is_punctuation_only`, the same "no real content" rule
     `strip_missing_required_a` uses for bib heading fields' $a) content
-    is $a replaced/inserted with `DEFAULT_852_A_CONTENT`. Always runs
-    (no opt-in flag, unlike --fix-missing-852c): a location this tool
-    can't find in any of the three is missing, not just missing a
-    shelving detail. Logged (category "added_missing_852a") every time
-    it runs, since it's adding content -- not just correcting structure
-    -- and a placeholder rather than a value recovered from the
-    record's own data. A punctuation-only $a is replaced in place
-    (keeping its position); a missing $a is prepended, since $a is
-    conventionally 852's first subfield. No-op for an 852 that already
-    has a usable $a, $b, or $c.
+    does this insert a placeholder -- into $b specifically, not $a,
+    since $b is the one subfield every listed system above treats as
+    location-bearing (primary or secondary), so a placeholder there
+    matches the convention the rest of a given file already uses rather
+    than introducing a subfield code that convention never touches. The
+    one known exception is OCLC WMS, which uses $c only, never $b -- but
+    this only ever fires on a record with NO location data in $a, $b,
+    or $c to begin with, already a serious enough problem to need a
+    human's attention regardless of which of the two this placeholder
+    lands in.
+    Always runs (no opt-in flag, unlike --fix-missing-852c): a location
+    this tool can't find in any of the three is missing, not just
+    missing a shelving detail. Logged (category
+    "added_missing_852_location") every time it runs, since it's adding
+    content -- not just correcting structure -- and a placeholder
+    rather than a value recovered from the record's own data. A
+    punctuation-only $b is replaced in place (keeping its position); a
+    missing $b is prepended. No-op for an 852 that already has a usable
+    $a, $b, or $c.
     """
     details = []
     for f in parsed.fields:
@@ -2461,17 +2473,18 @@ def fix_missing_852a(parsed: ParsedRecord) -> list[str]:
             for code, data in f.subfields
         ):
             continue
-        if any(code == "a" for code, _ in f.subfields):
+        if any(code == "b" for code, _ in f.subfields):
             f.subfields = [
-                (code, DEFAULT_852_A_CONTENT) if code == "a" else (code, data)
+                (code, DEFAULT_852_LOCATION_CONTENT) if code == "b" else (code, data)
                 for code, data in f.subfields
             ]
             details.append(
-                f"replaced empty/punctuation-only 852 $a with: {DEFAULT_852_A_CONTENT!r}"
+                f"replaced empty/punctuation-only 852 $b with: "
+                f"{DEFAULT_852_LOCATION_CONTENT!r}"
             )
         else:
-            f.subfields = [("a", DEFAULT_852_A_CONTENT)] + list(f.subfields)
-            details.append(f"added missing 852 $a: {DEFAULT_852_A_CONTENT!r}")
+            f.subfields = [("b", DEFAULT_852_LOCATION_CONTENT)] + list(f.subfields)
+            details.append(f"added missing 852 $b: {DEFAULT_852_LOCATION_CONTENT!r}")
     return details
 
 
@@ -3321,7 +3334,7 @@ _FIXED_REQUIRES_ATTENTION = {
     "added_field",
     "holdings_leader_byte_defaulted",
     "reattached_orphaned_field",
-    "added_missing_852a",
+    "added_missing_852_location",
     "missing_call_number",
 }
 
@@ -3593,10 +3606,11 @@ def repair_holdings_records(
         `strip_missing_852_call_number`. Logged separately, as
         "missing_call_number" rather than "field_removed_because_
         missing_a", since this is $h, not $a
-      * an 852 field that survives the above but is missing a usable $a
-        (location) -- empty, punctuation-only, or absent entirely --
-        always gets $a replaced/inserted with a placeholder (see
-        `fix_missing_852a`) -- $a is 852's defining subfield, so unlike
+      * an 852 field that survives the above but has no usable location
+        in $a, $b, or $c -- which subfield actually carries it is
+        source-system-dependent (see `fix_missing_852_location`) --
+        always gets a placeholder inserted into $b specifically (the
+        one subfield most systems treat as location-bearing); unlike
         $c below this isn't opt-in
       * if `fix_missing_852c` is set (off by default -- see
         --fix-missing-852c), an 852 (Location) field missing $c
@@ -3727,8 +3741,8 @@ def repair_holdings_records(
                 log("fixed_holdings_008_length", True, i, rec_id, detail)
             for detail in strip_missing_852_call_number(parsed):
                 log("missing_call_number", True, i, rec_id, detail)
-            for detail in fix_missing_852a(parsed):
-                log("added_missing_852a", True, i, rec_id, detail)
+            for detail in fix_missing_852_location(parsed):
+                log("added_missing_852_location", True, i, rec_id, detail)
             if fix_missing_852c:
                 for detail in add_missing_852c(parsed):
                     log("added_missing_852c", True, i, rec_id, detail)
