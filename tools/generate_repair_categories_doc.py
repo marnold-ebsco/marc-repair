@@ -327,12 +327,52 @@ HOLDINGS_ROWS = [
         "Corrected code/data split -- runs before invalid-code removal "
         "below, so these are recovered instead of discarded",
         "Yes, always", "`fixed_misplaced_subfield_code`", "INFORMATIONAL",
-        "**Yes**", "-- (no switch -- always runs and always logged)",
+        "No (needs `--log-fixed-misplaced-subfield-code`; no "
+        "`--log-informational` gate for holdings)",
+        "`--log-fixed-misplaced-subfield-code`",
     ),
     CategoryRow(
         "Invalid subfield code removal", "Removed subfield", "Yes, always",
         "`removed_invalid_subfield`", "FIXED/REQUIRES ATTENTION", "**Yes**",
         "-- (no switch -- always runs and always logged)",
+    ),
+    CategoryRow(
+        "Missing-required-$a field removal for 863/864/865/866/867/868 "
+        "(Enumeration/Chronology and Textual Holdings; see "
+        "holdings_required_a_tags.txt) and 853/854/855 (Captions and "
+        "Pattern, which also accept alternate $g or chronology-only $i "
+        "in place of $a)",
+        "Removed field", "Yes, always",
+        "`field_removed_because_missing_a`", "FIXED/REQUIRES ATTENTION",
+        "**Yes**", "-- (no switch -- always runs and always logged)",
+    ),
+    CategoryRow(
+        "852 (Location) $h (call number) unusable but present "
+        "(empty or punctuation-only)",
+        "Removed just the $h subfield; rest of the field left as-is",
+        "Yes, always", "`removed_bad_call_number`",
+        "FIXED/REQUIRES ATTENTION", "**Yes**",
+        "-- (no switch -- always runs and always logged)",
+    ),
+    CategoryRow(
+        "852 (Location) $h (call number) missing entirely",
+        "Flagged only, field left completely untouched",
+        "detect-only", "`missing_call_number`", "NOT FIXED", "**Yes**",
+        "-- (detect-only, no switch)",
+    ),
+    CategoryRow(
+        "852 (Location) with no usable $a/$b/$c anywhere",
+        "Inserted `Migration` placeholder into $b (or $c for a WMS/OCLC "
+        "record -- 004 starting `on`/`ocn`/`ocm`)",
+        "Yes, always", "`added_missing_852_location`",
+        "FIXED/REQUIRES ATTENTION", "**Yes**",
+        "-- (no switch -- always runs and always logged; distinct from "
+        "`--fix-missing-852c` below, which only ever targets $c)",
+    ),
+    CategoryRow(
+        "Multiple 852 (Location) fields in one record",
+        "Flagged only, no change", "detect-only", "`holdings_multiple_852`",
+        "NOT FIXED", "**Yes**", "-- (detect-only, no switch)",
     ),
     CategoryRow(
         "Empty-field removal", "Removed field", "Yes, always",

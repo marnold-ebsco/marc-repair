@@ -66,15 +66,16 @@ FIXED.
 | Leader bytes 05/06/17 defaulted (holdings-specific byte 6 -> `u`, byte 17 code set) | Defaulted leader byte | Yes, always | `holdings_leader_byte_defaulted` | FIXED/REQUIRES ATTENTION | **Yes** | -- (no switch -- always runs and always logged) |
 | $9 -> $0 normalization | Renamed subfield code | Yes, always | `normalized_subfield_9_to_0` | INFORMATIONAL | **Yes** | -- (no switch -- always runs and always logged) |
 | Smart-character normalization | Replaced characters | Yes, always | `normalized_smart_characters` | INFORMATIONAL | **Yes** | -- (no switch -- always runs and always logged) |
-| Misplaced subfield code (a stray space right after the delimiter, immediately followed by the real code, e.g. raw `\x1f c2000.` meaning `$c` "c2000.") | Corrected code/data split -- runs before invalid-code removal below, so these are recovered instead of discarded | Yes, always | `fixed_misplaced_subfield_code` | INFORMATIONAL | **Yes** | -- (no switch -- always runs and always logged) |
+| Misplaced subfield code (a stray space right after the delimiter, immediately followed by the real code, e.g. raw `\x1f c2000.` meaning `$c` "c2000.") | Corrected code/data split -- runs before invalid-code removal below, so these are recovered instead of discarded | Yes, always | `fixed_misplaced_subfield_code` | INFORMATIONAL | No (needs `--log-fixed-misplaced-subfield-code`; no `--log-informational` gate for holdings) | `--log-fixed-misplaced-subfield-code` |
 | Invalid subfield code removal | Removed subfield | Yes, always | `removed_invalid_subfield` | FIXED/REQUIRES ATTENTION | **Yes** | -- (no switch -- always runs and always logged) |
+| Missing-required-$a field removal for 863/864/865/866/867/868 (Enumeration/Chronology and Textual Holdings; see holdings_required_a_tags.txt) and 853/854/855 (Captions and Pattern, which also accept alternate $g or chronology-only $i in place of $a) | Removed field | Yes, always | `field_removed_because_missing_a` | FIXED/REQUIRES ATTENTION | **Yes** | -- (no switch -- always runs and always logged) |
+| 852 (Location) $h (call number) unusable but present (empty or punctuation-only) | Removed just the $h subfield; rest of the field left as-is | Yes, always | `removed_bad_call_number` | FIXED/REQUIRES ATTENTION | **Yes** | -- (no switch -- always runs and always logged) |
+| 852 (Location) $h (call number) missing entirely | Flagged only, field left completely untouched | detect-only | `missing_call_number` | NOT FIXED | **Yes** | -- (detect-only, no switch) |
+| 852 (Location) with no usable $a/$b/$c anywhere | Inserted `Migration` placeholder into $b (or $c for a WMS/OCLC record -- 004 starting `on`/`ocn`/`ocm`) | Yes, always | `added_missing_852_location` | FIXED/REQUIRES ATTENTION | **Yes** | -- (no switch -- always runs and always logged; distinct from `--fix-missing-852c` below, which only ever targets $c) |
+| Multiple 852 (Location) fields in one record | Flagged only, no change | detect-only | `holdings_multiple_852` | NOT FIXED | **Yes** | -- (detect-only, no switch) |
 | Empty-field removal | Removed field | Yes, always | -- (unlogged) | -- | -- | -- (no switch -- always runs) |
 | Placeholder 008 added (32-byte blank) | Added default field | Yes, always | `added_default_holdings_008` | INFORMATIONAL | **Yes** | -- (no switch -- always runs and always logged) |
 | 008 length pad/truncate (32 bytes) | Padded/truncated field | Yes, always | `fixed_holdings_008_length` | FIXED/REQUIRES ATTENTION | **Yes** | -- (no switch -- always runs and always logged) |
-| 863/864/865/866/867/868 (Enumeration and Chronology / Textual Holdings) missing required $a | Removed field | Yes, always | `field_removed_because_missing_a` | FIXED/REQUIRES ATTENTION | **Yes** | -- (no switch -- always runs and always logged); see `holdings_required_a_tags.txt` |
-| 853/854/855 (Captions and Pattern) missing all of $a/$g/$i | Removed field | Yes, always | `field_removed_because_missing_a` | FIXED/REQUIRES ATTENTION | **Yes** | -- (no switch -- always runs and always logged); $g is $a's recognized alternate, $i alone is valid for a chronology-only pattern |
-| 852 (Location) missing $h (call number) | Removed field | Yes, always | `missing_call_number` | FIXED/REQUIRES ATTENTION | **Yes** | -- (no switch -- always runs and always logged) |
-| 852 $a/$b/$c all missing/empty/punctuation-only (no usable location in any of the three -- which one a given source system actually uses varies: Alma/Sierra primarily $b, Koha/FOLIO/Symphony primarily $c, OCLC WMS only $c) | Placeholder ("Migration") inserted/replaced in $b specifically -- the one subfield most systems treat as location-bearing | Yes, always | `added_missing_852_location` | FIXED/REQUIRES ATTENTION | **Yes** | -- (no switch -- always runs and always logged); no-op if $a, $b, or $c already has usable content |
 | 852 $c placeholder ("Migration") added | Added subfield | **No** (`--fix-missing-852c` to enable) | `added_missing_852c` | INFORMATIONAL | **Yes** (once enabled) | `--fix-missing-852c` |
 | Invalid (non-numeric) tag -> 9XX rename | Renamed field tag | Yes, always | `invalid_tag` | INFORMATIONAL | **Yes** | -- (no switch -- always runs and always logged) |
 | Invalid tag, no 9XX slot free | Left tag unchanged | (fallback) | `non_numeric_tag` | NOT FIXED | **Yes** | -- (no switch -- depends only on whether every 900-999 tag is already taken elsewhere in the file) |
@@ -82,15 +83,11 @@ FIXED.
 | Null identifier (empty subfield) | Flagged only, no change | detect-only | `holdings_null_identifier` | NOT FIXED | **Yes** | -- (detect-only, no switch) |
 | Missing 004 (link to bib record) | Flagged only, no change | detect-only | `holdings_missing_004` | NOT FIXED | **Yes** | -- (detect-only, no switch) |
 | Multiple 004 fields | Flagged only, no change | detect-only | `holdings_multiple_004` | INFORMATIONAL | **Yes** | -- (detect-only, no switch) |
-| Multiple 852 (Location) fields | Flagged only, no change | detect-only | `holdings_multiple_852` | NOT FIXED | **Yes** | -- (detect-only, no switch) |
 | Unresolvable record (passed through unchanged) | Passed through unchanged | n/a (only if it occurs) | `unresolved_record` | NOT FIXED | **Yes** | `--overrides` (Mode 2 only -- supplies the split the automatic solver couldn't determine) |
 | Unfixable oversized field/base address | Left record unchanged | n/a (only if it occurs) | `oversized_unfixable` | NOT FIXED | **Yes** | -- (no switch -- genuinely unfixable) |
 | Duplicate identifier across records | Flagged only, no change | detect-only | `duplicate_identifier` | DUPLICATE RECORDS | **Yes** | -- (detect-only, no switch) |
 
-Holdings has no equivalent of bib's `strip_duplicate_non_repeatable_fields`,
-`remap_999_to_945`, `add_default_245`, or the
-ISBN/ISSN/880-link/indicator-value/bib-level checks -- those are
-bib-specific and deliberately not applied. It does now reuse bib's
-`strip_missing_required_a` mechanism (see `holdings_required_a_tags.txt`),
-for the specific holdings tags where a missing required subfield is just
-as unambiguous a defect as it is for a bib heading field.
+Holdings has no equivalent of bib's `strip_missing_required_a`,
+`strip_duplicate_non_repeatable_fields`, `remap_999_to_945`,
+`add_default_245`, or the ISBN/ISSN/880-link/indicator-value/bib-level
+checks -- those are bib-specific and deliberately not applied.
