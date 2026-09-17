@@ -66,6 +66,7 @@ FIXED.
 | Leader bytes 05/06/17 defaulted (holdings-specific byte 6 -> `u`, byte 17 code set) | Defaulted leader byte | Yes, always | `holdings_leader_byte_defaulted` | FIXED/REQUIRES ATTENTION | **Yes** | -- (no switch -- always runs and always logged) |
 | $9 -> $0 normalization | Renamed subfield code | Yes, always | `normalized_subfield_9_to_0` | INFORMATIONAL | **Yes** | -- (no switch -- always runs and always logged) |
 | Smart-character normalization | Replaced characters | Yes, always | `normalized_smart_characters` | INFORMATIONAL | **Yes** | -- (no switch -- always runs and always logged) |
+| Misplaced subfield code (a stray space right after the delimiter, immediately followed by the real code, e.g. raw `\x1f c2000.` meaning `$c` "c2000.") | Corrected code/data split -- runs before invalid-code removal below, so these are recovered instead of discarded | Yes, always | `fixed_misplaced_subfield_code` | INFORMATIONAL | **Yes** | -- (no switch -- always runs and always logged) |
 | Invalid subfield code removal | Removed subfield | Yes, always | `removed_invalid_subfield` | FIXED/REQUIRES ATTENTION | **Yes** | -- (no switch -- always runs and always logged) |
 | Empty-field removal | Removed field | Yes, always | -- (unlogged) | -- | -- | -- (no switch -- always runs) |
 | Placeholder 008 added (32-byte blank) | Added default field | Yes, always | `added_default_holdings_008` | INFORMATIONAL | **Yes** | -- (no switch -- always runs and always logged) |

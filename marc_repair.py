@@ -3426,6 +3426,10 @@ def repair_holdings_records(
         section
       * $9 -> $0 subfield code normalization
       * typographic "smart" character normalization
+      * misplaced-subfield-code recovery (a stray space before the real
+        code, see `fix_misplaced_subfield_codes`) -- runs before invalid-
+        code removal below, same ordering as the bib pipeline, so these
+        are recovered instead of discarded
       * invalid (non a-z0-9) subfield code removal
       * empty-field removal
       * a missing 008 gets a blank, syntactically-valid placeholder
@@ -3550,6 +3554,8 @@ def repair_holdings_records(
                 log("normalized_subfield_9_to_0", True, i, rec_id, detail)
             for detail in normalize_smart_characters(parsed):
                 log("normalized_smart_characters", True, i, rec_id, detail)
+            for detail in fix_misplaced_subfield_codes(parsed):
+                log("fixed_misplaced_subfield_code", True, i, rec_id, detail)
             for detail in strip_invalid_subfield_codes(parsed):
                 log("removed_invalid_subfield", True, i, rec_id, detail)
             strip_empty_fields(parsed)

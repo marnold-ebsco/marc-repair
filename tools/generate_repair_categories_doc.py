@@ -321,6 +321,15 @@ HOLDINGS_ROWS = [
         "**Yes**", "-- (no switch -- always runs and always logged)",
     ),
     CategoryRow(
+        "Misplaced subfield code (a stray space right after the delimiter, "
+        "immediately followed by the real code, e.g. raw `\\x1f c2000.` "
+        'meaning `$c` "c2000.")',
+        "Corrected code/data split -- runs before invalid-code removal "
+        "below, so these are recovered instead of discarded",
+        "Yes, always", "`fixed_misplaced_subfield_code`", "INFORMATIONAL",
+        "**Yes**", "-- (no switch -- always runs and always logged)",
+    ),
+    CategoryRow(
         "Invalid subfield code removal", "Removed subfield", "Yes, always",
         "`removed_invalid_subfield`", "FIXED/REQUIRES ATTENTION", "**Yes**",
         "-- (no switch -- always runs and always logged)",

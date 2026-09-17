@@ -223,6 +223,23 @@ class TestRepairHoldingsRecords:
         field008 = next(f for f in parsed.fields if f.tag == "008")
         assert len(field008.content) == m.HOLDINGS_008_LENGTH
 
+    def test_misplaced_subfield_code_recovered_by_default_and_logged(self, tmp_path):
+        # Raw "\x1f c2000." parses as code=" ", data="c2000." -- the
+        # real intended subfield is $c "c2000." with a stray space
+        # accidentally inserted before its code (see
+        # fix_misplaced_subfield_codes). Must run before invalid-code
+        # removal so this is recovered instead of discarded.
+        fields = [
+            m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
+            m.Field_("852", "  ", [("a", "Main Library"), (" ", "c2000.")]),
+        ]
+        result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
+        content = _resolve_log(log).read_text(encoding="utf-8")
+        assert "fixed_misplaced_subfield_code" in content
+        parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
+        field852 = next(f for f in parsed.fields if f.tag == "852")
+        assert ("c", "2000.") in field852.subfields
+
     def test_null_identifier_flagged_not_fixed(self, tmp_path):
         # $b is the null identifier under test; $a is real, non-empty
         # data so the field survives strip_empty_fields (a field with
