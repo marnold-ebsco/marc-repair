@@ -3573,6 +3573,7 @@ def repair_holdings_records(
     output_path: str,
     log_path: str,
     fix_missing_852c: bool = False,
+    log_fixed_misplaced_subfield_code: bool = False,
     on_progress: Callable[[int], None] | None = None,
     on_record: Callable[[int], None] | None = None,
     on_estimate: Callable[[int, int], None] | None = None,
@@ -3608,7 +3609,9 @@ def repair_holdings_records(
       * misplaced-subfield-code recovery (a stray space between the
         delimiter and its real code -- see `fix_misplaced_subfield_codes`),
         same as the bib pipeline; runs first so these are recovered
-        rather than caught by invalid-code removal below
+        rather than caught by invalid-code removal below. Not logged
+        per-record by default (see `log_fixed_misplaced_subfield_code`)
+        since this can be a large fraction of a file with this defect
       * invalid (non a-z0-9) subfield code removal
       * empty-field removal
       * a missing 008 gets a blank, syntactically-valid placeholder
@@ -3762,8 +3765,10 @@ def repair_holdings_records(
                 log("normalized_subfield_9_to_0", True, i, rec_id, detail)
             for detail in normalize_smart_characters(parsed):
                 log("normalized_smart_characters", True, i, rec_id, detail)
-            for detail in fix_misplaced_subfield_codes(parsed):
-                log("fixed_misplaced_subfield_code", True, i, rec_id, detail)
+            misplaced_details = fix_misplaced_subfield_codes(parsed)
+            if log_fixed_misplaced_subfield_code:
+                for detail in misplaced_details:
+                    log("fixed_misplaced_subfield_code", True, i, rec_id, detail)
             for detail in strip_invalid_subfield_codes(parsed):
                 log("removed_invalid_subfield", True, i, rec_id, detail)
             for detail in strip_missing_required_a(parsed, holdings_required_a_tags):
@@ -4064,10 +4069,12 @@ def main(argv: list[str] | None = None) -> int:
         "--log-fixed-misplaced-subfield-code",
         action="store_true",
         help="log each individual misplaced-subfield-code fix (see "
-        "--no-fix-misplaced-subfield-codes). Off by default since this "
-        "can be a large fraction of a file with this defect, which "
-        "would otherwise dominate the log; the fix itself always runs "
-        "regardless of this flag (also needs --log-informational)",
+        "--no-fix-misplaced-subfield-codes) in either pipeline. Off by "
+        "default since this can be a large fraction of a file with this "
+        "defect, which would otherwise dominate the log; the fix itself "
+        "always runs regardless of this flag (the bib pipeline also "
+        "needs --log-informational; holdings has no such gate, so this "
+        "flag alone is enough there)",
     )
     parser.add_argument(
         "--no-strip-invalid-subfield-codes",
@@ -4336,6 +4343,7 @@ def main(argv: list[str] | None = None) -> int:
                 holdings_repaired_path,
                 holdings_log_path,
                 fix_missing_852c=args.fix_missing_852c,
+                log_fixed_misplaced_subfield_code=args.log_fixed_misplaced_subfield_code,
                 on_progress=holdings_progress.on_progress,
                 on_record=holdings_progress.maybe_print,
                 on_estimate=holdings_progress.maybe_print_estimate,
@@ -4373,6 +4381,7 @@ def main(argv: list[str] | None = None) -> int:
             out_path,
             log_path,
             fix_missing_852c=args.fix_missing_852c,
+            log_fixed_misplaced_subfield_code=args.log_fixed_misplaced_subfield_code,
             on_progress=progress.on_progress,
             on_record=progress.maybe_print,
             on_estimate=progress.maybe_print_estimate,
