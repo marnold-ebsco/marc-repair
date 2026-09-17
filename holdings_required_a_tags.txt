@@ -1,0 +1,24 @@
+# Tags where subfield $a is treated as required, for the holdings
+# pipeline (repair_holdings_records) -- always applied, no CLI switch
+# (see the module's general "no switch, always runs" convention for
+# holdings-specific fixes).
+#
+# One tag per line. Blank lines and lines starting with # are ignored.
+#
+# 863/864/865 (Enumeration and Chronology -- Basic Bibliographic Unit /
+# Supplementary Material / Indexes) and 866/867/868 (Textual Holdings --
+# same three) all use $a as the primary holdings-statement subfield;
+# a field with none of that content is meaningless.
+#
+# 853/854/855 (Captions and Pattern) are deliberately NOT here: they
+# traditionally require $a (or its alternate $g) but standards evolved
+# to also allow $i alone for a chronology-only pattern with no
+# enumeration captions at all -- see repair_holdings_records, which
+# checks those three separately against {$a, $g, $i}.
+
+863
+864
+865
+866
+867
+868
