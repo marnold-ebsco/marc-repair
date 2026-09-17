@@ -82,6 +82,24 @@ use stays bounded by roughly one chunk plus one record's worth of parsed
 data at a time, regardless of whether the input has a thousand records or
 ten million.
 
+### Tolerating a corrupted byte in an otherwise-UTF-8 file
+
+Real exports can be almost entirely valid UTF-8 but still have a single
+byte somewhere that isn't — seen in production data as a legacy byte
+standing in for one digit of a leader's fixed `4500` entry-map constant.
+`detect_encoding` only samples the first few MB to decide whether to read
+a file as UTF-8 or Latin-1, so a bad byte much further into a large file
+doesn't change that file-wide guess (correctly — falling back to Latin-1
+for the *whole* file just to route around one bad byte would silently
+mangle every genuine multi-byte UTF-8 character elsewhere in it). Instead,
+the streaming decoder treats an invalid byte as data to carry through
+losslessly (via `errors="surrogateescape"`), not a fatal error: parsing
+never depended on that byte being valid in the first place (Mode 1 finds
+record boundaries from real delimiters), and writing a record back out
+round-trips the byte to its original value unless normal repair already
+replaces it outright — e.g. the entry map, which is always rewritten as
+literal `4500` and never copied through from the original leader.
+
 ### What gets fixed automatically vs. flagged
 
 | Issue | Behavior |

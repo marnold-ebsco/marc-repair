@@ -1314,6 +1314,54 @@ class TestLeaderEntryMapCorrection:
         content = _resolve_log(log).read_text(encoding="utf-8")
         assert "leader_entry_map_fixed" in content
 
+    def _corrupted_entry_map_bytes_invalid_utf8(self):
+        # Same idea as `_corrupted_entry_map_bytes`, but the corrupted byte
+        # (0x92) isn't valid UTF-8 anywhere in the sequence -- unlike "45x0",
+        # which is still plain ASCII. Real production data has been seen
+        # with exactly this: the file as a whole is genuine UTF-8, but one
+        # byte inside the leader's fixed "4500" constant is corrupted.
+        parsed = m.ParsedRecord(
+            leader=_SYNTHETIC_LEADER,
+            entries=[],
+            fields=[m.Field_("008", None, None, content="x" * 40)],
+        )
+        raw = bytearray(m.assemble_marc(parsed))
+        raw[20:24] = b"45\x920"
+        return bytes(raw)
+
+    def test_invalid_utf8_byte_in_entry_map_does_not_crash_the_stream(self, tmp_path, monkeypatch):
+        # Regression test: `iter_repair_stream`'s UTF-8 decoder used to be
+        # strict, so this byte raised UnicodeDecodeError and killed the
+        # whole run before the leader-repair logic above ever got a chance
+        # to run -- even though the file as a whole is meant to be read as
+        # UTF-8. `detect_encoding` only probes the first 4MB, so in the real
+        # production file this crash came from, the file-wide guess came
+        # back "utf-8" despite one bad byte tens of MB in; a tiny test file
+        # would instead get correctly probed in full and fall back to
+        # latin-1 on its own, sidestepping the bug entirely -- so
+        # `detect_encoding` is forced to "utf-8" here to isolate exactly
+        # what's actually being regression-tested: the streaming decoder
+        # itself, not the probe heuristic. A tiny chunk_size forces the bad
+        # byte into a chunk of its own, exercising the decoder the same way
+        # a real 32MB chunk boundary did in production.
+        monkeypatch.setattr(m, "detect_encoding", lambda path: "utf-8")
+        src = tmp_path / "badmap_invalid_utf8.mrc"
+        src.write_bytes(self._corrupted_entry_map_bytes_invalid_utf8())
+        records = list(m.iter_repair_stream(str(src), chunk_size=5))
+        assert len(records) == 1
+        parsed, _ = records[0]
+        assert m.assemble_marc(parsed)[20:24] == b"4500"
+
+    def test_invalid_utf8_byte_in_entry_map_fixed_via_cli(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(m, "detect_encoding", lambda path: "utf-8")
+        src = tmp_path / "badmap_invalid_utf8.mrc"
+        src.write_bytes(self._corrupted_entry_map_bytes_invalid_utf8())
+        out = tmp_path / "out.mrc"
+        log = tmp_path / "run.log"
+        rc = m.main([str(src), "-o", str(out), "--log", str(log)])
+        assert rc == 0
+        assert out.read_bytes()[20:24] == b"4500"
+
 
 # ---------------------------------------------------------------------------
 # add_default_245 -- placeholder 245 for records missing one entirely

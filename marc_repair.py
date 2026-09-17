@@ -1531,7 +1531,15 @@ def assemble_marc(parsed: ParsedRecord) -> bytes:
     # field for its length, once more as part of the whole record at the
     # end) -- this doubled encode() work was a real, measurable cost on
     # a real 91MB/48k-record file.
-    field_byte_chunks = [f.delimited().encode(encoding) for f in parsed.fields]
+    # errors="surrogateescape": a field's (or, below, the leader's own
+    # untouched bytes') text can contain a surrogate-escaped character if
+    # the source file had a corrupted byte that wasn't valid UTF-8 (see
+    # iter_repair_stream's matching comment) -- round-tripping it back to
+    # its original byte here, rather than raising, keeps that corruption
+    # exactly as harmless on the way out as it already is on the way in.
+    field_byte_chunks = [
+        f.delimited().encode(encoding, errors="surrogateescape") for f in parsed.fields
+    ]
     # build directory from field lengths (they must match declared lengths --
     # verified already during parsing, but recompute here to be self-consistent)
     dir_entries = []
@@ -1589,7 +1597,7 @@ def assemble_marc(parsed: ParsedRecord) -> bytes:
         # using real delimiters and looser leader checks instead) but must
         # not be written back out uncorrected.
     )
-    header = (new_leader + directory).encode(encoding)
+    header = (new_leader + directory).encode(encoding, errors="surrogateescape")
     return header + field_data_bytes + RECTERM.encode(encoding)
 
 
@@ -3307,14 +3315,22 @@ def repair_holdings_records(
             n_total += 1
             if on_record is not None:
                 on_record(n_total)
+            # errors="surrogateescape" here and below: rec_text is the raw,
+            # untouched original text, so it can still carry a
+            # surrogate-escaped byte from a source-file corruption that
+            # wasn't valid UTF-8 (see iter_repair_stream) -- round-tripping
+            # it back to that same original byte, rather than raising, is
+            # exactly what "passed through unchanged" already means here.
             if on_estimate is not None:
-                bytes_consumed_for_estimate += len(rec_text.encode(encoding_used))
+                bytes_consumed_for_estimate += len(
+                    rec_text.encode(encoding_used, errors="surrogateescape")
+                )
                 on_estimate(n_total, bytes_consumed_for_estimate)
 
             if parsed.unresolved:
                 reason = parsed.unresolved[0][3]
                 log("unresolved_record", False, i, "", f"passed through unchanged: {reason}")
-                out_fh.write(rec_text.encode(encoding_used))
+                out_fh.write(rec_text.encode(encoding_used, errors="surrogateescape"))
                 n_unresolved += 1
                 continue
 
@@ -3374,7 +3390,7 @@ def repair_holdings_records(
                 assembled = assemble_marc(parsed)
             except RepairError as exc:
                 log("oversized_unfixable", False, i, rec_id, f"passed through unchanged: {exc}")
-                out_fh.write(rec_text.encode(encoding_used))
+                out_fh.write(rec_text.encode(encoding_used, errors="surrogateescape"))
                 n_unresolved += 1
                 if rec_id:
                     id_records.append((i, rec_id, rec_text[:5]))
@@ -4022,7 +4038,10 @@ def main(argv: list[str] | None = None) -> int:
         log_entries.append(LogEntry(category, fixed, ts, record_idx, rec_id, detail))
 
     with open(out_path, "wb") as out_fh, \
-            (open(mrk_path, "w", encoding="utf-8") if mrk_path else _null_writer()) as mrk_fh:
+            (
+                open(mrk_path, "w", encoding="utf-8", errors="surrogateescape")
+                if mrk_path else _null_writer()
+            ) as mrk_fh:
         record_stream = iter_repair_stream(
             args.input,
             normalized_overrides,
@@ -4031,8 +4050,16 @@ def main(argv: list[str] | None = None) -> int:
         )
         for i, (parsed, rec_text) in enumerate(record_stream):
             n_total += 1
+            # errors="surrogateescape" here and below: rec_text is the raw,
+            # untouched original text, so it can still carry a
+            # surrogate-escaped byte from a source-file corruption that
+            # wasn't valid UTF-8 (see iter_repair_stream) -- round-tripping
+            # it back to that same original byte, rather than raising, is
+            # exactly what "passed through unchanged" already means here.
             if not progress.estimate_shown:
-                bytes_consumed_for_estimate += len(rec_text.encode(encoding_used))
+                bytes_consumed_for_estimate += len(
+                    rec_text.encode(encoding_used, errors="surrogateescape")
+                )
                 progress.maybe_print_estimate(n_total, bytes_consumed_for_estimate)
             progress.maybe_print(n_total)
             ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -4042,7 +4069,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"record {i}: UNRESOLVED ({reason}) -- passing through unchanged",
                       file=sys.stderr)
                 log("unresolved_record", False, i, "", f"passed through unchanged: {reason}")
-                out_fh.write(rec_text.encode(encoding_used))
+                out_fh.write(rec_text.encode(encoding_used, errors="surrogateescape"))
                 if mrk_fh:
                     mrk_fh.write("=UNRESOLVED  (passed through unchanged)\n\n")
                 n_unresolved += 1
@@ -4175,7 +4202,7 @@ def main(argv: list[str] | None = None) -> int:
                     print(f"record {i}: {exc} -- passing through unchanged",
                           file=sys.stderr)
                     log("oversized_unfixable", False, i, "", f"passed through unchanged: {exc}")
-                    out_fh.write(rec_text.encode(encoding_used))
+                    out_fh.write(rec_text.encode(encoding_used, errors="surrogateescape"))
                     if mrk_fh:
                         mrk_fh.write("=UNRESOLVED  (passed through unchanged)\n\n")
                     n_unresolved += 1
