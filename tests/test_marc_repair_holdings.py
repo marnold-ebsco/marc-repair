@@ -189,7 +189,9 @@ class TestRepairHoldingsRecords:
         # see LEADER_17_ENCODING_LEVEL_VALID_HOLDINGS.
         clean_leader = _HOLDINGS_LEADER[:17] + "u" + _HOLDINGS_LEADER[18:]
         result, out, log = self._run(tmp_path, [self._holdings_record(leader=clean_leader)])
-        assert result == {"total": 1, "unresolved": 0, "log_lines": 0, "not_fixed": 0}
+        assert result == {
+            "total": 1, "written": 1, "unresolved": 0, "log_lines": 0, "not_fixed": 0,
+        }
         assert m.count_records(str(out)) == 1
         assert not _resolve_log(log).exists()
 
@@ -411,7 +413,7 @@ class TestRepairHoldingsRecords:
         assert "holdings_multiple_004" in content
         assert "[INFORMATIONAL]" in content
 
-    def test_multiple_852_flagged_not_fixed(self, tmp_path):
+    def test_multiple_852_split_into_separate_records(self, tmp_path):
         fields = [
             m.Field_("004", None, None, content="local123"),
             m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
@@ -419,12 +421,62 @@ class TestRepairHoldingsRecords:
             m.Field_("852", "  ", [("b", "Annex"), ("h", "XYZ789")]),
         ]
         result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
-        assert result["not_fixed"] == 1
+        assert result["total"] == 1
+        assert result["written"] == 2
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert "holdings_multiple_852" in content
-        assert "[NOT FIXED]" in content
+        assert "[FIXED/REQUIRES ATTENTION]\tsplit_holdings_multiple_852" in content
+        assert m.count_records(str(out)) == 2
+        records = [
+            m.read_intact_record(text)
+            for text in out.read_bytes().decode("utf-8").split(m.RECTERM)[:-1]
+        ]
+        assert len(records) == 2
+        for rec in records:
+            assert sum(1 for f in rec.fields if f.tag == "852") == 1
+        b_values = {
+            data for rec in records for f in rec.fields if f.tag == "852"
+            for code, data in f.subfields if code == "b"
+        }
+        assert b_values == {"Main Library", "Annex"}
+
+    def test_multiple_852_incomplete_one_dropped_not_duplicated(self, tmp_path):
+        fields = [
+            m.Field_("004", None, None, content="local123"),
+            m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
+            m.Field_("852", "  ", [("b", "Main Library"), ("h", "ABC123")]),
+            m.Field_("852", "  ", [("a", "INT"), ("k", "Full text")]),
+        ]
+        result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
+        assert result["total"] == 1
+        assert result["written"] == 1
+        content = _resolve_log(log).read_text(encoding="utf-8")
+        assert "[NOT FIXED]\tincomplete_852" in content
+        assert "no $b" in content
+        assert "split_holdings_multiple_852" not in content
         parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
-        assert sum(1 for f in parsed.fields if f.tag == "852") == 2
+        f852s = [f for f in parsed.fields if f.tag == "852"]
+        assert len(f852s) == 1
+        assert ("b", "Main Library") in f852s[0].subfields
+
+    def test_single_852_with_no_b_not_touched(self, tmp_path):
+        # A lone 852 (no other 852 to be ambiguous against) is left
+        # alone here regardless of which subfield carries its location
+        # -- see `fix_missing_852_location` for the generic $a/$b/$c
+        # handling that already covers this case.
+        fields = [
+            m.Field_("004", None, None, content="local123"),
+            m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
+            m.Field_("852", "  ", [("a", "INT"), ("k", "Full text")]),
+        ]
+        result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
+        assert result["total"] == 1
+        assert result["written"] == 1
+        if _resolve_log(log).exists():
+            content = _resolve_log(log).read_text(encoding="utf-8")
+            assert "incomplete_852" not in content
+        parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
+        f852s = [f for f in parsed.fields if f.tag == "852"]
+        assert len(f852s) == 1
 
     def test_single_852_not_flagged(self, tmp_path):
         fields = [

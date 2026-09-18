@@ -2710,17 +2710,23 @@ def split_holdings_multiple_852(parsed: ParsedRecord) -> tuple[list[ParsedRecord
     every copy along with everything else; sorting that out is a
     separate, harder problem.
 
-    Returns `([parsed], [])` (as a one-element list, so a caller can
-    always iterate the first return value the same way whether or not
-    a split happened) when at most one 852 has a $b -- nothing to
-    split, whether that's because there was only one to begin with or
-    because dropping the incomplete ones left just one (or none).
+    Returns `([parsed], [])` unchanged (as a one-element list, so a
+    caller can always iterate the first return value the same way
+    whether or not a split happened) for a record with at most one
+    852 to begin with -- nothing to split, and the $b check above
+    doesn't apply either: a record with only one 852 isn't ambiguous
+    about which location is "the" location, regardless of which
+    subfield ($a/$b/$c -- see `fix_missing_852_location`) actually
+    carries it, so it's left alone here for that fix to handle
+    generically.
     """
+    indices_852 = [i for i, f in enumerate(parsed.fields) if f.tag == "852"]
+    if len(indices_852) <= 1:
+        return [parsed], []
     incomplete_details = []
     valid_indices = []
-    for i, f in enumerate(parsed.fields):
-        if f.tag != "852" or f.is_control():
-            continue
+    for i in indices_852:
+        f = parsed.fields[i]
         if any(code == "b" for code, _ in f.subfields):
             valid_indices.append(i)
             continue
@@ -3748,6 +3754,7 @@ _FIXED_REQUIRES_ATTENTION = {
     "recoded_852_b_to_i",
     "removed_extra_852_b",
     "removed_empty_852_subfield",
+    "split_holdings_multiple_852",
 }
 
 #: INFORMATIONAL, at the very bottom: a fix applied via a fixed
@@ -4011,10 +4018,17 @@ def repair_holdings_records(
         one is flagged INFORMATIONAL (category "holdings_multiple_004",
         since a legitimate multi-bib link isn't necessarily wrong) --
         see `_find_004_issues`; neither is ever invented or trimmed
-      * more than one 852 (Location) field is flagged NOT FIXED
-        (category "holdings_multiple_852") -- detect-only, never
-        trimmed; unlike 004's multiple case, this isn't downgraded to
-        INFORMATIONAL
+      * more than one 852 (Location) field is actually resolved --
+        see `split_holdings_multiple_852`: the record is split into
+        one output holdings record per usable ($b-bearing) 852, every
+        other field duplicated verbatim into each copy, flagged FIXED
+        (category "split_holdings_multiple_852"). An 852 with no $b
+        at all isn't duplicated into any copy -- there's no location
+        to split out -- it's dropped and flagged NOT FIXED instead
+        (category "incomplete_852"). This is the one point in this
+        pipeline where a single input record can produce more than
+        one output record; see `on_estimate`'s caller and the
+        returned "written" count below
       * more than one occurrence, WITHIN one 852, of a subfield the
         MARC 21 spec defines as Not Repeatable there (e.g. two $h --
         see `_852_NON_REPEATABLE_CODES` for the full list, and note $b/
@@ -4133,8 +4147,10 @@ def repair_holdings_records(
 
     A record that can't be structurally parsed at all is passed through
     unchanged, exactly like the main bib pipeline (category
-    "unresolved_record", NOT FIXED) -- the output always has the same
-    number of records as the input.
+    "unresolved_record", NOT FIXED) -- one output record either way.
+    The only case where output record count differs from input record
+    count is `split_holdings_multiple_852` above: one input record
+    with multiple usable 852s becomes multiple output records.
 
     `on_progress`/`on_record` mirror `split_bib_holdings`'s parameters
     of the same name -- liveness only, no effect on the repair.
@@ -4145,7 +4161,9 @@ def repair_holdings_records(
     cheap no-op every other call, the same way `main`'s own bib loop
     uses it.
 
-    Returns {"total": n, "unresolved": n, "log_lines": n, "not_fixed": n}.
+    Returns {"total": n, "written": n, "unresolved": n, "log_lines": n,
+    "not_fixed": n} -- "total" is input records read, "written" is
+    output records written (equal unless a split happened).
     """
     encoding_used = detect_encoding(input_path)
     holdings_required_a_tags = load_tag_list(DEFAULT_HOLDINGS_REQUIRED_A_TAGS_FILE)
@@ -4154,6 +4172,7 @@ def repair_holdings_records(
     pending_tag_fixes: list[tuple[int, int, int, str]] = []
     id_records: list[tuple[int, str, str]] = []
     n_total = 0
+    n_written = 0
     n_unresolved = 0
     bytes_consumed_for_estimate = 0
 
@@ -4186,6 +4205,7 @@ def repair_holdings_records(
                 log("unresolved_record", False, i, "", f"passed through unchanged: {reason}")
                 out_fh.write(rec_text.encode(encoding_used, errors="surrogateescape"))
                 n_unresolved += 1
+                n_written += 1
                 continue
 
             for tag, spaces_added in parsed.indicator_fixes:
@@ -4258,12 +4278,6 @@ def repair_holdings_records(
             n_004 = sum(1 for f in parsed.fields if f.tag == "004")
             for category, detail in _find_004_issues(n_004):
                 log(category, False, i, rec_id, detail)
-            n_852 = sum(1 for f in parsed.fields if f.tag == "852")
-            if n_852 > 1:
-                log(
-                    "holdings_multiple_852", False, i, rec_id,
-                    f"record has {n_852} 852 (Location) fields",
-                )
             for detail in find_852_duplicate_non_repeatable_subfields(parsed):
                 log("holdings_852_duplicate_nr_subfield", False, i, rec_id, detail)
             for detail in find_852_b_suspect_content(parsed):
@@ -4273,38 +4287,53 @@ def repair_holdings_records(
             for detail in find_856_missing_u(parsed):
                 log("holdings_856_missing_u", False, i, rec_id, detail)
 
+            records_to_write, incomplete_852_details = split_holdings_multiple_852(parsed)
+            for detail in incomplete_852_details:
+                log("incomplete_852", False, i, rec_id, detail)
+            if len(records_to_write) > 1:
+                log(
+                    "split_holdings_multiple_852", True, i, rec_id,
+                    f"record had {len(records_to_write) + len(incomplete_852_details)} "
+                    f"852 (Location) fields; split into {len(records_to_write)} "
+                    "holdings records, one per usable 852",
+                )
+
             try:
-                assembled = assemble_marc(parsed)
+                assembled_records = [assemble_marc(rec) for rec in records_to_write]
             except RepairError as exc:
                 log("oversized_unfixable", False, i, rec_id, f"passed through unchanged: {exc}")
                 out_fh.write(rec_text.encode(encoding_used, errors="surrogateescape"))
                 n_unresolved += 1
+                n_written += 1
                 if rec_id:
                     id_records.append((i, rec_id, rec_text[:5]))
                 continue
 
-            if len(assembled) > 99999:
-                log(
-                    "oversized_sentinel_fixed", True, i, rec_id,
-                    f"record is {len(assembled)} bytes; leader declares the "
-                    "MARC21 sentinel 99999 instead (real end is still found "
-                    "from the record terminator, nothing lost)",
-                )
-
-            offset = out_fh.tell()
-            out_fh.write(assembled)
             if rec_id:
-                id_records.append((i, rec_id, assembled[:5].decode("ascii")))
+                id_records.append((i, rec_id, assembled_records[0][:5].decode("ascii")))
 
-            has_invalid_tag = False
-            for f in parsed.fields:
-                if f.tag.isdigit():
-                    used_tags.add(f.tag)
-                else:
-                    has_invalid_tag = True
-            if has_invalid_tag:
-                rec_encoding = "utf-8" if parsed.leader[9:10] == "a" else "latin-1"
-                pending_tag_fixes.append((i, offset, len(assembled), rec_encoding))
+            for rec, assembled in zip(records_to_write, assembled_records):
+                if len(assembled) > 99999:
+                    log(
+                        "oversized_sentinel_fixed", True, i, rec_id,
+                        f"record is {len(assembled)} bytes; leader declares the "
+                        "MARC21 sentinel 99999 instead (real end is still found "
+                        "from the record terminator, nothing lost)",
+                    )
+
+                offset = out_fh.tell()
+                out_fh.write(assembled)
+                n_written += 1
+
+                has_invalid_tag = False
+                for f in rec.fields:
+                    if f.tag.isdigit():
+                        used_tags.add(f.tag)
+                    else:
+                        has_invalid_tag = True
+                if has_invalid_tag:
+                    rec_encoding = "utf-8" if rec.leader[9:10] == "a" else "latin-1"
+                    pending_tag_fixes.append((i, offset, len(assembled), rec_encoding))
 
     if pending_tag_fixes:
         replacement_tag = pick_unused_9xx_tag(used_tags)
@@ -4344,6 +4373,7 @@ def repair_holdings_records(
     n_not_fixed = sum(1 for e in log_entries if _section_for(e)[1] == "NOT FIXED")
     return {
         "total": n_total,
+        "written": n_written,
         "unresolved": n_unresolved,
         "log_lines": len(log_entries),
         "not_fixed": n_not_fixed,
@@ -4869,10 +4899,10 @@ def main(argv: list[str] | None = None) -> int:
         progress.finish()
         elapsed = time.perf_counter() - repair_start
         print(
-            f"Wrote {result['total']}/{result['total']} holdings record(s) to "
-            f"{out_path} ({result['total'] - result['unresolved']} "
-            f"corrected/passed clean, {result['unresolved']} passed through "
-            f"unchanged) in {elapsed:.2f}s"
+            f"Wrote {result['written']} holdings record(s) from "
+            f"{result['total']} input record(s) to {out_path} "
+            f"({result['total'] - result['unresolved']} corrected/passed clean, "
+            f"{result['unresolved']} passed through unchanged) in {elapsed:.2f}s"
         )
         if result["log_lines"]:
             print(

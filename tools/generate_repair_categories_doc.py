@@ -506,9 +506,21 @@ HOLDINGS_ROWS = [
         "-- (detect-only, no switch)",
     ),
     CategoryRow(
-        "Multiple 852 (Location) fields", "Flagged only, no change",
-        "detect-only", "`holdings_multiple_852`", "NOT FIXED", "**Yes**",
-        "-- (detect-only, no switch)",
+        "Multiple 852 (Location) fields, each with a usable $b",
+        "Record is split into one output holdings record per usable "
+        "852, every other field duplicated verbatim into each copy "
+        "(see `split_holdings_multiple_852`)",
+        "Yes, always", "`split_holdings_multiple_852`",
+        "FIXED/REQUIRES ATTENTION", "**Yes**",
+        "-- (no switch -- always runs and always logged)",
+    ),
+    CategoryRow(
+        "852 (Location) field with no $b (Sublocation) at all, in a "
+        "record that has more than one 852",
+        "Dropped entirely -- not duplicated into any split copy, "
+        "since there is no location to split out",
+        "Yes, always", "`incomplete_852`", "NOT FIXED", "**Yes**",
+        "-- (no switch -- always runs and always logged)",
     ),
     CategoryRow(
         "Unresolvable record (passed through unchanged)",
