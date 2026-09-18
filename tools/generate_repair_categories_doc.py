@@ -405,6 +405,22 @@ HOLDINGS_ROWS = [
         "-- (detect-only, no switch)",
     ),
     CategoryRow(
+        "853 (Captions and Pattern -- Basic) missing $8 (Field link "
+        "and sequence number) -- the subfield an 863 needs to find its "
+        "caption/pattern; also flagged by this institution's own "
+        "downstream FOLIO/transform validation",
+        "Flagged only, no change", "detect-only",
+        "`holdings_853_missing_8`", "NOT FIXED", "**Yes**",
+        "-- (detect-only, no switch)",
+    ),
+    CategoryRow(
+        "856 (Electronic Location and Access) missing $u (URI) -- same "
+        "real-world validation, same reasoning",
+        "Flagged only, no change", "detect-only",
+        "`holdings_856_missing_u`", "NOT FIXED", "**Yes**",
+        "-- (detect-only, no switch)",
+    ),
+    CategoryRow(
         "852 (Location) $h (call number) present but "
         "empty/punctuation-only", "Just the $h subfield removed; rest of "
         "the field left as-is", "Yes, always", "`removed_bad_call_number`",

@@ -2893,6 +2893,50 @@ HOLDINGS_CAPTION_PATTERN_TAGS = {"853", "854", "855"}
 HOLDINGS_CAPTION_PATTERN_VALID_CODES = frozenset({"a", "g", "i"})
 
 
+def find_853_missing_8(parsed: ParsedRecord) -> list[str]:
+    """Detect (never fix) an 853 (Captions and Pattern -- Basic) field
+    with no $8 (Field link and sequence number) -- the subfield that
+    links it to its corresponding 863 (Enumeration and Chronology --
+    Basic) field(s). Without it, an 863 has no reliable way to find the
+    caption/pattern that defines its structure -- a real issue flagged
+    by this institution's own downstream FOLIO/transform validation
+    ("853 subfield 8 not in field"). Flagged only, one detail line per
+    offending field (category "holdings_853_missing_8", NOT FIXED:
+    this tool has no way to invent a real, correct link/sequence
+    number).
+    """
+    details = []
+    for f in parsed.fields:
+        if f.tag != "853" or f.is_control():
+            continue
+        if any(code == "8" for code, _ in f.subfields):
+            continue
+        body = "".join(f"${code}{data}" for code, data in f.subfields)
+        details.append(f"={f.tag}  {f.indicators}{body} has no $8 subfield")
+    return details
+
+
+def find_856_missing_u(parsed: ParsedRecord) -> list[str]:
+    """Detect (never fix) an 856 (Electronic Location and Access)
+    field with no $u (URI) -- without one, there's no actual link for
+    the electronic access this field claims to describe. A real issue
+    this institution's own downstream FOLIO/transform validation
+    already flags ("Missing one or more required property in entity
+    electronicAccess (['uri'])"). Flagged only, one detail line per
+    offending field (category "holdings_856_missing_u", NOT FIXED:
+    this tool has no way to invent a real URL).
+    """
+    details = []
+    for f in parsed.fields:
+        if f.tag != "856" or f.is_control():
+            continue
+        if any(code == "u" for code, _ in f.subfields):
+            continue
+        body = "".join(f"${code}{data}" for code, data in f.subfields)
+        details.append(f"={f.tag}  {f.indicators}{body} has no $u subfield")
+    return details
+
+
 def _choose_kept_001(fields_for_tag: list[Field_], is_sirsi: bool) -> Field_:
     """A duplicated 001 in a Sierra/Symphony-sourced record (003
     content "SIRSI", case-insensitive) keeps whichever occurrence
@@ -3872,6 +3916,17 @@ def repair_holdings_records(
         "holdings_852_duplicate_nr_subfield") -- detect-only, never
         trimmed, same treatment as `holdings_multiple_004`; see
         `find_852_duplicate_non_repeatable_subfields`
+      * an 853 (Captions and Pattern -- Basic) field with no $8 (Field
+        link and sequence number) -- the subfield an 863 needs to find
+        its caption/pattern -- is flagged NOT FIXED (category
+        "holdings_853_missing_8"): a real issue this institution's own
+        downstream FOLIO/transform validation already flags, and this
+        tool has no way to invent a real link/sequence number; see
+        `find_853_missing_8`
+      * an 856 (Electronic Location and Access) field with no $u (URI)
+        is flagged NOT FIXED (category "holdings_856_missing_u"): same
+        real-world validation, same reasoning -- this tool has no way
+        to invent a real URL; see `find_856_missing_u`
       * 863/864/865/866/867/868 (Enumeration and Chronology / Textual
         Holdings, all three "levels") missing a non-empty, non-
         punctuation-only $a are removed the same way bib's
@@ -4097,6 +4152,10 @@ def repair_holdings_records(
                 )
             for detail in find_852_duplicate_non_repeatable_subfields(parsed):
                 log("holdings_852_duplicate_nr_subfield", False, i, rec_id, detail)
+            for detail in find_853_missing_8(parsed):
+                log("holdings_853_missing_8", False, i, rec_id, detail)
+            for detail in find_856_missing_u(parsed):
+                log("holdings_856_missing_u", False, i, rec_id, detail)
 
             try:
                 assembled = assemble_marc(parsed)
