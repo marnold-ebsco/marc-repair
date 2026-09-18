@@ -2681,6 +2681,39 @@ def fix_852_multiple_b(parsed: ParsedRecord) -> list[str]:
     return details
 
 
+def strip_empty_852_subfields(parsed: ParsedRecord) -> list[str]:
+    """Remove a subfield within an 852 (Location) field that has no
+    data at all -- e.g. a bare `$2` with nothing after it. Excludes
+    $h (Classification part): that's already handled specifically by
+    `fix_852_call_number`, which distinguishes "present but empty"
+    (removed, its own more specific "removed_bad_call_number" message)
+    from "missing entirely" (left alone, just flagged
+    "missing_call_number") -- this generic pass touching $h too would
+    blur that distinction for no benefit, since `fix_852_call_number`
+    already leaves no empty $h behind it. Meant to run after
+    `fix_852_multiple_b`/`fix_852_call_number`/`fix_missing_852_location`
+    (see `repair_holdings_records`) so those more specific fixes see
+    each field's original shape first; this only mops up whatever
+    they left behind. Returns one detail string per affected field
+    (category "removed_empty_852_subfield" -- FIXED/REQUIRES
+    ATTENTION, same as the rest of this file's 852 content fixes).
+    """
+    details = []
+    for f in parsed.fields:
+        if f.tag != "852" or f.is_control():
+            continue
+        removed_codes = [code for code, data in f.subfields if not data and code != "h"]
+        if not removed_codes:
+            continue
+        body = "".join(f"${code}{data}" for code, data in f.subfields)
+        f.subfields = [(code, data) for code, data in f.subfields if data or code == "h"]
+        removed = ", ".join(f"${c}" for c in removed_codes)
+        details.append(
+            f"removed empty subfield(s) {removed} from ={f.tag}  {f.indicators}{body}"
+        )
+    return details
+
+
 #: 852 (Location) subfield codes the LC MARC 21 holdings spec defines
 #: as Not Repeatable (https://www.loc.gov/marc/holdings/hd852.html) --
 #: unlike $b/$c (both officially Repeatable there, though real
@@ -3532,6 +3565,7 @@ _FIXED_REQUIRES_ATTENTION = {
     "added_missing_852_location",
     "removed_bad_call_number",
     "fixed_852_multiple_b",
+    "removed_empty_852_subfield",
 }
 
 #: INFORMATIONAL, at the very bottom: a fix applied via a fixed
@@ -3856,6 +3890,13 @@ def repair_holdings_records(
         --fix-missing-852c), an 852 (Location) field missing $c
         (shelving location) gets a placeholder $c appended (see
         `add_missing_852c`)
+      * any remaining subfield within an 852 that has no data at all
+        (e.g. a bare $2 with nothing after it) is removed -- except
+        $h, already handled specifically above -- see
+        `strip_empty_852_subfields` (category
+        "removed_empty_852_subfield", FIXED/REQUIRES ATTENTION); runs
+        after all the other 852 content fixes above, so it only mops
+        up whatever they didn't already turn into something else
       * a non-numeric tag is renamed to an unused 9XX slot, same
         deferred two-pass approach `main` uses for bib records (needs
         every tag in the *holdings* file specifically, so this is
@@ -3995,6 +4036,8 @@ def repair_holdings_records(
             if fix_missing_852c:
                 for detail in add_missing_852c(parsed):
                     log("added_missing_852c", True, i, rec_id, detail)
+            for detail in strip_empty_852_subfields(parsed):
+                log("removed_empty_852_subfield", True, i, rec_id, detail)
             for f in parsed.fields:
                 if f.is_control():
                     continue

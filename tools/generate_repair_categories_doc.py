@@ -427,6 +427,13 @@ HOLDINGS_ROWS = [
         "INFORMATIONAL", "**Yes** (once enabled)", "`--fix-missing-852c`",
     ),
     CategoryRow(
+        "852 subfield present but with no data at all (e.g. a bare "
+        "$2), other than $h -- already handled specifically above",
+        "Subfield removed; rest of the field left as-is", "Yes, always",
+        "`removed_empty_852_subfield`", "FIXED/REQUIRES ATTENTION",
+        "**Yes**", "-- (no switch -- always runs and always logged)",
+    ),
+    CategoryRow(
         "Invalid (non-numeric) tag -> 9XX rename", "Renamed field tag",
         "Yes, always", "`invalid_tag`", "INFORMATIONAL", "**Yes**",
         "-- (no switch -- always runs and always logged)",

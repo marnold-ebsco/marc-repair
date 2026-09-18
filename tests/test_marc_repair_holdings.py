@@ -265,7 +265,10 @@ class TestRepairHoldingsRecords:
         assert "fixed_misplaced_subfield_code" in content
 
     def test_null_identifier_flagged_not_fixed(self, tmp_path):
-        # $b is the null identifier under test; $a is real, non-empty
+        # $b is the null identifier under test, on a field OTHER than
+        # 852 -- 852's own empty subfields are now actively fixed (see
+        # strip_empty_852_subfields), so isolating this generic,
+        # detect-only path needs a different tag. $a is real, non-empty
         # data so the field survives strip_empty_fields (a field with
         # ONLY an empty subfield is dropped entirely and silently --
         # see strip_empty_fields -- so isolating the null-identifier
@@ -273,7 +276,8 @@ class TestRepairHoldingsRecords:
         fields = [
             m.Field_("004", None, None, content="ocm123"),
             m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
-            m.Field_("852", "  ", [("a", "Main Library"), ("b", ""), ("h", "ABC123")]),
+            m.Field_("852", "  ", [("a", "Main Library"), ("h", "ABC123")]),
+            m.Field_("500", "  ", [("a", "Main Library"), ("b", "")]),
         ]
         result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
         assert result["not_fixed"] == 1
@@ -951,6 +955,50 @@ class TestRepairHoldingsRecords:
         if _resolve_log(log).exists():
             content = _resolve_log(log).read_text(encoding="utf-8")
             assert "holdings_852_duplicate_nr_subfield" not in content
+
+    def test_empty_852_subfield_removed_and_flagged_fixed(self, tmp_path):
+        fields = [
+            m.Field_("004", None, None, content="ocm123"),
+            m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
+            m.Field_("852", "  ", [
+                ("b", "OFC Main"), ("h", "ABC123"), ("2", ""), ("z", "keep this"),
+            ]),
+        ]
+        result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
+        content = _resolve_log(log).read_text(encoding="utf-8")
+        assert "removed_empty_852_subfield" in content
+        assert "[FIXED/REQUIRES ATTENTION]" in content
+        assert "holdings_null_identifier" not in content
+        parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
+        f852 = next(f for f in parsed.fields if f.tag == "852")
+        assert not any(code == "2" for code, _ in f852.subfields)
+        assert ("z", "keep this") in f852.subfields
+        assert ("b", "OFC Main") in f852.subfields
+
+    def test_empty_852_h_not_touched_by_generic_strip(self, tmp_path):
+        # Empty $h is handled specifically by fix_852_call_number
+        # (category "removed_bad_call_number") -- the generic strip
+        # must not also touch it or double-log it.
+        fields = [
+            m.Field_("004", None, None, content="ocm123"),
+            m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
+            m.Field_("852", "  ", [("b", "OFC Main"), ("h", "")]),
+        ]
+        result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
+        content = _resolve_log(log).read_text(encoding="utf-8")
+        assert "removed_bad_call_number" in content
+        assert "removed_empty_852_subfield" not in content
+
+    def test_no_empty_852_subfield_is_noop(self, tmp_path):
+        fields = [
+            m.Field_("004", None, None, content="ocm123"),
+            m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
+            m.Field_("852", "  ", [("b", "OFC Main"), ("h", "ABC123")]),
+        ]
+        result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
+        if _resolve_log(log).exists():
+            content = _resolve_log(log).read_text(encoding="utf-8")
+            assert "removed_empty_852_subfield" not in content
 
     def test_repairs_real_short_bucknell_holdings_file(self):
         # Regression/integration check against real production data
