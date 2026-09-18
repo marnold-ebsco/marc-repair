@@ -150,7 +150,7 @@ import re
 import sys
 import time
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from typing import Callable, Iterator
 
@@ -2712,6 +2712,12 @@ def split_holdings_multiple_852(parsed: ParsedRecord) -> tuple[list[ParsedRecord
     every copy along with everything else; sorting that out is a
     separate, harder problem.
 
+    The first copy keeps field 001's content exactly as it was on the
+    source record; every copy after that gets "-2", "-3", etc.
+    appended to it (see `_suffix_holdings_identifier`) -- otherwise
+    every copy would share the exact same identifier, which is itself
+    a real defect this tool flags elsewhere (`find_duplicate_identifiers`).
+
     Returns `([parsed], [])` unchanged (as a one-element list, so a
     caller can always iterate the first return value the same way
     whether or not a split happened) for a record with at most one
@@ -2746,14 +2752,32 @@ def split_holdings_multiple_852(parsed: ParsedRecord) -> tuple[list[ParsedRecord
         record = ParsedRecord(leader=parsed.leader, entries=list(parsed.entries), fields=fields)
         return [record], incomplete_details
     copies = []
-    for keep_idx in valid_indices:
+    for copy_num, keep_idx in enumerate(valid_indices, start=1):
         insert_at = sum(1 for i, _ in other_fields if i < keep_idx)
         fields = [f for _, f in other_fields]
         fields.insert(insert_at, parsed.fields[keep_idx])
+        if copy_num > 1:
+            fields = _suffix_holdings_identifier(fields, f"-{copy_num}")
         copies.append(
             ParsedRecord(leader=parsed.leader, entries=list(parsed.entries), fields=fields)
         )
     return copies, incomplete_details
+
+
+def _suffix_holdings_identifier(fields: list[Field_], suffix: str) -> list[Field_]:
+    """Return `fields` with field 001's content suffixed -- used by
+    `split_holdings_multiple_852` to give each additional holdings
+    record its own distinct identifier rather than sharing the source
+    record's 001 verbatim with every other copy. Builds a new Field_
+    (via `dataclasses.replace`) rather than mutating in place, since
+    the 001 Field_ instance being replaced here is the SAME object
+    shared across every copy's own `fields` list -- mutating it would
+    change every other copy's 001 too. No-op if there's no 001 field
+    at all."""
+    return [
+        replace(f, content=(f.content or "") + suffix) if f.tag == "001" else f
+        for f in fields
+    ]
 
 
 def strip_empty_852_subfields(parsed: ParsedRecord) -> list[str]:
@@ -4029,10 +4053,12 @@ def repair_holdings_records(
         (category "split_holdings_multiple_852"). An 852 with no $b
         at all isn't duplicated into any copy -- there's no location
         to split out -- it's dropped and flagged NOT FIXED instead
-        (category "incomplete_852"). This is the one point in this
-        pipeline where a single input record can produce more than
-        one output record; see `on_estimate`'s caller and the
-        returned "written" count below
+        (category "incomplete_852"). Every copy after the first gets
+        "-2", "-3", etc. appended to field 001, so they no longer
+        share one identifier (see `_suffix_holdings_identifier`).
+        This is the one point in this pipeline where a single input
+        record can produce more than one output record; see
+        `on_estimate`'s caller and the returned "written" count below
       * more than one occurrence, WITHIN one 852, of a subfield the
         MARC 21 spec defines as Not Repeatable there (e.g. two $h --
         see `_852_NON_REPEATABLE_CODES` for the full list, and note $b/

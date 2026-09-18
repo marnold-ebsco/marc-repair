@@ -439,6 +439,33 @@ class TestRepairHoldingsRecords:
         }
         assert b_values == {"Main Library", "Annex"}
 
+    def test_multiple_852_split_copies_get_suffixed_001(self, tmp_path):
+        fields = [
+            m.Field_("001", None, None, content="12345"),
+            m.Field_("004", None, None, content="local123"),
+            m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
+            m.Field_("852", "  ", [("b", "Main Library"), ("h", "ABC123")]),
+            m.Field_("852", "  ", [("b", "Annex"), ("h", "XYZ789")]),
+            m.Field_("852", "  ", [("b", "Storage"), ("h", "QRS456")]),
+        ]
+        result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
+        assert result["written"] == 3
+        records = [
+            m.read_intact_record(text)
+            for text in out.read_bytes().decode("utf-8").split(m.RECTERM)[:-1]
+        ]
+        by_b = {
+            next(data for code, data in f.subfields if code == "b"): next(
+                fld.content for fld in rec.fields if fld.tag == "001"
+            )
+            for rec in records for f in rec.fields if f.tag == "852"
+        }
+        assert by_b == {
+            "Main Library": "12345",
+            "Annex": "12345-2",
+            "Storage": "12345-3",
+        }
+
     def test_multiple_852_incomplete_one_dropped_not_duplicated(self, tmp_path):
         fields = [
             m.Field_("004", None, None, content="local123"),

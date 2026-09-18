@@ -510,8 +510,10 @@ HOLDINGS_ROWS = [
     CategoryRow(
         "Multiple 852 (Location) fields, each with a usable $b",
         "Record is split into one output holdings record per usable "
-        "852, every other field duplicated verbatim into each copy "
-        "(see `split_holdings_multiple_852`)",
+        "852, every other field duplicated verbatim into each copy; "
+        "every copy after the first gets \"-2\", \"-3\", etc. appended "
+        "to field 001 so they no longer share one identifier (see "
+        "`split_holdings_multiple_852`)",
         "Yes, always", "`split_holdings_multiple_852`",
         "FIXED/REQUIRES ATTENTION", "**Yes**",
         "-- (no switch -- always runs and always logged)",
