@@ -2554,6 +2554,173 @@ def fix_852_call_number(parsed: ParsedRecord) -> tuple[list[str], list[str]]:
     return removed_details, missing_details
 
 
+#: Matches a $b (Sublocation) subfield's content that looks like an LC
+#: cutter number/call-number fragment rather than a real location code
+#: -- either the standard cutter-number shape (optional leading period,
+#: one uppercase letter, then a digit -- e.g. ".K487", "A96 1983") or a
+#: bare classification-style token with no spaces (e.g. "KGL104"). Real
+#: location codes in production data are textual department/collection
+#: abbreviations (e.g. "OFC Main", "B.REF", "LAW REF") that never take
+#: this shape -- see `_is_852_b_non_location`.
+_852_CUTTER_OR_CLASS_PATTERN = re.compile(r"^\.?[A-Z]\d|^[A-Z]{1,4}\d+(\.\d+)?$")
+
+
+def _is_852_b_non_location(data: str) -> bool:
+    """True if a $b (Sublocation) subfield's own content looks like
+    something OTHER than a location code: empty/punctuation-only (see
+    `_is_punctuation_only`), or matching `_852_CUTTER_OR_CLASS_PATTERN`.
+    Used only to pick which of an 852's multiple $b's to discard when
+    neither one's position (before/after $h) already settles it -- see
+    `fix_852_multiple_b`.
+    """
+    return not data or _is_punctuation_only(data) or bool(
+        _852_CUTTER_OR_CLASS_PATTERN.match(data)
+    )
+
+
+def fix_852_multiple_b(parsed: ParsedRecord) -> list[str]:
+    """Fix an 852 (Location) field with more than one $b (Sublocation)
+    subfield -- $b isn't meant to repeat, so this is always some kind
+    of miscoding. Four cases, tried in order:
+
+      1. All of the $b's have the exact same content (e.g.
+         `$bOFC Main$bOFC Main...`) -- a plain duplicate, not two
+         competing candidates, so this is the one case where there's no
+         real ambiguity at all: every extra copy is removed, keeping
+         just the first.
+      2. Exactly two *distinct* $b's, $h is present, one $b comes
+         before $h (the real sublocation) and the other comes after
+         it, and there's no $i (Item part) already -- the second $b is
+         actually the cutter number/date/copy note that goes with $h's
+         classification, just miscoded, e.g.
+         `$bOFC Main$hZ678.9 A2$bA96 1983` -- recoded to $i instead of
+         removed, since it's real, recoverable data (a real, common
+         defect: 63 of 114 852s with multiple $b in one 79,853-record
+         export had exactly this shape; none of them were also
+         case 1's plain-duplicate shape, so recoding never risks
+         turning a duplicated location into a fake item part).
+      3. Otherwise, if exactly one of the remaining distinct $b's looks
+         like something other than a location code (see
+         `_is_852_b_non_location`) -- e.g. the trailing `.K487` in
+         `$bOFC PER$hMicrofilm:$i1981-1982$zQA76.5$b.K487` -- that one
+         specifically is removed, keeping the real location.
+      4. Otherwise -- every $b looks equally location-like (e.g.
+         `$bLAW$bLAW REF...`) or none does -- there's no principled way
+         to pick a winner, so the LAST $b is removed as an arbitrary
+         fallback; no worse than leaving an 852 with two, and flagged
+         for a human either way.
+
+    All four cases are logged the same way by the caller (category
+    "fixed_852_multiple_b", FIXED/REQUIRES ATTENTION: real data was
+    reinterpreted or discarded, worth a second look) -- the returned
+    detail string says which of the four actually happened (case 1 is
+    worded distinctly from case 4: "duplicate" rather than "no way to
+    tell", since case 1 is actually certain, not a guess). No-op for an
+    852 with at most one $b.
+    """
+    details = []
+    for f in parsed.fields:
+        if f.tag != "852" or f.is_control():
+            continue
+        codes = [code for code, _ in f.subfields]
+        if codes.count("b") <= 1:
+            continue
+        body = "".join(f"${code}{data}" for code, data in f.subfields)
+        b_indices = [idx for idx, (code, _) in enumerate(f.subfields) if code == "b"]
+        b_values = {f.subfields[idx][1] for idx in b_indices}
+        if len(b_values) == 1:
+            dup_value = next(iter(b_values))
+            keep_first = b_indices[0]
+            f.subfields = [
+                sf for idx, sf in enumerate(f.subfields)
+                if idx == keep_first or idx not in b_indices
+            ]
+            details.append(
+                f"removed duplicate 852 $b {dup_value!r} from "
+                f"={f.tag}  {f.indicators}{body} "
+                "(identical to another $b already in this field)"
+            )
+            continue
+        h_idx = codes.index("h") if "h" in codes else -1
+        b_before_h = h_idx >= 0 and codes[:h_idx].count("b")
+        b_after_h = h_idx >= 0 and codes[h_idx + 1:].count("b")
+        if (
+            codes.count("b") == 2 and "i" not in codes
+            and b_before_h == 1 and b_after_h == 1
+        ):
+            seen_h = False
+            renamed_value = None
+            new_subfields = []
+            for code, data in f.subfields:
+                if code == "h":
+                    seen_h = True
+                    new_subfields.append((code, data))
+                elif code == "b" and seen_h:
+                    renamed_value = data
+                    new_subfields.append(("i", data))
+                else:
+                    new_subfields.append((code, data))
+            f.subfields = new_subfields
+            details.append(
+                f"recoded 852 $b {renamed_value!r} (after $h, no existing $i) as $i"
+            )
+            continue
+        non_location = [idx for idx in b_indices if _is_852_b_non_location(f.subfields[idx][1])]
+        if len(non_location) == 1:
+            drop_idx = non_location[0]
+            reason = "doesn't look like a location code"
+        else:
+            drop_idx = b_indices[-1]
+            reason = "no way to tell which $b is the real location; removed the last one"
+        dropped_value = f.subfields[drop_idx][1]
+        f.subfields = [sf for idx, sf in enumerate(f.subfields) if idx != drop_idx]
+        details.append(
+            f"removed extra 852 $b {dropped_value!r} from ={f.tag}  {f.indicators}{body} "
+            f"({reason})"
+        )
+    return details
+
+
+#: 852 (Location) subfield codes the LC MARC 21 holdings spec defines
+#: as Not Repeatable (https://www.loc.gov/marc/holdings/hd852.html) --
+#: unlike $b/$c (both officially Repeatable there, though real
+#: production data shows this file only ever misuses that
+#: repeatability -- see `fix_852_multiple_b`), more than one occurrence
+#: of any of these in the same 852 is a genuine structural violation,
+#: not just an institutional-convention one.
+_852_NON_REPEATABLE_CODES = frozenset({
+    "a", "h", "j", "l", "n", "p", "q", "t", "2", "3", "6", "8",
+})
+
+
+def find_852_duplicate_non_repeatable_subfields(parsed: ParsedRecord) -> list[str]:
+    """Detect (never fix) an 852 (Location) field with more than one
+    occurrence of a subfield the spec defines as Not Repeatable (see
+    `_852_NON_REPEATABLE_CODES`) -- e.g. two $h (Classification part).
+    Flagged only, one detail line per offending code per field -- see
+    `repair_holdings_records` (category
+    "holdings_852_duplicate_nr_subfield", INFORMATIONAL: not touched,
+    just surfaced, same treatment as `holdings_multiple_004`). No
+    occurrences of this were found in a real 79,853-record holdings
+    export, but the check exists because the violation is unambiguous
+    by spec regardless of what any one file happens to contain.
+    """
+    details = []
+    for f in parsed.fields:
+        if f.tag != "852" or f.is_control():
+            continue
+        codes = [code for code, _ in f.subfields]
+        for code in sorted(_852_NON_REPEATABLE_CODES):
+            n = codes.count(code)
+            if n > 1:
+                body = "".join(f"${c}{d}" for c, d in f.subfields)
+                details.append(
+                    f"={f.tag}  {f.indicators}{body} has {n} ${code} subfields "
+                    f"(${code} is Not Repeatable per the MARC 21 852 spec)"
+                )
+    return details
+
+
 def add_missing_852c(parsed: ParsedRecord) -> list[str]:
     """Append subfield $c (shelving location) to every 852 (Location)
     field that's missing it, with placeholder content
@@ -3364,6 +3531,7 @@ _FIXED_REQUIRES_ATTENTION = {
     "reattached_orphaned_field",
     "added_missing_852_location",
     "removed_bad_call_number",
+    "fixed_852_multiple_b",
 }
 
 #: INFORMATIONAL, at the very bottom: a fix applied via a fixed
@@ -3382,6 +3550,7 @@ _INFORMATIONAL = {
     "added_default_holdings_008",
     "added_missing_852c",
     "holdings_multiple_004",
+    "holdings_852_duplicate_nr_subfield",
     "added_default_245",
     "leader_byte_defaulted",
     "leader_entry_map_fixed",
@@ -3628,6 +3797,15 @@ def repair_holdings_records(
         (category "holdings_multiple_852") -- detect-only, never
         trimmed; unlike 004's multiple case, this isn't downgraded to
         INFORMATIONAL
+      * more than one occurrence, WITHIN one 852, of a subfield the
+        MARC 21 spec defines as Not Repeatable there (e.g. two $h --
+        see `_852_NON_REPEATABLE_CODES` for the full list, and note $b/
+        $c are deliberately excluded: both are officially Repeatable,
+        unlike the pattern `fix_852_multiple_b` above actually corrects)
+        is flagged INFORMATIONAL (category
+        "holdings_852_duplicate_nr_subfield") -- detect-only, never
+        trimmed, same treatment as `holdings_multiple_004`; see
+        `find_852_duplicate_non_repeatable_subfields`
       * 863/864/865/866/867/868 (Enumeration and Chronology / Textual
         Holdings, all three "levels") missing a non-empty, non-
         punctuation-only $a are removed the same way bib's
@@ -3639,6 +3817,24 @@ def repair_holdings_records(
         for a chronology-only pattern with no enumeration captions at
         all. Both logged as "field_removed_because_missing_a", same
         category as the bib pipeline's equivalent
+      * an 852 (Location) with more than one $b (Sublocation) subfield
+        is always fixed down to one (see `fix_852_multiple_b`): if
+        every $b has the exact same content, all but the first are
+        just removed as a plain duplicate (the one genuinely
+        unambiguous case, worded distinctly in the log -- "duplicate",
+        not "no way to tell"); otherwise, if there's exactly two
+        distinct $b's, $h is present, one $b is before it and the
+        other after, and there's no $i (Item part) already, the second
+        $b is recoded to $i instead -- it's actually the cutter
+        number/date/copy note that goes with $h's classification, just
+        miscoded; otherwise, if exactly one $b looks like something
+        other than a location code (see `_is_852_b_non_location`) that
+        one is removed and the real location kept; otherwise (every
+        remaining $b looks equally location-like, or none does) the
+        last one is removed as an arbitrary fallback. All four land
+        under the same category, "fixed_852_multiple_b", FIXED/REQUIRES
+        ATTENTION -- real data was reinterpreted or discarded, worth a
+        second look regardless of which of the four happened
       * 852 (Location)'s $h (Classification part -- the call number) is
         handled two ways depending on what's actually wrong (see
         `fix_852_call_number`): present but unusable (empty or
@@ -3787,6 +3983,8 @@ def repair_holdings_records(
                 log("added_default_holdings_008", True, i, rec_id, detail)
             for detail in fix_008_length(parsed, expected_len=HOLDINGS_008_LENGTH):
                 log("fixed_holdings_008_length", True, i, rec_id, detail)
+            for detail in fix_852_multiple_b(parsed):
+                log("fixed_852_multiple_b", True, i, rec_id, detail)
             removed_call_number, missing_call_number = fix_852_call_number(parsed)
             for detail in removed_call_number:
                 log("removed_bad_call_number", True, i, rec_id, detail)
@@ -3816,6 +4014,8 @@ def repair_holdings_records(
                     "holdings_multiple_852", False, i, rec_id,
                     f"record has {n_852} 852 (Location) fields",
                 )
+            for detail in find_852_duplicate_non_repeatable_subfields(parsed):
+                log("holdings_852_duplicate_nr_subfield", False, i, rec_id, detail)
 
             try:
                 assembled = assemble_marc(parsed)

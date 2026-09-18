@@ -374,6 +374,29 @@ HOLDINGS_ROWS = [
         "pattern",
     ),
     CategoryRow(
+        "852 (Location) with more than one $b (Sublocation) -- note $b "
+        "is officially Repeatable per the MARC 21 852 spec, but real "
+        "data confirms this file only ever misuses that repeatability",
+        "If every $b is identical, all but the first are just removed "
+        "(a plain duplicate); otherwise recoded to $i if it's an "
+        "unambiguous before/after-$h cutter shape with no $i yet; "
+        "otherwise the one that doesn't look like a location code is "
+        "removed if exactly one doesn't; otherwise the last $b is "
+        "removed as an arbitrary fallback",
+        "Yes, always", "`fixed_852_multiple_b`", "FIXED/REQUIRES ATTENTION",
+        "**Yes**", "-- (no switch -- always runs and always logged)",
+    ),
+    CategoryRow(
+        "852 (Location) with more than one occurrence of a subfield "
+        "the MARC 21 spec defines as Not Repeatable there (e.g. two "
+        "$h -- see `_852_NON_REPEATABLE_CODES`; deliberately excludes "
+        "$b/$c, both officially Repeatable, unlike the row above)",
+        "Flagged only, no change", "detect-only",
+        "`holdings_852_duplicate_nr_subfield`", "INFORMATIONAL",
+        "**Yes** (no informational gate for holdings)",
+        "-- (detect-only, no switch)",
+    ),
+    CategoryRow(
         "852 (Location) $h (call number) present but "
         "empty/punctuation-only", "Just the $h subfield removed; rest of "
         "the field left as-is", "Yes, always", "`removed_bad_call_number`",

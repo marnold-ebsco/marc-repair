@@ -773,6 +773,185 @@ class TestRepairHoldingsRecords:
         f852 = next(f for f in parsed.fields if f.tag == "852")
         assert ("b", "Annex") in f852.subfields
 
+    def test_multiple_b_after_h_recoded_to_i(self, tmp_path):
+        fields = [
+            m.Field_("004", None, None, content="ocm123"),
+            m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
+            m.Field_("852", "  ", [
+                ("b", "OFC Main"), ("h", "Z678.9 A2"), ("b", "A96 1983"),
+            ]),
+        ]
+        result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
+        content = _resolve_log(log).read_text(encoding="utf-8")
+        assert "fixed_852_multiple_b" in content
+        assert "[FIXED/REQUIRES ATTENTION]" in content
+        assert "recoded" in content
+        parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
+        f852 = next(f for f in parsed.fields if f.tag == "852")
+        assert ("i", "A96 1983") in f852.subfields
+        assert sum(1 for code, _ in f852.subfields if code == "b") == 1
+        assert ("b", "OFC Main") in f852.subfields
+
+    def test_multiple_b_not_recoded_when_i_already_present(self, tmp_path):
+        # Same before/after-$h shape, but $i is already there -- must
+        # NOT recode (would overwrite real item-part data); falls
+        # through to the non-location/fallback removal instead.
+        fields = [
+            m.Field_("004", None, None, content="ocm123"),
+            m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
+            m.Field_("852", "  ", [
+                ("b", "LAW"), ("b", "LAW REF"), ("h", "K120"), ("i", ".M69 1993"),
+            ]),
+        ]
+        result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
+        parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
+        f852 = next(f for f in parsed.fields if f.tag == "852")
+        assert ("i", ".M69 1993") in f852.subfields
+        assert sum(1 for code, _ in f852.subfields if code == "b") == 1
+
+    def test_multiple_b_non_location_value_removed(self, tmp_path):
+        # Second $b looks like a bare cutter fragment, not a location --
+        # removed outright rather than recoded (the before/after-$h
+        # shape doesn't apply here: this one has no $h at all).
+        fields = [
+            m.Field_("004", None, None, content="ocm123"),
+            m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
+            m.Field_("852", "  ", [
+                ("b", "OFC SC"), ("k", "B"), ("b", "KGL104"), ("i", ".K66 1992"),
+            ]),
+        ]
+        result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
+        content = _resolve_log(log).read_text(encoding="utf-8")
+        assert "fixed_852_multiple_b" in content
+        assert "doesn't look like a location code" in content
+        parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
+        f852 = next(f for f in parsed.fields if f.tag == "852")
+        assert ("b", "OFC SC") in f852.subfields
+        assert not any(code == "b" and data == "KGL104" for code, data in f852.subfields)
+        assert sum(1 for code, _ in f852.subfields if code == "b") == 1
+
+    def test_multiple_b_exact_duplicate_collapsed(self, tmp_path):
+        # Both $b's are identical -- unlike a genuine ambiguity between
+        # two different candidates, this is actually certain, so it
+        # gets its own, more specific log message.
+        fields = [
+            m.Field_("004", None, None, content="ocm123"),
+            m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
+            m.Field_("852", "  ", [
+                ("b", "OFC Main"), ("b", "OFC Main"), ("h", "NA3760"), ("i", ".L46 1998"),
+            ]),
+        ]
+        result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
+        content = _resolve_log(log).read_text(encoding="utf-8")
+        assert "fixed_852_multiple_b" in content
+        assert "identical to another $b already in this field" in content
+        assert "no way to tell which $b is the real location" not in content
+        parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
+        f852 = next(f for f in parsed.fields if f.tag == "852")
+        assert sum(1 for code, _ in f852.subfields if code == "b") == 1
+        assert ("b", "OFC Main") in f852.subfields
+        assert ("i", ".L46 1998") in f852.subfields
+
+    def test_multiple_b_ambiguous_removes_last(self, tmp_path):
+        # Neither $b looks more or less like a location than the
+        # other -- no principled way to choose, so the last one is
+        # dropped as an arbitrary (but flagged) fallback.
+        fields = [
+            m.Field_("004", None, None, content="ocm123"),
+            m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
+            m.Field_("852", "  ", [
+                ("b", "LAW"), ("b", "LAW REF"), ("h", "K120"), ("i", ".M69 1993"),
+            ]),
+        ]
+        result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
+        content = _resolve_log(log).read_text(encoding="utf-8")
+        assert "no way to tell which $b is the real location" in content
+        parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
+        f852 = next(f for f in parsed.fields if f.tag == "852")
+        assert ("b", "LAW") in f852.subfields
+        assert not any(code == "b" and data == "LAW REF" for code, data in f852.subfields)
+
+    def test_multiple_b_empty_second_b_removed(self, tmp_path):
+        fields = [
+            m.Field_("004", None, None, content="ocm123"),
+            m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
+            m.Field_("852", "  ", [
+                ("b", "OFC SC"), ("b", ""), ("h", "PE1068.B3"), ("i", "R35 1990"),
+            ]),
+        ]
+        result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
+        parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
+        f852 = next(f for f in parsed.fields if f.tag == "852")
+        assert ("b", "OFC SC") in f852.subfields
+        assert sum(1 for code, _ in f852.subfields if code == "b") == 1
+
+    def test_single_b_untouched(self, tmp_path):
+        fields = [
+            m.Field_("004", None, None, content="ocm123"),
+            m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
+            m.Field_("852", "  ", [("b", "OFC Main"), ("h", "ABC123")]),
+        ]
+        result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
+        if _resolve_log(log).exists():
+            content = _resolve_log(log).read_text(encoding="utf-8")
+            assert "fixed_852_multiple_b" not in content
+
+    def test_duplicate_h_flagged_informational_and_left_alone(self, tmp_path):
+        # $h (Classification part) is Not Repeatable per the MARC 21
+        # 852 spec -- unlike $b/$c, which ARE officially repeatable
+        # there (see fix_852_multiple_b's own docstring), so a second
+        # $h is a genuine structural violation. Detect-only: flagged,
+        # never touched.
+        fields = [
+            m.Field_("004", None, None, content="ocm123"),
+            m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
+            m.Field_("852", "  ", [
+                ("b", "OFC Main"), ("h", "Z678.9"), ("h", "A2 1983"),
+            ]),
+        ]
+        result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
+        content = _resolve_log(log).read_text(encoding="utf-8")
+        assert "holdings_852_duplicate_nr_subfield" in content
+        assert "$h is Not Repeatable" in content
+        assert "[INFORMATIONAL]" in content
+        parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
+        f852 = next(f for f in parsed.fields if f.tag == "852")
+        assert ("h", "Z678.9") in f852.subfields
+        assert ("h", "A2 1983") in f852.subfields
+        assert sum(1 for code, _ in f852.subfields if code == "h") == 2
+
+    def test_duplicate_t_flagged_informational(self, tmp_path):
+        # A second non-repeatable code besides $h, to confirm the check
+        # isn't hardcoded to $h specifically.
+        fields = [
+            m.Field_("004", None, None, content="ocm123"),
+            m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
+            m.Field_("852", "  ", [
+                ("b", "OFC Main"), ("h", "ABC123"), ("t", "1"), ("t", "2"),
+            ]),
+        ]
+        result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
+        content = _resolve_log(log).read_text(encoding="utf-8")
+        assert "holdings_852_duplicate_nr_subfield" in content
+        assert "$t is Not Repeatable" in content
+
+    def test_duplicate_b_or_c_not_flagged_as_non_repeatable(self, tmp_path):
+        # $b and $c are officially Repeatable per the spec -- this
+        # detect-only check must not flag them (fix_852_multiple_b
+        # handles $b separately, on data-quality grounds, not spec
+        # grounds).
+        fields = [
+            m.Field_("004", None, None, content="ocm123"),
+            m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
+            m.Field_("852", "  ", [
+                ("c", "Main Stacks"), ("c", "Annex"), ("h", "ABC123"),
+            ]),
+        ]
+        result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
+        if _resolve_log(log).exists():
+            content = _resolve_log(log).read_text(encoding="utf-8")
+            assert "holdings_852_duplicate_nr_subfield" not in content
+
     def test_repairs_real_short_bucknell_holdings_file(self):
         # Regression/integration check against real production data
         # (a Bucknell export) rather than only synthetic fixtures --
