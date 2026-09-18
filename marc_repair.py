@@ -2578,7 +2578,7 @@ def _is_852_b_non_location(data: str) -> bool:
     )
 
 
-def fix_852_multiple_b(parsed: ParsedRecord) -> list[str]:
+def fix_852_multiple_b(parsed: ParsedRecord) -> tuple[list[str], list[str]]:
     """Fix an 852 (Location) field with more than one $b (Sublocation)
     subfield -- $b isn't meant to repeat, so this is always some kind
     of miscoding. Four cases, tried in order:
@@ -2610,15 +2610,20 @@ def fix_852_multiple_b(parsed: ParsedRecord) -> list[str]:
          fallback; no worse than leaving an 852 with two, and flagged
          for a human either way.
 
-    All four cases are logged the same way by the caller (category
-    "fixed_852_multiple_b", FIXED/REQUIRES ATTENTION: real data was
-    reinterpreted or discarded, worth a second look) -- the returned
-    detail string says which of the four actually happened (case 1 is
-    worded distinctly from case 4: "duplicate" rather than "no way to
-    tell", since case 1 is actually certain, not a guess). No-op for an
-    852 with at most one $b.
+    Returns (recoded_details, removed_details) for the caller to log
+    under two different categories: case 2 (the only one that recodes
+    rather than discards) goes in `recoded_details` (category
+    "recoded_852_b_to_i"); cases 1, 3, and 4 (all removals, just for
+    different reasons) go in `removed_details` (category
+    "removed_extra_852_b") -- both FIXED/REQUIRES ATTENTION: real data
+    was reinterpreted or discarded either way, worth a second look. The
+    detail string itself says which of the four actually happened
+    (case 1 is worded distinctly from case 4: "duplicate" rather than
+    "no way to tell", since case 1 is actually certain, not a guess).
+    No-op (in both lists) for an 852 with at most one $b.
     """
-    details = []
+    recoded_details = []
+    removed_details = []
     for f in parsed.fields:
         if f.tag != "852" or f.is_control():
             continue
@@ -2635,7 +2640,7 @@ def fix_852_multiple_b(parsed: ParsedRecord) -> list[str]:
                 sf for idx, sf in enumerate(f.subfields)
                 if idx == keep_first or idx not in b_indices
             ]
-            details.append(
+            removed_details.append(
                 f"removed duplicate 852 $b {dup_value!r} from "
                 f"={f.tag}  {f.indicators}{body} "
                 "(identical to another $b already in this field)"
@@ -2661,7 +2666,7 @@ def fix_852_multiple_b(parsed: ParsedRecord) -> list[str]:
                 else:
                     new_subfields.append((code, data))
             f.subfields = new_subfields
-            details.append(
+            recoded_details.append(
                 f"recoded 852 $b {renamed_value!r} (after $h, no existing $i) as $i"
             )
             continue
@@ -2674,11 +2679,11 @@ def fix_852_multiple_b(parsed: ParsedRecord) -> list[str]:
             reason = "no way to tell which $b is the real location; removed the last one"
         dropped_value = f.subfields[drop_idx][1]
         f.subfields = [sf for idx, sf in enumerate(f.subfields) if idx != drop_idx]
-        details.append(
+        removed_details.append(
             f"removed extra 852 $b {dropped_value!r} from ={f.tag}  {f.indicators}{body} "
             f"({reason})"
         )
-    return details
+    return recoded_details, removed_details
 
 
 def strip_empty_852_subfields(parsed: ParsedRecord) -> list[str]:
@@ -3169,6 +3174,30 @@ def strip_empty_fields(parsed: ParsedRecord) -> None:
     ]
 
 
+def strip_null_identifiers(parsed: ParsedRecord) -> list[str]:
+    """Remove any subfield, on any field, that has no data at all (a
+    "null identifier") -- e.g. a bare $8 with nothing after it. Used
+    by `repair_holdings_records` as the general catch-all for every
+    field OTHER than 852 (Location): that one already has its own,
+    more specific fixes for the same underlying problem
+    (`strip_empty_852_subfields`, `fix_852_call_number`'s $h handling)
+    that run first and leave nothing empty behind for this to find.
+    Returns one detail string per subfield removed (category
+    "removed_null_identifier" -- see `repair_holdings_records`).
+    """
+    details = []
+    for f in parsed.fields:
+        if f.is_control():
+            continue
+        removed_codes = [code for code, data in f.subfields if not data]
+        if not removed_codes:
+            continue
+        f.subfields = [(code, data) for code, data in f.subfields if data]
+        for code in removed_codes:
+            details.append(f"tag {f.tag}: removed subfield ${code} (null identifier, had no data)")
+    return details
+
+
 def normalize_subfield_9_to_0(parsed: ParsedRecord) -> list[str]:
     """Rewrite every $9 subfield code to $0, unconditionally, in every data
     field. $0 is MARC21's standard subfield for an authority record control
@@ -3564,7 +3593,8 @@ _FIXED_REQUIRES_ATTENTION = {
     "reattached_orphaned_field",
     "added_missing_852_location",
     "removed_bad_call_number",
-    "fixed_852_multiple_b",
+    "recoded_852_b_to_i",
+    "removed_extra_852_b",
     "removed_empty_852_subfield",
 }
 
@@ -3585,6 +3615,7 @@ _INFORMATIONAL = {
     "added_missing_852c",
     "holdings_multiple_004",
     "holdings_852_duplicate_nr_subfield",
+    "removed_null_identifier",
     "added_default_245",
     "leader_byte_defaulted",
     "leader_entry_map_fixed",
@@ -3777,6 +3808,7 @@ def repair_holdings_records(
     log_path: str,
     fix_missing_852c: bool = False,
     log_fixed_misplaced_subfield_code: bool = False,
+    log_removed_null_identifier: bool = False,
     on_progress: Callable[[int], None] | None = None,
     on_record: Callable[[int], None] | None = None,
     on_estimate: Callable[[int, int], None] | None = None,
@@ -3865,10 +3897,12 @@ def repair_holdings_records(
         other than a location code (see `_is_852_b_non_location`) that
         one is removed and the real location kept; otherwise (every
         remaining $b looks equally location-like, or none does) the
-        last one is removed as an arbitrary fallback. All four land
-        under the same category, "fixed_852_multiple_b", FIXED/REQUIRES
-        ATTENTION -- real data was reinterpreted or discarded, worth a
-        second look regardless of which of the four happened
+        last one is removed as an arbitrary fallback. The recode case
+        lands under its own category ("recoded_852_b_to_i"); all three
+        removal cases share another ("removed_extra_852_b") -- both
+        FIXED/REQUIRES ATTENTION, since real data was reinterpreted or
+        discarded either way, worth a second look regardless of which
+        of the four happened
       * 852 (Location)'s $h (Classification part -- the call number) is
         handled two ways depending on what's actually wrong (see
         `fix_852_call_number`): present but unusable (empty or
@@ -3897,6 +3931,14 @@ def repair_holdings_records(
         "removed_empty_852_subfield", FIXED/REQUIRES ATTENTION); runs
         after all the other 852 content fixes above, so it only mops
         up whatever they didn't already turn into something else
+      * any subfield with no data at all on any OTHER field (852 is
+        fully covered by the fixes above) is likewise removed -- see
+        `strip_null_identifiers` -- but only logged (category
+        "removed_null_identifier", INFORMATIONAL) when
+        `log_removed_null_identifier` is set (off by default -- see
+        --log-removed-null-identifier -- same large-fraction-of-a-file
+        reasoning as `log_fixed_misplaced_subfield_code`); the fix
+        itself always runs regardless
       * a non-numeric tag is renamed to an unused 9XX slot, same
         deferred two-pass approach `main` uses for bib records (needs
         every tag in the *holdings* file specifically, so this is
@@ -4024,8 +4066,11 @@ def repair_holdings_records(
                 log("added_default_holdings_008", True, i, rec_id, detail)
             for detail in fix_008_length(parsed, expected_len=HOLDINGS_008_LENGTH):
                 log("fixed_holdings_008_length", True, i, rec_id, detail)
-            for detail in fix_852_multiple_b(parsed):
-                log("fixed_852_multiple_b", True, i, rec_id, detail)
+            recoded_b_to_i, removed_extra_b = fix_852_multiple_b(parsed)
+            for detail in recoded_b_to_i:
+                log("recoded_852_b_to_i", True, i, rec_id, detail)
+            for detail in removed_extra_b:
+                log("removed_extra_852_b", True, i, rec_id, detail)
             removed_call_number, missing_call_number = fix_852_call_number(parsed)
             for detail in removed_call_number:
                 log("removed_bad_call_number", True, i, rec_id, detail)
@@ -4038,16 +4083,10 @@ def repair_holdings_records(
                     log("added_missing_852c", True, i, rec_id, detail)
             for detail in strip_empty_852_subfields(parsed):
                 log("removed_empty_852_subfield", True, i, rec_id, detail)
-            for f in parsed.fields:
-                if f.is_control():
-                    continue
-                for code, data in f.subfields:
-                    if not data:
-                        log(
-                            "holdings_null_identifier", False, i, rec_id,
-                            f"tag {f.tag}: subfield ${code} has no data "
-                            "(null identifier)",
-                        )
+            null_identifier_details = strip_null_identifiers(parsed)
+            if log_removed_null_identifier:
+                for detail in null_identifier_details:
+                    log("removed_null_identifier", True, i, rec_id, detail)
             n_004 = sum(1 for f in parsed.fields if f.tag == "004")
             for category, detail in _find_004_issues(n_004):
                 log(category, False, i, rec_id, detail)
@@ -4207,6 +4246,18 @@ def main(argv: list[str] | None = None) -> int:
         "one. Off by default since 852 $c is real location data this tool "
         "has no way to know; each insertion is logged (see --log) as a "
         "placeholder, not a real value",
+    )
+    parser.add_argument(
+        "--log-removed-null-identifier",
+        action="store_true",
+        help="(holdings records only, used by --split-bib-holdings and "
+        "--repair-holdings) log each subfield removed for having no "
+        "data at all (a \"null identifier\", e.g. a bare $8) outside of "
+        "852 (Location), which already has its own specific fixes for "
+        "the same problem. The fix itself -- removing the empty "
+        "subfield -- always runs regardless of this flag; off by "
+        "default since it can be a large fraction of a file, same "
+        "reasoning as --log-fixed-misplaced-subfield-code",
     )
     parser.add_argument(
         "--mrk",
@@ -4597,6 +4648,7 @@ def main(argv: list[str] | None = None) -> int:
                 holdings_log_path,
                 fix_missing_852c=args.fix_missing_852c,
                 log_fixed_misplaced_subfield_code=args.log_fixed_misplaced_subfield_code,
+                log_removed_null_identifier=args.log_removed_null_identifier,
                 on_progress=holdings_progress.on_progress,
                 on_record=holdings_progress.maybe_print,
                 on_estimate=holdings_progress.maybe_print_estimate,
@@ -4635,6 +4687,7 @@ def main(argv: list[str] | None = None) -> int:
             log_path,
             fix_missing_852c=args.fix_missing_852c,
             log_fixed_misplaced_subfield_code=args.log_fixed_misplaced_subfield_code,
+            log_removed_null_identifier=args.log_removed_null_identifier,
             on_progress=progress.on_progress,
             on_record=progress.maybe_print,
             on_estimate=progress.maybe_print_estimate,

@@ -264,15 +264,16 @@ class TestRepairHoldingsRecords:
         content = _resolve_log(log).read_text(encoding="utf-8")
         assert "fixed_misplaced_subfield_code" in content
 
-    def test_null_identifier_flagged_not_fixed(self, tmp_path):
+    def test_null_identifier_removed_but_not_logged_by_default(self, tmp_path):
         # $b is the null identifier under test, on a field OTHER than
-        # 852 -- 852's own empty subfields are now actively fixed (see
-        # strip_empty_852_subfields), so isolating this generic,
-        # detect-only path needs a different tag. $a is real, non-empty
-        # data so the field survives strip_empty_fields (a field with
-        # ONLY an empty subfield is dropped entirely and silently --
-        # see strip_empty_fields -- so isolating the null-identifier
-        # case needs at least one other non-empty subfield alongside it)
+        # 852 -- 852's own empty subfields have their own specific
+        # fixes (see strip_empty_852_subfields), so isolating this
+        # generic catch-all needs a different tag. $a is real,
+        # non-empty data so the field survives strip_empty_fields (a
+        # field with ONLY an empty subfield is dropped entirely and
+        # silently -- see strip_empty_fields -- so isolating the
+        # null-identifier case needs at least one other non-empty
+        # subfield alongside it)
         fields = [
             m.Field_("004", None, None, content="ocm123"),
             m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
@@ -280,10 +281,31 @@ class TestRepairHoldingsRecords:
             m.Field_("500", "  ", [("a", "Main Library"), ("b", "")]),
         ]
         result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
-        assert result["not_fixed"] == 1
+        log_path = _resolve_log(log)
+        content = log_path.read_text(encoding="utf-8") if log_path.exists() else ""
+        assert "holdings_null_identifier" not in content
+        assert "removed_null_identifier" not in content
+        parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
+        f500 = next(f for f in parsed.fields if f.tag == "500")
+        assert not any(code == "b" for code, _ in f500.subfields)
+        assert ("a", "Main Library") in f500.subfields
+
+    def test_null_identifier_logged_when_flag_enabled(self, tmp_path):
+        fields = [
+            m.Field_("004", None, None, content="ocm123"),
+            m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
+            m.Field_("852", "  ", [("a", "Main Library"), ("h", "ABC123")]),
+            m.Field_("500", "  ", [("a", "Main Library"), ("b", "")]),
+        ]
+        src = self._write_holdings_file(tmp_path, [self._holdings_record(fields=fields)])
+        out = tmp_path / "out.mrc"
+        log = tmp_path / "out.log"
+        m.repair_holdings_records(
+            str(src), str(out), str(log), log_removed_null_identifier=True,
+        )
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert "holdings_null_identifier" in content
-        assert "[NOT FIXED]" in content
+        assert "removed_null_identifier" in content
+        assert "[INFORMATIONAL]" in content
 
     def test_escape_sequence_flagged_not_transcoded(self, tmp_path):
         fields = [
@@ -787,7 +809,7 @@ class TestRepairHoldingsRecords:
         ]
         result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert "fixed_852_multiple_b" in content
+        assert "recoded_852_b_to_i" in content
         assert "[FIXED/REQUIRES ATTENTION]" in content
         assert "recoded" in content
         parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
@@ -826,7 +848,7 @@ class TestRepairHoldingsRecords:
         ]
         result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert "fixed_852_multiple_b" in content
+        assert "removed_extra_852_b" in content
         assert "doesn't look like a location code" in content
         parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
         f852 = next(f for f in parsed.fields if f.tag == "852")
@@ -847,7 +869,7 @@ class TestRepairHoldingsRecords:
         ]
         result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert "fixed_852_multiple_b" in content
+        assert "removed_extra_852_b" in content
         assert "identical to another $b already in this field" in content
         assert "no way to tell which $b is the real location" not in content
         parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
@@ -898,7 +920,8 @@ class TestRepairHoldingsRecords:
         result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
         if _resolve_log(log).exists():
             content = _resolve_log(log).read_text(encoding="utf-8")
-            assert "fixed_852_multiple_b" not in content
+            assert "recoded_852_b_to_i" not in content
+            assert "removed_extra_852_b" not in content
 
     def test_duplicate_h_flagged_informational_and_left_alone(self, tmp_path):
         # $h (Classification part) is Not Repeatable per the MARC 21

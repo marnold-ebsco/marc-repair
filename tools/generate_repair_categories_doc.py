@@ -374,16 +374,24 @@ HOLDINGS_ROWS = [
         "pattern",
     ),
     CategoryRow(
-        "852 (Location) with more than one $b (Sublocation) -- note $b "
-        "is officially Repeatable per the MARC 21 852 spec, but real "
-        "data confirms this file only ever misuses that repeatability",
+        "852 (Location) with more than one $b (Sublocation), an "
+        "unambiguous before/after-$h cutter shape with no $i yet -- "
+        "note $b is officially Repeatable per the MARC 21 852 spec, "
+        "but real data confirms this file only ever misuses that "
+        "repeatability",
+        "The $b after $h is recoded to $i instead of removed -- it's "
+        "real, recoverable data (the cutter/date/copy note that goes "
+        "with $h's classification)",
+        "Yes, always", "`recoded_852_b_to_i`", "FIXED/REQUIRES ATTENTION",
+        "**Yes**", "-- (no switch -- always runs and always logged)",
+    ),
+    CategoryRow(
+        "852 (Location) with more than one $b, any OTHER shape",
         "If every $b is identical, all but the first are just removed "
-        "(a plain duplicate); otherwise recoded to $i if it's an "
-        "unambiguous before/after-$h cutter shape with no $i yet; "
-        "otherwise the one that doesn't look like a location code is "
-        "removed if exactly one doesn't; otherwise the last $b is "
-        "removed as an arbitrary fallback",
-        "Yes, always", "`fixed_852_multiple_b`", "FIXED/REQUIRES ATTENTION",
+        "(a plain duplicate); otherwise the one that doesn't look like "
+        "a location code is removed if exactly one doesn't; otherwise "
+        "the last $b is removed as an arbitrary fallback",
+        "Yes, always", "`removed_extra_852_b`", "FIXED/REQUIRES ATTENTION",
         "**Yes**", "-- (no switch -- always runs and always logged)",
     ),
     CategoryRow(
@@ -452,9 +460,14 @@ HOLDINGS_ROWS = [
         "transcoded)",
     ),
     CategoryRow(
-        "Null identifier (empty subfield)", "Flagged only, no change",
-        "detect-only", "`holdings_null_identifier`", "NOT FIXED", "**Yes**",
-        "-- (detect-only, no switch)",
+        "Null identifier (a subfield with no data at all), on any "
+        "field OTHER than 852 -- which has its own specific fixes for "
+        "the same problem (see the $h and $b/$c rows above)",
+        "Subfield removed", "Yes, always", "`removed_null_identifier`",
+        "INFORMATIONAL",
+        "No (needs `--log-removed-null-identifier`; no informational "
+        "gate for holdings otherwise)",
+        "`--log-removed-null-identifier`",
     ),
     CategoryRow(
         "Missing 004 (link to bib record)", "Flagged only, no change",
