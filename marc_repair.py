@@ -2529,8 +2529,9 @@ def fix_852_call_number(parsed: ParsedRecord) -> tuple[list[str], list[str]]:
         bad subfield to remove, just nothing there -- so the field is
         left completely untouched (not even its other subfields), and
         returned in `missing_details` instead (category
-        "missing_call_number", NOT FIXED: purely a flag for a human,
-        same as `holdings_missing_004`).
+        "missing_call_number", INFORMATIONAL, logged only when opted
+        into -- see `repair_holdings_records`'s
+        `log_missing_call_number`).
 
     No-op (in both lists) for an 852 that already has a usable $h.
     """
@@ -3776,6 +3777,7 @@ _INFORMATIONAL = {
     "holdings_multiple_004",
     "holdings_852_duplicate_nr_subfield",
     "removed_null_identifier",
+    "missing_call_number",
     "added_default_245",
     "leader_byte_defaulted",
     "leader_entry_map_fixed",
@@ -3969,6 +3971,7 @@ def repair_holdings_records(
     fix_missing_852c: bool = False,
     log_fixed_misplaced_subfield_code: bool = False,
     log_removed_null_identifier: bool = False,
+    log_missing_call_number: bool = False,
     on_progress: Callable[[int], None] | None = None,
     on_record: Callable[[int], None] | None = None,
     on_estimate: Callable[[int, int], None] | None = None,
@@ -4095,7 +4098,13 @@ def repair_holdings_records(
         "removed_bad_call_number", FIXED/REQUIRES ATTENTION -- real
         data discarded); missing entirely isn't a fix at all -- nothing
         to remove, so the field is left completely untouched and just
-        flagged (category "missing_call_number", NOT FIXED)
+        flagged (category "missing_call_number", INFORMATIONAL: a call
+        number can legitimately be absent, e.g. for some serials/
+        electronic holdings, so this isn't as urgent as a genuine
+        defect). Logged only when `log_missing_call_number` is set (off
+        by default -- see --log-missing-call-number -- since it can be
+        a large fraction of a file, same reasoning as
+        `log_removed_null_identifier`)
       * an 852 field that survives the above but has no usable location
         in $a, $b, or $c -- which subfield actually carries it is
         source-system-dependent (see `fix_missing_852_location`) --
@@ -4263,8 +4272,9 @@ def repair_holdings_records(
             removed_call_number, missing_call_number = fix_852_call_number(parsed)
             for detail in removed_call_number:
                 log("removed_bad_call_number", True, i, rec_id, detail)
-            for detail in missing_call_number:
-                log("missing_call_number", False, i, rec_id, detail)
+            if log_missing_call_number:
+                for detail in missing_call_number:
+                    log("missing_call_number", False, i, rec_id, detail)
             for detail in fix_missing_852_location(parsed):
                 log("added_missing_852_location", True, i, rec_id, detail)
             if fix_missing_852c:
@@ -4469,6 +4479,17 @@ def main(argv: list[str] | None = None) -> int:
         "subfield -- always runs regardless of this flag; off by "
         "default since it can be a large fraction of a file, same "
         "reasoning as --log-fixed-misplaced-subfield-code",
+    )
+    parser.add_argument(
+        "--log-missing-call-number",
+        action="store_true",
+        help="(holdings records only, used by --split-bib-holdings and "
+        "--repair-holdings) log each 852 (Location) field missing $h "
+        "(Classification part -- the call number) entirely. The field "
+        "is always left untouched either way (there's nothing to fix "
+        "-- see fix_852_call_number); off by default since a call "
+        "number can legitimately be absent (e.g. some serials/"
+        "electronic holdings) and it can be a large fraction of a file",
     )
     parser.add_argument(
         "--mrk",
@@ -4860,6 +4881,7 @@ def main(argv: list[str] | None = None) -> int:
                 fix_missing_852c=args.fix_missing_852c,
                 log_fixed_misplaced_subfield_code=args.log_fixed_misplaced_subfield_code,
                 log_removed_null_identifier=args.log_removed_null_identifier,
+                log_missing_call_number=args.log_missing_call_number,
                 on_progress=holdings_progress.on_progress,
                 on_record=holdings_progress.maybe_print,
                 on_estimate=holdings_progress.maybe_print_estimate,
@@ -4911,6 +4933,7 @@ def main(argv: list[str] | None = None) -> int:
             fix_missing_852c=args.fix_missing_852c,
             log_fixed_misplaced_subfield_code=args.log_fixed_misplaced_subfield_code,
             log_removed_null_identifier=args.log_removed_null_identifier,
+            log_missing_call_number=args.log_missing_call_number,
             on_progress=progress.on_progress,
             on_record=progress.maybe_print,
             on_estimate=progress.maybe_print_estimate,

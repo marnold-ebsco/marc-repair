@@ -440,8 +440,10 @@ HOLDINGS_ROWS = [
     CategoryRow(
         "852 (Location) missing $h (call number) entirely",
         "Flagged only, field left completely untouched -- nothing to "
-        "remove", "detect-only", "`missing_call_number`", "NOT FIXED",
-        "**Yes**", "-- (detect-only, no switch)",
+        "remove", "detect-only", "`missing_call_number`", "INFORMATIONAL",
+        "No -- a call number can legitimately be absent (e.g. some "
+        "serials/electronic holdings), and it can be a large fraction "
+        "of a file", "`--log-missing-call-number`",
     ),
     CategoryRow(
         "852 $a/$b/$c all missing/empty/punctuation-only (no usable "

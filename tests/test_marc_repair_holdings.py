@@ -668,16 +668,36 @@ class TestRepairHoldingsRecords:
         parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
         assert not any(f.tag == "854" for f in parsed.fields)
 
-    def test_852_missing_h_entirely_is_flagged_not_fixed_and_left_alone(self, tmp_path):
+    def test_852_missing_h_entirely_left_alone_and_not_logged_by_default(self, tmp_path):
         fields = [
             m.Field_("004", None, None, content="ocm123"),
             m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
             m.Field_("852", "  ", [("a", "Main Library")]),
         ]
         result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
+        log_path = _resolve_log(log)
+        content = log_path.read_text(encoding="utf-8") if log_path.exists() else ""
+        assert "missing_call_number" not in content
+        assert "removed_bad_call_number" not in content
+        parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
+        f852 = next(f for f in parsed.fields if f.tag == "852")
+        assert ("a", "Main Library") in f852.subfields
+
+    def test_852_missing_h_logged_informational_when_flag_enabled(self, tmp_path):
+        fields = [
+            m.Field_("004", None, None, content="ocm123"),
+            m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
+            m.Field_("852", "  ", [("a", "Main Library")]),
+        ]
+        src = self._write_holdings_file(tmp_path, [self._holdings_record(fields=fields)])
+        out = tmp_path / "out.mrc"
+        log = tmp_path / "out.log"
+        m.repair_holdings_records(
+            str(src), str(out), str(log), log_missing_call_number=True,
+        )
         content = _resolve_log(log).read_text(encoding="utf-8")
         assert "missing_call_number" in content
-        assert "[NOT FIXED]" in content
+        assert "[INFORMATIONAL]" in content
         assert "removed_bad_call_number" not in content
         parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
         f852 = next(f for f in parsed.fields if f.tag == "852")
@@ -843,9 +863,9 @@ class TestRepairHoldingsRecords:
             m.Field_("852", "  ", [("b", "Annex")]),
         ]
         result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
-        content = _resolve_log(log).read_text(encoding="utf-8")
-        assert "missing_call_number" in content
-        assert "[NOT FIXED]" in content
+        log_path = _resolve_log(log)
+        content = log_path.read_text(encoding="utf-8") if log_path.exists() else ""
+        assert "missing_call_number" not in content
         assert "added_missing_852_location" not in content
         parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
         f852 = next(f for f in parsed.fields if f.tag == "852")
