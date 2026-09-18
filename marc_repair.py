@@ -42,7 +42,7 @@ it's looking at:
 Quick examples:
 
     # Fix a file with a corrupted leader/directory (Mode 1 kicks in
-    # automatically). Output defaults to INPUT_fixed.mrc next to the input.
+    # automatically). Output defaults to INPUT_repaired.mrc next to the input.
     python marc_repair.py bad_length_bib.mrc
 
     # Same, but pick the output path explicitly and also dump a
@@ -130,9 +130,10 @@ into ONE combined, timestamped log file (default OUT_log_TIMESTAMP.log, see
 --log). A record that can't be auto-repaired at all is never written into
 the main output -- doing so would silently mix a badly mangled record into
 an otherwise-clean load file. Instead it's written, byte-for-byte unchanged
-(never dropped), to a second file next to the main output (INPUT_fixed.mrc
-gets a sibling INPUT_fixed_error.mrc, created only if this ever actually
-happens), and logged as `unfixable` in its own UNFIXABLE section at the
+(never dropped), to a second file next to the main output
+(INPUT_repaired.mrc gets a sibling INPUT_repaired_error.mrc, created
+only if this ever actually happens), and logged as `unfixable` in its
+own UNFIXABLE section at the
 very top of that same log -- above even NOT FIXED, since it's the one
 thing that needs a look before the run's output is usable at all.
 
@@ -3605,7 +3606,7 @@ def find_and_fix_mojibake(parsed: ParsedRecord) -> list[str]:
 
 def _default_output_path(input_path: str) -> str:
     base, ext = os.path.splitext(input_path)
-    return f"{base}_fixed{ext}"
+    return f"{base}_repaired{ext}"
 
 
 def _load_overrides(path: str) -> dict[int, dict[int, list[tuple[str, list[tuple[str, str]]]]]]:
@@ -3640,7 +3641,7 @@ def _null_writer():
 
 def _error_output_path(out_path: str) -> str:
     """Insert "_error" right before `out_path`'s extension -- e.g.
-    "bib_fixed.mrc" -> "bib_fixed_error.mrc" -- mirroring
+    "bib_repaired.mrc" -> "bib_repaired_error.mrc" -- mirroring
     `_timestamped_log_path`'s own insert-before-extension convention.
     Records this tool concludes it truly can't repair at all (see the
     UNFIXABLE section) are written here, byte-for-byte unchanged,
@@ -4388,7 +4389,7 @@ def main(argv: list[str] | None = None) -> int:
         "input", help="MARC file (.mrc) or pasted-text file with one or more records"
     )
     parser.add_argument(
-        "-o", "--out", help="output .mrc file (default: INPUT_fixed.mrc next to the input)"
+        "-o", "--out", help="output .mrc file (default: INPUT_repaired.mrc next to the input)"
     )
     parser.add_argument(
         "--count",

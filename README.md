@@ -107,8 +107,8 @@ or one with a field/base address too large for ISO 2709's fixed-width
 directory to represent, is never written into the main output file —
 doing so would silently mix a badly mangled record into an otherwise
 clean load file. Instead it's written, byte-for-byte unchanged, to a
-second file next to the main output: `--out INPUT_fixed.mrc` (or
-whatever `-o` was given) gets a sibling `INPUT_fixed_error.mrc`, created
+second file next to the main output: `--out INPUT_repaired.mrc` (or
+whatever `-o` was given) gets a sibling `INPUT_repaired_error.mrc`, created
 only if at least one such record actually occurs. Every one is logged
 under category `unfixable`, in its own UNFIXABLE section — sorted above
 even NOT FIXED, since it's the one thing in the log that requires action
@@ -403,7 +403,7 @@ repeated whenever a version changes.
 
 ```bash
 # Fix a file with a corrupted leader/directory. Output defaults to
-# INPUT_fixed.mrc next to the input.
+# INPUT_repaired.mrc next to the input.
 python3 marc_repair.py bad_length_bib.mrc
 
 # Pick the output path explicitly and also dump a human-readable .mrk

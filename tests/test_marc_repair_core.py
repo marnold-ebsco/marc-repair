@@ -620,18 +620,18 @@ class TestProgressEstimate:
 
 
 class TestCLIHelpers:
-    def test_default_output_path_appends_fixed_before_extension(self):
-        assert m._default_output_path("/tmp/foo.mrc") == "/tmp/foo_fixed.mrc"
-        assert m._default_output_path("/tmp/foo") == "/tmp/foo_fixed"
+    def test_default_output_path_appends_repaired_before_extension(self):
+        assert m._default_output_path("/tmp/foo.mrc") == "/tmp/foo_repaired.mrc"
+        assert m._default_output_path("/tmp/foo") == "/tmp/foo_repaired"
 
-    def test_main_writes_fixed_file_next_to_input(self, tmp_path):
+    def test_main_writes_repaired_file_next_to_input(self, tmp_path):
         src = tmp_path / "bad_length.mrc"
         src.write_bytes(
             _read("bad_length_bib_nashvillestate_bibs_202693_me.mrc").encode("utf-8")
         )
         rc = m.main([str(src)])
         assert rc == 0
-        expected_out = tmp_path / "bad_length_fixed.mrc"
+        expected_out = tmp_path / "bad_length_repaired.mrc"
         assert expected_out.exists()
 
     def test_main_ensure_field_end_to_end(self, tmp_path):
@@ -735,7 +735,7 @@ class TestCountRecords:
         assert rc == 0
         out = capsys.readouterr().out
         assert "3" in out
-        assert not (tmp_path / "three_fixed.mrc").exists()
+        assert not (tmp_path / "three_repaired.mrc").exists()
 
 
 _HOLDINGS_LEADER = _SYNTHETIC_LEADER[:6] + "x" + _SYNTHETIC_LEADER[7:]
@@ -837,7 +837,7 @@ class TestSplitBibHoldings:
         assert (tmp_path / "mixed_bib.mrc").exists()
         assert (tmp_path / "mixed_holdings.mrc").exists()
         assert (tmp_path / "mixed_holdings_repaired.mrc").exists()
-        assert not (tmp_path / "mixed_fixed.mrc").exists()
+        assert not (tmp_path / "mixed_repaired.mrc").exists()
         out = capsys.readouterr().out
         assert "1 bib record(s)" in out
         assert "1 holdings record(s)" in out
