@@ -4403,26 +4403,32 @@ def main(argv: list[str] | None = None) -> int:
         "--split-bib-holdings",
         action="store_true",
         help="split the input into separate bib and holdings files by each "
-        "record's leader byte 6 (type of record), then exit immediately "
-        "-- no repair is done on either. Output: INPUT_bib.EXT and "
-        "INPUT_holdings.EXT next to the input; a record whose leader "
+        "record's leader byte 6 (type of record) first -- no repair is "
+        "done as part of the split step itself. Output: INPUT_bib.EXT "
+        "and INPUT_holdings.EXT next to the input; a record whose leader "
         "byte 6 isn't a recognized bib or holdings code (or is "
         "missing/corrupted) is never guessed at -- it's written "
         "instead to INPUT_unclassified.EXT (only created if needed) "
-        "and reported on stderr. The holdings records are then "
-        "actually repaired too (see repair_holdings_records()) -- the "
-        "same categories of structural/content fix already applied to "
-        "bib records (bad length, bad directory, missing 008 [a "
-        "holdings-specific 32-byte placeholder, not bib's], bad "
-        "indicators, invalid subfield codes, mojibake, smart "
-        "characters, invalid tags), except MARC-8-to-UTF-8 transcoding "
-        "(skipped for holdings for now) and the bib-specific tag-list "
-        "fixes (245/required-$a/duplicate-field, which don't apply to "
-        "holdings semantics). See also --fix-missing-852c, an opt-in "
-        "holdings-specific content fix. Output: INPUT_holdings_repaired.EXT; a "
-        "record that can't be auto-repaired is passed through "
-        "unchanged like the main bib pipeline. Every fix/finding is "
-        "logged to INPUT_holdings_log_TIMESTAMP.log",
+        "and reported on stderr. Both resulting files are then "
+        "automatically repaired: holdings records via "
+        "repair_holdings_records() -- the same categories of "
+        "structural/content fix already applied to bib records (bad "
+        "length, bad directory, missing 008 [a holdings-specific "
+        "32-byte placeholder, not bib's], bad indicators, invalid "
+        "subfield codes, mojibake, smart characters, invalid tags), "
+        "except MARC-8-to-UTF-8 transcoding (skipped for holdings for "
+        "now) and the bib-specific tag-list fixes (245/required-$a/"
+        "duplicate-field, which don't apply to holdings semantics; see "
+        "also --fix-missing-852c, an opt-in holdings-specific content "
+        "fix) -- output INPUT_holdings_repaired.EXT, logged to "
+        "INPUT_holdings_log_TIMESTAMP.log; bib records via this same "
+        "default pipeline, as if separately run as "
+        "`marc_repair.py INPUT_bib.EXT` (only -o is forwarded, not "
+        "this invocation's other flags) -- output "
+        "INPUT_bib_repaired.EXT, logged to "
+        "INPUT_bib_repaired_log_TIMESTAMP.log. Either side's own "
+        "unfixable records are passed through unchanged, same as the "
+        "main bib pipeline",
     )
     parser.add_argument(
         "--repair-holdings",
@@ -4860,8 +4866,9 @@ def main(argv: list[str] | None = None) -> int:
             )
             holdings_progress.finish()
             print(
-                f"{result['total']}/{result['total']} holdings record(s) repaired "
-                f"and written to {holdings_repaired_path} "
+                f"{result['written']} holdings record(s) repaired from "
+                f"{result['total']} input record(s) and written to "
+                f"{holdings_repaired_path} "
                 f"({result['total'] - result['unresolved']} corrected/passed clean, "
                 f"{result['unresolved']} passed through unchanged)"
             )
@@ -4872,6 +4879,17 @@ def main(argv: list[str] | None = None) -> int:
                     f"{result['log_lines'] - result['not_fixed']} fixed)",
                     file=sys.stderr,
                 )
+        if counts["bib"]:
+            bib_repaired_path = f"{base}_bib_repaired{ext}"
+            # Recurses into this same function for the bib side, exactly
+            # as if the user separately ran `marc_repair.py bib_path -o
+            # bib_repaired_path` -- reuses the whole default bib pipeline
+            # below rather than duplicating it, at the cost of only
+            # forwarding -o here (not every other CLI flag from this
+            # invocation) -- the same tradeoff the holdings repair call
+            # above already makes (it only forwards a curated few of its
+            # own flags, not the full set either).
+            main([bib_path, "-o", bib_repaired_path])
         elapsed = time.perf_counter() - split_start
         print(f"done in {elapsed:.2f}s")
         return 0

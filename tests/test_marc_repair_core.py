@@ -837,7 +837,9 @@ class TestSplitBibHoldings:
         assert (tmp_path / "mixed_bib.mrc").exists()
         assert (tmp_path / "mixed_holdings.mrc").exists()
         assert (tmp_path / "mixed_holdings_repaired.mrc").exists()
+        assert (tmp_path / "mixed_bib_repaired.mrc").exists()
         assert not (tmp_path / "mixed_repaired.mrc").exists()
+        assert m.count_records(str(tmp_path / "mixed_bib_repaired.mrc")) == 1
         out = capsys.readouterr().out
         assert "1 bib record(s)" in out
         assert "1 holdings record(s)" in out
@@ -848,6 +850,25 @@ class TestSplitBibHoldings:
         assert "added_default_holdings_008" in content
         repaired = m.count_records(str(tmp_path / "mixed_holdings_repaired.mrc"))
         assert repaired == 1
+
+    def test_main_split_flag_bib_side_is_actually_repaired(self, tmp_path):
+        # The bib output from the split isn't just copied through --
+        # it goes through the same default repair pipeline a plain
+        # `marc_repair.py bib.mrc` run would apply. Use a record with a
+        # deliberately bad declared length so Mode 1 has something real
+        # to fix, and confirm the *repaired* bib file no longer has it.
+        bad_bib = self._bib_record()
+        bad_bib = b"00000" + bad_bib[5:]  # corrupt the declared length
+        raw = bad_bib + self._holdings_record()
+        src = tmp_path / "mixed.mrc"
+        src.write_bytes(raw)
+        rc = m.main([str(src), "--split-bib-holdings"])
+        assert rc == 0
+        bib_repaired = tmp_path / "mixed_bib_repaired.mrc"
+        assert bib_repaired.exists()
+        assert m.count_records(str(bib_repaired)) == 1
+        parsed = m.read_intact_record(bib_repaired.read_bytes().decode("utf-8"))
+        assert parsed.leader[:5] != "00000"
 
 
 # ---------------------------------------------------------------------------
