@@ -2686,6 +2686,68 @@ def fix_852_multiple_b(parsed: ParsedRecord) -> tuple[list[str], list[str]]:
     return recoded_details, removed_details
 
 
+def split_holdings_multiple_852(parsed: ParsedRecord) -> tuple[list[ParsedRecord], list[str]]:
+    """Split a holdings record with more than one 852 (Location) field
+    into one record per 852 -- FOLIO (like every other holdings-
+    consuming ILS) expects a single location per holdings record, so
+    a source record that packs several 852s together (flagged NOT
+    FIXED as "holdings_multiple_852" -- see `repair_holdings_records`)
+    isn't representable as one record at all; this is what actually
+    resolves it, by producing several.
+
+    An 852 with no $b (Sublocation) at all has no location to split
+    out in the first place -- rather than duplicating it into a copy
+    of its own, it's dropped entirely and returned in the second list
+    (category "incomplete_852", NOT FIXED: there's no data here to
+    fix, just a location this tool can't use).
+
+    Every other field is duplicated into every copy verbatim, and
+    each copy keeps exactly one of the record's remaining ($b-bearing)
+    852s, in its original relative position. This deliberately does
+    NOT try to figure out which 853-868/856/etc. field belongs with
+    which 852 -- some source systems link that via 852 $8, others
+    don't consistently -- so those fields end up duplicated across
+    every copy along with everything else; sorting that out is a
+    separate, harder problem.
+
+    Returns `([parsed], [])` (as a one-element list, so a caller can
+    always iterate the first return value the same way whether or not
+    a split happened) when at most one 852 has a $b -- nothing to
+    split, whether that's because there was only one to begin with or
+    because dropping the incomplete ones left just one (or none).
+    """
+    incomplete_details = []
+    valid_indices = []
+    for i, f in enumerate(parsed.fields):
+        if f.tag != "852" or f.is_control():
+            continue
+        if any(code == "b" for code, _ in f.subfields):
+            valid_indices.append(i)
+            continue
+        body = "".join(f"${code}{data}" for code, data in f.subfields)
+        incomplete_details.append(
+            f"removed 852 with no $b (Sublocation): ={f.tag}  {f.indicators}{body}"
+        )
+    other_fields = [(i, f) for i, f in enumerate(parsed.fields) if f.tag != "852"]
+    if len(valid_indices) <= 1:
+        fields = [f for _, f in other_fields]
+        if valid_indices:
+            keep_idx = valid_indices[0]
+            insert_at = sum(1 for i, _ in other_fields if i < keep_idx)
+            fields.insert(insert_at, parsed.fields[keep_idx])
+        record = ParsedRecord(leader=parsed.leader, entries=list(parsed.entries), fields=fields)
+        return [record], incomplete_details
+    copies = []
+    for keep_idx in valid_indices:
+        insert_at = sum(1 for i, _ in other_fields if i < keep_idx)
+        fields = [f for _, f in other_fields]
+        fields.insert(insert_at, parsed.fields[keep_idx])
+        copies.append(
+            ParsedRecord(leader=parsed.leader, entries=list(parsed.entries), fields=fields)
+        )
+    return copies, incomplete_details
+
+
 def strip_empty_852_subfields(parsed: ParsedRecord) -> list[str]:
     """Remove a subfield within an 852 (Location) field that has no
     data at all -- e.g. a bare `$2` with nothing after it. Excludes
@@ -2756,6 +2818,52 @@ def find_852_duplicate_non_repeatable_subfields(parsed: ParsedRecord) -> list[st
                     f"={f.tag}  {f.indicators}{body} has {n} ${code} subfields "
                     f"(${code} is Not Repeatable per the MARC 21 852 spec)"
                 )
+    return details
+
+
+#: Matches an 852 $b (Sublocation) that's nothing but digits -- a real
+#: location code in production data is always a textual department/
+#: collection abbreviation (see `_852_CUTTER_OR_CLASS_PATTERN`'s own
+#: docstring for examples); a bare number has no such meaning and is a
+#: strong sign this $b is actually a piece/copy number that landed in
+#: the wrong subfield. Used only by `find_852_b_suspect_content`.
+_852_B_NUMERIC_PATTERN = re.compile(r"^\d+$")
+
+
+def find_852_b_suspect_content(parsed: ParsedRecord) -> list[str]:
+    """Detect (never fix) an 852 (Location) $b (Sublocation) whose
+    content doesn't look like a real location code at all:
+
+      * purely numeric (see `_852_B_NUMERIC_PATTERN`) -- e.g. `$b0` --
+        rather than a textual department/collection abbreviation
+      * contains two or more literal "#" characters -- e.g.
+        `$b#8 0 #a 1` -- a strong sign that what should have been
+        separate subfields (a real MARC subfield delimiter is byte
+        0x1F, not the printable character "#") got flattened into
+        this one $b as plain text by whatever exported the record
+
+    Both are real defects seen in production holdings exports, not
+    hypothetical: the "#"-flattened case is confirmed data corruption
+    (subfields collapsed into one), and the purely-numeric case is a
+    piece/copy number miscoded as a location. Flagged only, one detail
+    line per offending $b (category "holdings_852_b_suspect_content",
+    NOT FIXED: this tool has no way to know what the real location
+    should have been).
+    """
+    details = []
+    for f in parsed.fields:
+        if f.tag != "852" or f.is_control():
+            continue
+        for code, data in f.subfields:
+            if code != "b":
+                continue
+            if _852_B_NUMERIC_PATTERN.match(data):
+                reason = "is purely numeric, not a location code"
+            elif data.count("#") >= 2:
+                reason = "contains multiple '#' characters -- looks like flattened subfields"
+            else:
+                continue
+            details.append(f"=852  {f.indicators}${code}{data} {reason}")
     return details
 
 
@@ -3916,6 +4024,12 @@ def repair_holdings_records(
         "holdings_852_duplicate_nr_subfield") -- detect-only, never
         trimmed, same treatment as `holdings_multiple_004`; see
         `find_852_duplicate_non_repeatable_subfields`
+      * an 852 $b (Sublocation) that's purely numeric or contains
+        multiple literal "#" characters (a sign of subfields flattened
+        into plain text by whatever exported the record) is flagged
+        NOT FIXED (category "holdings_852_b_suspect_content") --
+        detect-only, this tool has no way to know what the real
+        location should have been; see `find_852_b_suspect_content`
       * an 853 (Captions and Pattern -- Basic) field with no $8 (Field
         link and sequence number) -- the subfield an 863 needs to find
         its caption/pattern -- is flagged NOT FIXED (category
@@ -4152,6 +4266,8 @@ def repair_holdings_records(
                 )
             for detail in find_852_duplicate_non_repeatable_subfields(parsed):
                 log("holdings_852_duplicate_nr_subfield", False, i, rec_id, detail)
+            for detail in find_852_b_suspect_content(parsed):
+                log("holdings_852_b_suspect_content", False, i, rec_id, detail)
             for detail in find_853_missing_8(parsed):
                 log("holdings_853_missing_8", False, i, rec_id, detail)
             for detail in find_856_missing_u(parsed):

@@ -405,6 +405,16 @@ HOLDINGS_ROWS = [
         "-- (detect-only, no switch)",
     ),
     CategoryRow(
+        "852 (Location) $b (Sublocation) that's purely numeric (e.g. "
+        "`$b0`) or contains multiple literal \"#\" characters (a sign "
+        "of subfields flattened into plain text by whatever exported "
+        "the record, e.g. `$b#8 0 #a 1`) -- neither looks like a real "
+        "location code",
+        "Flagged only, no change", "detect-only",
+        "`holdings_852_b_suspect_content`", "NOT FIXED", "**Yes**",
+        "-- (detect-only, no switch)",
+    ),
+    CategoryRow(
         "853 (Captions and Pattern -- Basic) missing $8 (Field link "
         "and sequence number) -- the subfield an 863 needs to find its "
         "caption/pattern; also flagged by this institution's own "
