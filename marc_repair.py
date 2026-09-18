@@ -2529,7 +2529,7 @@ def fix_852_call_number(parsed: ParsedRecord) -> tuple[list[str], list[str]]:
         left completely untouched (not even its other subfields), and
         returned in `missing_details` instead (category
         "missing_call_number", NOT FIXED: purely a flag for a human,
-        same as `holdings_null_identifier` and `holdings_missing_004`).
+        same as `holdings_missing_004`).
 
     No-op (in both lists) for an 852 that already has a usable $h.
     """
@@ -3958,10 +3958,9 @@ def repair_holdings_records(
     convention). MARC-8-to-UTF-8 transcoding is also skipped for now (an
     explicit, temporary scope decision, not a permanent one) -- an ESC
     byte is still flagged (category "holdings_escape_sequence", NOT
-    FIXED) rather than silently left in a record declared UTF-8, and a
-    null identifier (subfield present but empty) is still flagged
-    (category "holdings_null_identifier", NOT FIXED) rather than
-    guessed at.
+    FIXED) rather than silently left in a record declared UTF-8. A null
+    identifier (subfield present but empty) IS fixed, though -- see
+    `strip_null_identifiers` above.
 
     A record that can't be structurally parsed at all is passed through
     unchanged, exactly like the main bib pipeline (category

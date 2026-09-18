@@ -54,9 +54,20 @@ BIB_INVALID_UTF8_ENTRYMAP_OUT = os.path.join(
 )
 
 BIB_PADDING_SOURCE = os.path.join(
-    FIXTURES, "bad_bib_mandatoryfieldsnashvillestate_bibs_202693_me_fixed.mrc"
+    FIXTURES, "bad_bib_mandatoryfieldsnashvillestate_bibs_202693_me.mrc"
 )
-HOLDINGS_PADDING_SOURCE = os.path.join(REPO_ROOT, "short_bucknell_marc_holdings.mrc")
+#: short_bucknell_marc_holdings.mrc (the file this constant used to
+#: point at) was never actually committed anywhere -- it matched the
+#: general *.mrc gitignore pattern with no carve-out exception, unlike
+#: every other real-data fixture here, so it only ever existed on
+#: whatever machine originally built this fixture. holdings_padding_
+#: sample.mrc is a 60-record substitute sampled from a real (different,
+#: unrelated) institution's holdings export, checked in as its own
+#: gitignore exception; see test_repairs_real_short_bucknell_holdings_file
+#: for the separate, still-skipped integration test that specifically
+#: needs the original file back (its exact-528-records assertion is
+#: tied to that one real file, not interchangeable with this sample).
+HOLDINGS_PADDING_SOURCE = os.path.join(FIXTURES, "holdings_padding_sample.mrc")
 
 MIN_RECORDS = 50
 
@@ -588,12 +599,46 @@ def build_holdings_records() -> list[bytes]:
         m.Field_("852", "  ", [("a", "Main Library\x1b(Bfoo")]),
     ]))
 
-    # holdings_null_identifier: a subfield present but empty, alongside a
-    # real one (so the field survives strip_empty_fields).
+    # removed_empty_852_subfield: an 852 subfield present but empty
+    # (other than $h, which has its own specific fix above), alongside
+    # a real one (so the field survives strip_empty_fields) -- removed,
+    # rest of the field left as-is.
+    records.append(_record(_HOLDINGS_LEADER, [
+        m.Field_("004", None, None, content="ks-hol-empty852sub"),
+        m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
+        m.Field_("852", "  ", [("a", "Main Library"), ("b", "")]),
+    ]))
+
+    # removed_null_identifier: same underlying defect as just above, but
+    # on a field OTHER than 852 -- fixed the same way (subfield
+    # removed), but only ever LOGGED with --log-removed-null-identifier
+    # (off by default, same reasoning as fixed_misplaced_subfield_code).
     records.append(_record(_HOLDINGS_LEADER, [
         m.Field_("004", None, None, content="ks-hol-nullid"),
         m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
-        m.Field_("852", "  ", [("a", "Main Library"), ("b", "")]),
+        m.Field_("852", "  ", [("a", "Main Library")]),
+        m.Field_("866", "  ", [("a", "v.1-10"), ("8", "")]),
+    ]))
+
+    # recoded_852_b_to_i: a second $b AFTER $h with no $i yet -- that's
+    # actually the cutter/date that goes with $h's classification, just
+    # miscoded, so it's recoded to $i rather than removed.
+    records.append(_record(_HOLDINGS_LEADER, [
+        m.Field_("004", None, None, content="ks-hol-brecode"),
+        m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
+        m.Field_("852", "  ", [
+            ("b", "Main Library"), ("h", "Z678.9 A2"), ("b", "A96 1983"),
+        ]),
+    ]))
+
+    # removed_extra_852_b: two $b's with the exact same content -- a
+    # plain duplicate, so all but the first are just removed.
+    records.append(_record(_HOLDINGS_LEADER, [
+        m.Field_("004", None, None, content="ks-hol-bdup"),
+        m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
+        m.Field_("852", "  ", [
+            ("b", "Main Library"), ("b", "Main Library"), ("h", "ABC123"),
+        ]),
     ]))
 
     # holdings_missing_004: no 004 field at all -- can't be safely
