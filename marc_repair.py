@@ -67,10 +67,14 @@ Quick examples:
     # such fields are removed (see required_a_tags.txt, editable) and
     # non-empty content that's discarded is timestamp-logged. A subfield
     # code that isn't a lowercase letter or digit, a data field with 0 or 1
-    # indicator characters instead of 2, and a field with no non-empty
-    # subfields at all are also fixed by default. Turn any of these off
-    # with --no-strip-missing-required-a, --no-strip-invalid-subfield-codes,
-    # --no-fix-bad-indicators, --no-strip-empty-fields respectively.
+    # indicator characters instead of 2, a field with no non-empty
+    # subfields at all, and any individual subfield with no data at all
+    # (a "null identifier", e.g. a bare $8, or an empty $a immediately
+    # followed by another subfield) are also fixed by default. Turn any
+    # of these off with --no-strip-missing-required-a,
+    # --no-strip-invalid-subfield-codes, --no-fix-bad-indicators,
+    # --no-strip-empty-fields respectively (null-identifier stripping has
+    # no --no- switch -- see --log-removed-null-identifier).
     python marc_repair.py bad_bib_mandatoryfields.mrc
 
     # A record legitimately declares legacy MARC-8/ANSEL encoding (leader
@@ -3360,14 +3364,19 @@ def strip_empty_fields(parsed: ParsedRecord) -> None:
 
 def strip_null_identifiers(parsed: ParsedRecord) -> list[str]:
     """Remove any subfield, on any field, that has no data at all (a
-    "null identifier") -- e.g. a bare $8 with nothing after it. Used
-    by `repair_holdings_records` as the general catch-all for every
-    field OTHER than 852 (Location): that one already has its own,
-    more specific fixes for the same underlying problem
-    (`strip_empty_852_subfields`, `fix_852_call_number`'s $h handling)
-    that run first and leave nothing empty behind for this to find.
-    Returns one detail string per subfield removed (category
-    "removed_null_identifier" -- see `repair_holdings_records`).
+    "null identifier") -- e.g. a bare $8 with nothing after it, or an
+    empty $a immediately followed by another subfield (seen in the
+    wild in 035 fields as `$a$0<local number>`, where whatever
+    produced the file split a single value across two subfields and
+    left the first one empty). Used by both `main`'s default bib
+    pipeline and `repair_holdings_records` as the general catch-all
+    for every field -- on the holdings side, OTHER than 852
+    (Location): that one already has its own, more specific fixes for
+    the same underlying problem (`strip_empty_852_subfields`,
+    `fix_852_call_number`'s $h handling) that run first and leave
+    nothing empty behind for this to find. Returns one detail string
+    per subfield removed (category "removed_null_identifier" -- see
+    `repair_holdings_records` and `main`).
     """
     details = []
     for f in parsed.fields:
@@ -4497,14 +4506,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--log-removed-null-identifier",
         action="store_true",
-        help="(holdings records only, used by --split-bib-holdings and "
-        "--repair-holdings) log each subfield removed for having no "
-        "data at all (a \"null identifier\", e.g. a bare $8) outside of "
-        "852 (Location), which already has its own specific fixes for "
-        "the same problem. The fix itself -- removing the empty "
-        "subfield -- always runs regardless of this flag; off by "
-        "default since it can be a large fraction of a file, same "
-        "reasoning as --log-fixed-misplaced-subfield-code",
+        help="(used by every pipeline -- the default bib run, "
+        "--split-bib-holdings, and --repair-holdings) log each subfield "
+        "removed for having no data at all (a \"null identifier\", e.g. "
+        "a bare $8); on the holdings side this is outside of 852 "
+        "(Location), which already has its own specific fixes for the "
+        "same problem. The fix itself -- removing the empty subfield -- "
+        "always runs regardless of this flag; off by default since it "
+        "can be a large fraction of a file, same reasoning as "
+        "--log-fixed-misplaced-subfield-code",
     )
     parser.add_argument(
         "--log-missing-call-number",
@@ -5218,6 +5228,11 @@ def main(argv: list[str] | None = None) -> int:
                     rec_id = record_identifier(parsed)
                     for detail in strip_invalid_subfield_codes(parsed):
                         log("removed_invalid_subfield", True, i, rec_id, detail)
+                null_identifier_details = strip_null_identifiers(parsed)
+                if args.log_removed_null_identifier:
+                    rec_id = record_identifier(parsed)
+                    for detail in null_identifier_details:
+                        log("removed_null_identifier", True, i, rec_id, detail)
                 if args.strip_missing_required_a:
                     rec_id = record_identifier(parsed)
                     for detail in strip_missing_required_a(parsed, required_a_tags):

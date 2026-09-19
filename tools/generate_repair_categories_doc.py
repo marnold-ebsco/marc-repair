@@ -149,6 +149,16 @@ BIB_ROWS = [
         "`--no-strip-invalid-subfield-codes`",
     ),
     CategoryRow(
+        "Null identifier (a subfield with no data at all, e.g. a bare $8, "
+        "or an empty $a immediately followed by another subfield -- seen "
+        "in the wild as `035  $a$0<local number>`), on any field",
+        "Subfield removed", "Yes, always", "`removed_null_identifier`",
+        "INFORMATIONAL",
+        "No (needs `--log-removed-null-identifier`; no informational "
+        "gate for bib otherwise)",
+        "`--log-removed-null-identifier`",
+    ),
+    CategoryRow(
         "Missing-required-$a field removal (also treats a punctuation-only "
         '$a, e.g. "." or "--", as missing)', "Removed field",
         "Yes (`--no-strip-missing-required-a`)",

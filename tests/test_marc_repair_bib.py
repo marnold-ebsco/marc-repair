@@ -745,6 +745,53 @@ class TestStripMissingRequiredA:
 
 
 # ---------------------------------------------------------------------------
+# strip_null_identifiers -- empty subfield removal, main()'s bib pipeline
+# ---------------------------------------------------------------------------
+
+class TestStripNullIdentifiersBibPipeline:
+    def _record_with_empty_035_a(self):
+        return m.ParsedRecord(
+            leader=_VALID_LEADER,
+            entries=[],
+            fields=[
+                m.Field_("001", None, None, content="997"),
+                m.Field_("008", None, None, content="x" * 40),
+                m.Field_("035", "  ", [("a", ""), ("0", "COLOFB  1492")]),
+                m.Field_("245", "00", [("a", "Some title.")]),
+            ],
+        )
+
+    def test_removed_but_not_logged_by_default(self, tmp_path):
+        src = tmp_path / "bib.mrc"
+        src.write_bytes(m.assemble_marc(self._record_with_empty_035_a()))
+        out = tmp_path / "out.mrc"
+        log = tmp_path / "run.log"
+        rc = m.main([str(src), "-o", str(out), "--log", str(log)])
+        assert rc == 0
+        log_path = _resolve_log(log)
+        content = log_path.read_text(encoding="utf-8") if log_path.exists() else ""
+        assert "removed_null_identifier" not in content
+        parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
+        f035 = next(f for f in parsed.fields if f.tag == "035")
+        assert not any(code == "a" for code, _ in f035.subfields)
+        assert ("0", "COLOFB  1492") in f035.subfields
+
+    def test_logged_when_flag_enabled(self, tmp_path):
+        src = tmp_path / "bib.mrc"
+        src.write_bytes(m.assemble_marc(self._record_with_empty_035_a()))
+        out = tmp_path / "out.mrc"
+        log = tmp_path / "run.log"
+        rc = m.main([
+            str(src), "-o", str(out), "--log", str(log),
+            "--log-removed-null-identifier", "--log-informational",
+        ])
+        assert rc == 0
+        content = _resolve_log(log).read_text(encoding="utf-8")
+        assert "removed_null_identifier" in content
+        assert "[INFORMATIONAL]" in content
+
+
+# ---------------------------------------------------------------------------
 # find_suspicious_fields -- doubled-URL heuristic
 # ---------------------------------------------------------------------------
 
