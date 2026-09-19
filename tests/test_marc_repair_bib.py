@@ -276,7 +276,7 @@ class TestFixBadIndicators:
         log = tmp_path / "run.log"
         rc = m.main([
             str(src), "-o", str(out), "--no-strip-invalid-subfield-codes",
-            "--log-informational", "--log", str(log),
+            "--log-informational", "--log-full", "invalid_subfield_code", "--log", str(log),
         ])
         assert rc == 0
         lines = _resolve_log(log).read_text(encoding="utf-8").splitlines()
@@ -421,7 +421,7 @@ class TestTranscodeMarc8:
         assert converted == "כתאב אלחגה"
         assert "\x1b" not in converted  # no leftover raw escape byte
 
-    def test_log_transcoded_marc8_flag_enables_logging(self, tmp_path):
+    def test_log_informational_flag_enables_transcoded_marc8_logging(self, tmp_path):
         pytest.importorskip("pymarc")
         leader = list(_SYNTHETIC_LEADER)
         leader[9] = " "
@@ -438,12 +438,11 @@ class TestTranscodeMarc8:
         out = tmp_path / "out.mrc"
         log = tmp_path / "run.log"
         rc = m.main([
-            str(src), "-o", str(out), "--log-transcoded-marc8",
-            "--log-informational", "--log", str(log),
+            str(src), "-o", str(out), "--log-informational", "--log", str(log),
         ])
         assert rc == 0
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert "transcoded_marc8" in content
+        assert "\ttranscoded_marc8\t" in content
 
     def test_no_transcode_marc8_flag_leaves_it_as_marc8(self, tmp_path):
         leader = list(_SYNTHETIC_LEADER)
@@ -532,7 +531,8 @@ class TestTranscodeMarc8:
         rc = m.main([str(src), "-o", str(out), "--log", str(log)])
         assert rc == 0  # must not crash the whole run
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert "=== NOT FIXED: transcode_marc8_failed (1) ===" in content
+        assert "=== NOT FIXED: transcode_marc8_failed ===" in content
+        assert "\ttranscode_marc8_failed\t" in content
         results = m.repair_text(m._read_text(str(out)))
         assert results[0].leader[9] == " "  # left declaring MARC-8
 
@@ -768,9 +768,9 @@ class TestStripNullIdentifiersBibPipeline:
         log = tmp_path / "run.log"
         rc = m.main([str(src), "-o", str(out), "--log", str(log)])
         assert rc == 0
-        log_path = _resolve_log(log)
-        content = log_path.read_text(encoding="utf-8") if log_path.exists() else ""
-        assert "removed_null_identifier" not in content
+        content = _resolve_log(log).read_text(encoding="utf-8")
+        assert "=== INFORMATIONAL: removed_null_identifier ===" in content
+        assert "\tremoved_null_identifier\t" not in content
         parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
         f035 = next(f for f in parsed.fields if f.tag == "035")
         assert not any(code == "a" for code, _ in f035.subfields)
@@ -783,11 +783,11 @@ class TestStripNullIdentifiersBibPipeline:
         log = tmp_path / "run.log"
         rc = m.main([
             str(src), "-o", str(out), "--log", str(log),
-            "--log-removed-null-identifier", "--log-informational",
+            "--log-full", "removed_null_identifier",
         ])
         assert rc == 0
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert "removed_null_identifier" in content
+        assert "\tremoved_null_identifier\t" in content
         assert "[INFORMATIONAL]" in content
 
 
@@ -1032,13 +1032,13 @@ class TestFixMisplacedSubfieldCodes:
         log = tmp_path / "run.log"
         rc = m.main([
             str(src), "-o", str(out), "--log", str(log),
-            "--log-informational", "--log-fixed-misplaced-subfield-code",
+            "--log-full", "fixed_misplaced_subfield_code",
         ])
         assert rc == 0
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert "fixed_misplaced_subfield_code" in content
+        assert "\tfixed_misplaced_subfield_code\t" in content
         assert "[INFORMATIONAL]" in content
-        assert "removed_invalid_subfield" not in content
+        assert "\tremoved_invalid_subfield\t" not in content
         parsed_out = m.read_intact_record(m._read_text(str(out)))
         f260 = next(f for f in parsed_out.fields if f.tag == "260")
         assert ("c", "2000.") in f260.subfields
@@ -1064,9 +1064,8 @@ class TestFixMisplacedSubfieldCodes:
         log = tmp_path / "run.log"
         rc = m.main([str(src), "-o", str(out), "--log", str(log)])
         assert rc == 0
-        resolved_log = _resolve_log(log)
-        content = resolved_log.read_text(encoding="utf-8") if resolved_log.exists() else ""
-        assert "fixed_misplaced_subfield_code" not in content
+        content = _resolve_log(log).read_text(encoding="utf-8")
+        assert "\tfixed_misplaced_subfield_code\t" not in content
         parsed_out = m.read_intact_record(m._read_text(str(out)))
         f260 = next(f for f in parsed_out.fields if f.tag == "260")
         assert ("c", "2000.") in f260.subfields
@@ -1246,18 +1245,17 @@ class TestLeaderEntryMapCorrection:
         raw[20:24] = b"45x0"
         return bytes(raw)
 
-    def test_log_leader_entry_map_fixed_flag_enables_logging(self, tmp_path):
+    def test_log_informational_flag_enables_leader_entry_map_fixed_logging(self, tmp_path):
         src = tmp_path / "badmap.mrc"
         src.write_bytes(self._corrupted_entry_map_bytes())
         out = tmp_path / "out.mrc"
         log = tmp_path / "run.log"
         rc = m.main([
-            str(src), "-o", str(out), "--log-leader-entry-map-fixed",
-            "--log-informational", "--log", str(log),
+            str(src), "-o", str(out), "--log-informational", "--log", str(log),
         ])
         assert rc == 0
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert "leader_entry_map_fixed" in content
+        assert "\tleader_entry_map_fixed\t" in content
 
     def _corrupted_entry_map_bytes_invalid_utf8(self):
         # Same idea as `_corrupted_entry_map_bytes`, but the corrupted byte
@@ -1450,7 +1448,7 @@ class TestReattachOrphanedFieldsCLI:
         assert rc == 0
         assert m.count_records(str(out)) == 1
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert "reattached_orphaned_field" in content
+        assert "\treattached_orphaned_field\t" in content
         assert "[FIXED/REQUIRES ATTENTION]" in content
         parsed = m.read_intact_record(m._read_text(str(out)))
         assert parsed.fields[-1].tag == "700"
@@ -1712,7 +1710,8 @@ class TestAddDefault008:
         rc = m.main([str(src), "-o", str(out), "--no-add-default-008", "--log", str(log)])
         assert rc == 0
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert "=== NOT FIXED: missing_008 (1) ===" in content
+        assert "=== NOT FIXED: missing_008 ===" in content
+        assert "\tmissing_008\t" in content
         results = m.repair_text(m._read_text(str(out)))
         assert not any(f.tag == "008" for f in results[0].fields)
 
@@ -1786,8 +1785,9 @@ class TestFixInvalidTags:
         rc = m.main([str(src), "-o", str(out), "--log-informational", "--log", str(log)])
         assert rc == 0
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert "=== INFORMATIONAL: invalid_tag (1) ===" in content
-        assert "non_numeric_tag" not in content
+        assert "=== INFORMATIONAL: invalid_tag ===" in content
+        assert "\tinvalid_tag\t" in content
+        assert "\tnon_numeric_tag\t" not in content
         results = m.repair_text(m._read_text(str(out)))
         tags = [f.tag for f in results[0].fields]
         assert "24A" not in tags
@@ -1806,10 +1806,14 @@ class TestFixInvalidTags:
         src.write_bytes(m.assemble_marc(parsed))
         out = tmp_path / "out.mrc"
         log = tmp_path / "run.log"
-        rc = m.main([str(src), "-o", str(out), "--no-fix-invalid-tags", "--log", str(log)])
+        rc = m.main([
+            str(src), "-o", str(out), "--no-fix-invalid-tags",
+            "--log-full", "non_numeric_tag", "--log", str(log),
+        ])
         assert rc == 0
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert "=== NOT FIXED: non_numeric_tag (1) ===" in content
+        assert "=== NOT FIXED: non_numeric_tag ===" in content
+        assert "\tnon_numeric_tag\t" in content
         results = m.repair_text(m._read_text(str(out)))
         tags = [f.tag for f in results[0].fields]
         assert "24A" in tags
@@ -1873,10 +1877,12 @@ class TestFixInvalidTags:
         # so the filler "999" field here keeps its slot taken without
         # needing any extra flag, satisfying this test's "every 9XX
         # slot taken" setup.
-        rc = m.main([str(src), "-o", str(out), "--log", str(log)])
+        rc = m.main([
+            str(src), "-o", str(out), "--log-full", "non_numeric_tag", "--log", str(log),
+        ])
         assert rc == 0
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert "=== NOT FIXED: non_numeric_tag (1) ===" in content
+        assert "=== NOT FIXED: non_numeric_tag ===" in content
         assert "could not fix" in content
         results = m.repair_text(m._read_text(str(out)))
         assert any(f.tag == "24A" for f in results[1].fields)
@@ -1954,7 +1960,10 @@ class TestRemap999To945:
         log = tmp_path / "run.log"
         rc = m.main([str(src), "-o", str(out), "--remap-999-to-945", "--log", str(log)])
         assert rc == 0
-        assert not _resolve_log(log).exists()  # runs, but not logged unless --log-999-to-945 too
+        # runs, header + count always shown, but not listed in full
+        # unless --log-full remapped_999_to_945 (or --log-informational)
+        content = _resolve_log(log).read_text(encoding="utf-8")
+        assert "\tremapped_999_to_945\t" not in content
         results = m.repair_text(m._read_text(str(out)))
         tags = [f.tag for f in results[0].fields]
         assert "999" not in tags
@@ -1976,12 +1985,12 @@ class TestRemap999To945:
         out = tmp_path / "out.mrc"
         log = tmp_path / "run.log"
         rc = m.main([
-            str(src), "-o", str(out), "--remap-999-to-945", "--log-999-to-945",
+            str(src), "-o", str(out), "--remap-999-to-945",
             "--log-informational", "--log", str(log),
         ])
         assert rc == 0
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert "remapped_999_to_945" in content
+        assert "\tremapped_999_to_945\t" in content
 
 
 # ---------------------------------------------------------------------------
@@ -2018,7 +2027,7 @@ class TestNormalizeSubfield9To0:
         assert details == []
         assert parsed.fields[0].subfields == [("a", "Subject")]
 
-    def test_log_normalized_subfield_9_to_0_flag_enables_logging(self, tmp_path):
+    def test_log_informational_flag_enables_normalized_subfield_9_to_0_logging(self, tmp_path):
         parsed = m.ParsedRecord(
             leader=_SYNTHETIC_LEADER,
             entries=[],
@@ -2032,12 +2041,11 @@ class TestNormalizeSubfield9To0:
         out = tmp_path / "out.mrc"
         log = tmp_path / "run.log"
         rc = m.main([
-            str(src), "-o", str(out), "--log-normalized-subfield-9-to-0",
-            "--log-informational", "--log", str(log),
+            str(src), "-o", str(out), "--log-informational", "--log", str(log),
         ])
         assert rc == 0
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert "normalized_subfield_9_to_0" in content
+        assert "\tnormalized_subfield_9_to_0\t" in content
         results = m.repair_text(m._read_text(str(out)))
         field = next(f for f in results[0].fields if f.tag == "650")
         assert field.subfields == [("a", "Subject"), ("0", "123456")]
@@ -2108,7 +2116,7 @@ class TestNormalizeSmartCharacters:
         m.normalize_smart_characters(parsed)
         assert parsed.fields[0].subfields == [("a", "a bc")]
 
-    def test_log_normalized_smart_characters_flag_enables_logging(self, tmp_path):
+    def test_log_informational_flag_enables_normalized_smart_characters_logging(self, tmp_path):
         parsed = m.ParsedRecord(
             leader=_SYNTHETIC_LEADER,
             entries=[],
@@ -2122,12 +2130,11 @@ class TestNormalizeSmartCharacters:
         out = tmp_path / "out.mrc"
         log = tmp_path / "run.log"
         rc = m.main([
-            str(src), "-o", str(out), "--log-normalized-smart-characters",
-            "--log-informational", "--log", str(log),
+            str(src), "-o", str(out), "--log-informational", "--log", str(log),
         ])
         assert rc == 0
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert "normalized_smart_characters" in content
+        assert "\tnormalized_smart_characters\t" in content
         results = m.repair_text(m._read_text(str(out)))
         title_field = next(f for f in results[0].fields if f.tag == "520")
         assert title_field.subfields == [("a", "It's great.")]
@@ -2607,6 +2614,15 @@ class _CliDefaultCase:
     requires_pymarc: bool = False
 
 
+def _detail_line_marker(category: str) -> str:
+    """Substring that only appears in an actual per-record detail line
+    for `category` (see `LogEntry.render`, tab-separated), never in
+    the "=== SECTION: category ===" header `write_log` always writes
+    for every active category regardless of whether it's listed in
+    full -- headers use no literal tabs at all."""
+    return f"\t{category}\t"
+
+
 def _run_cli_default_case(case: "_CliDefaultCase", tmp_path):
     if case.requires_pymarc:
         pytest.importorskip("pymarc")
@@ -2635,7 +2651,10 @@ _INFORMATIONAL_BY_DEFAULT_CASES = [
             fields=[m.Field_("008", None, None, content="x" * 40)],
         )),
         extra_cli_args=["--log-informational"],
-        required_log_substrings=["=== INFORMATIONAL: leader_byte_defaulted (1) ==="],
+        required_log_substrings=[
+            "=== INFORMATIONAL: leader_byte_defaulted ===",
+            _detail_line_marker("leader_byte_defaulted"),
+        ],
         verify=lambda results: results[0].leader[5] == "c",
     ),
     _CliDefaultCase(
@@ -2646,7 +2665,10 @@ _INFORMATIONAL_BY_DEFAULT_CASES = [
             fields=[m.Field_("008", None, None, content="x" * 40)],
         )),
         extra_cli_args=["--log-informational"],
-        required_log_substrings=["=== INFORMATIONAL: added_default_245 (1) ==="],
+        required_log_substrings=[
+            "=== INFORMATIONAL: added_default_245 ===",
+            _detail_line_marker("added_default_245"),
+        ],
         verify=lambda results: (
             next(f for f in results[0].fields if f.tag == "245").subfields
             == [("a", "No title")]
@@ -2660,8 +2682,11 @@ _INFORMATIONAL_BY_DEFAULT_CASES = [
             fields=[m.Field_("245", "00", [("a", "Title.")])],
         )),
         extra_cli_args=["--log-informational"],
-        required_log_substrings=["=== INFORMATIONAL: added_default_008 (1) ==="],
-        forbidden_log_substrings=["missing_008"],
+        required_log_substrings=[
+            "=== INFORMATIONAL: added_default_008 ===",
+            _detail_line_marker("added_default_008"),
+        ],
+        forbidden_log_substrings=[_detail_line_marker("missing_008")],
         verify=lambda results: (
             next(f for f in results[0].fields if f.tag == "008").content
             == m.DEFAULT_008_CONTENT
@@ -2678,7 +2703,10 @@ _INFORMATIONAL_BY_DEFAULT_CASES = [
             ],
         )),
         extra_cli_args=["--log-informational"],
-        required_log_substrings=["=== INFORMATIONAL: fixed_mojibake (1) ==="],
+        required_log_substrings=[
+            "=== INFORMATIONAL: fixed_mojibake ===",
+            _detail_line_marker("fixed_mojibake"),
+        ],
         verify=lambda results: (
             next(f for f in results[0].fields if f.tag == "500").subfields
             == [("a", "Großbritannien")]
@@ -2702,7 +2730,8 @@ _NOT_LOGGED_UNLESS_FLAGGED_CASES = [
     _CliDefaultCase(
         id="leader_entry_map_fixed",
         build=_build_corrupted_entry_map_record,
-        forbidden_log_substrings=["leader_entry_map_fixed"],
+        required_log_substrings=["=== INFORMATIONAL: leader_entry_map_fixed ==="],
+        forbidden_log_substrings=[_detail_line_marker("leader_entry_map_fixed")],
         verify=lambda results: m.assemble_marc(results[0])[20:24] == b"4500",
     ),
     _CliDefaultCase(
@@ -2715,7 +2744,7 @@ _NOT_LOGGED_UNLESS_FLAGGED_CASES = [
                 m.Field_("100", "1 ", [("a", "Bal\xe5asim, \xf2Hasan.")]),
             ],
         )),
-        forbidden_log_substrings=["transcoded_marc8"],
+        forbidden_log_substrings=[_detail_line_marker("transcoded_marc8")],
         verify=lambda results: results[0].leader[9] == "a",
         requires_pymarc=True,
     ),
@@ -2729,8 +2758,7 @@ _NOT_LOGGED_UNLESS_FLAGGED_CASES = [
                 m.Field_("650", " 0", [("a", "Subject"), ("9", "123456")]),
             ],
         )),
-        extra_cli_args=["--log-informational"],
-        forbidden_log_substrings=["normalized_subfield_9_to_0"],
+        forbidden_log_substrings=[_detail_line_marker("normalized_subfield_9_to_0")],
         verify=lambda results: (
             next(f for f in results[0].fields if f.tag == "650").subfields
             == [("a", "Subject"), ("0", "123456")]
@@ -2746,7 +2774,7 @@ _NOT_LOGGED_UNLESS_FLAGGED_CASES = [
                 m.Field_("520", "  ", [("a", "It’s great.")]),
             ],
         )),
-        forbidden_log_substrings=["normalized_smart_characters"],
+        forbidden_log_substrings=[_detail_line_marker("normalized_smart_characters")],
         verify=lambda results: (
             next(f for f in results[0].fields if f.tag == "520").subfields
             == [("a", "It's great.")]
@@ -2767,7 +2795,7 @@ _FIXED_REQUIRES_ATTENTION_CASES = [
             ],
         )),
         required_log_substrings=[
-            "=== FIXED/REQUIRES ATTENTION: removed_non_repeatable_duplicate (1) ===",
+            "=== FIXED/REQUIRES ATTENTION: removed_non_repeatable_duplicate ===",
             "2nd ed.",
         ],
         verify=lambda results: len([f for f in results[0].fields if f.tag == "245"]) == 1,
@@ -2782,7 +2810,7 @@ _FIXED_REQUIRES_ATTENTION_CASES = [
                 m.Field_("245", "00", [("a", "Title.")]),
             ],
         )),
-        required_log_substrings=["=== FIXED/REQUIRES ATTENTION: fixed_008_length (1) ==="],
+        required_log_substrings=["=== FIXED/REQUIRES ATTENTION: fixed_008_length ==="],
         verify=lambda results: (
             len(next(f for f in results[0].fields if f.tag == "008").content) == 40
         ),

@@ -2533,9 +2533,9 @@ def fix_852_call_number(parsed: ParsedRecord) -> tuple[list[str], list[str]]:
         bad subfield to remove, just nothing there -- so the field is
         left completely untouched (not even its other subfields), and
         returned in `missing_details` instead (category
-        "missing_call_number", INFORMATIONAL, logged only when opted
-        into -- see `repair_holdings_records`'s
-        `log_missing_call_number`).
+        "missing_call_number", INFORMATIONAL; header+count always
+        shown, full per-record listing only via --log-full/
+        --log-informational -- see `repair_holdings_records`).
 
     No-op (in both lists) for an 852 that already has a usable $h.
     """
@@ -3403,9 +3403,9 @@ def normalize_subfield_9_to_0(parsed: ParsedRecord) -> list[str]:
     other system's data -- run by default per that script's convention,
     and --no-normalize-subfield-9 is available to skip it. Returns one
     detail string per field changed (category "normalized_subfield_9_to_0"
-    if the caller logs them), but by default the CLI does NOT log these --
-    see --log-normalized-subfield-9-to-0 -- since a file that uses $9 at
-    all often has it on nearly every record.
+    if the caller logs them); the CLI always logs a header + count for
+    this, but doesn't list every record by default (see --log-full) --
+    a file that uses $9 at all often has it on nearly every record.
     """
     details = []
     for f in parsed.fields:
@@ -3426,10 +3426,11 @@ def remap_999_to_945(parsed: ParsedRecord) -> list[str]:
     the same purpose that other systems (e.g. OCLC) will actually accept.
     Subfield content and order are left untouched -- only the tag and
     indicators change. Returns one detail string per field remapped
-    (category "remapped_999_to_945" if the caller logs them), but by
-    default the CLI does NOT log these -- see --log-999-to-945 -- since a
-    single record can carry many 999s (one per item copy) and logging
-    each would dominate the log.
+    (category "remapped_999_to_945" if the caller logs them); the CLI
+    always logs a header + count for this, but doesn't list every
+    record by default (see --log-full) -- a single record can carry
+    many 999s (one per item copy) and listing each would dominate the
+    log.
     """
     details = []
     for f in parsed.fields:
@@ -3866,6 +3867,200 @@ def _section_for(entry: LogEntry) -> tuple[int, str]:
     return (4, "INFORMATIONAL") if entry.fixed else (0, "NOT FIXED")
 
 
+def _section_for_category(category: str) -> tuple[int, str]:
+    """Same as `_section_for`, but for a bare category name with no
+    `LogEntry` to hand -- used by `write_log` to print a category's
+    header even when this run found zero matching records (so there's
+    no entry to look at). Safe to default an unregistered category to
+    NOT FIXED without knowing its `fixed` value: `_section_for`'s own
+    docstring notes every category ever logged with fixed=True is
+    already registered in `_FIXED_REQUIRES_ATTENTION` or
+    `_INFORMATIONAL`, so an unregistered category can only ever be a
+    detect-only, fixed=False one."""
+    dedicated = _DEDICATED_SECTIONS.get(category)
+    return dedicated if dedicated is not None else (0, "NOT FIXED")
+
+
+#: One-line description of what each category's check actually does --
+#: printed as the second of the three header lines `write_log` writes
+#: for every category active in a given run (see `write_log`), so a
+#: reader never has to go dig through this file's docstrings to know
+#: what e.g. "holdings_852_b_suspect_content" means. Keep in sync with
+#: docs/REPAIR_CATEGORIES.md (the two aren't generated from a shared
+#: source, but should never say something different).
+_CHECK_DESCRIPTIONS: dict[str, str] = {
+    "unfixable": "Record has no consistent directory in either parsing "
+    "mode (or a field/base address too large for ISO 2709 to represent) "
+    "-- written unchanged to the _error file instead of the main output.",
+    "unresolved_record": "Holdings record could not be structurally "
+    "parsed at all -- passed through to the main output unchanged.",
+    "oversized_unfixable": "A split copy's assembled length can't be "
+    "represented in ISO 2709's fixed-width leader/directory -- passed "
+    "through unchanged.",
+    "duplicate_identifier": "The same identifier (usually 001, or 907 $a "
+    "for Sierra records) is used by more than one distinct record in "
+    "this file.",
+    "removed_non_repeatable_duplicate": "A non-repeatable field (e.g. "
+    "001/005/008) appeared more than once on one record -- all but one "
+    "copy removed.",
+    "field_removed_because_missing_a": "A heading/added-entry field (or "
+    "a holdings caption field) lacked a non-empty, non-punctuation-only "
+    "$a -- the whole field removed.",
+    "removed_invalid_subfield": "A subfield code that isn't a lowercase "
+    "letter or digit -- the subfield removed.",
+    "removed_bad_call_number": "An 852 $h (call number) that was "
+    "unusable (e.g. punctuation-only) -- removed.",
+    "removed_extra_852_b": "An 852 had more than one $b (Sublocation) "
+    "after the first was already recoded to $i -- the extras removed.",
+    "incomplete_852": "One 852 (Location) among several on a holdings "
+    "record had no $b at all -- dropped entirely rather than becoming "
+    "its own split record.",
+    "doubled_proxy_url": "A URL subfield (e.g. 856 $u) has a literally "
+    "duplicated proxy prefix (e.g. an ezproxy wrapper repeated twice).",
+    "holdings_852_b_suspect_content": "An 852 $b (Sublocation) looks "
+    "like data that migrated into the wrong subfield -- purely "
+    "numeric, or containing flattened subfield-delimiter markers.",
+    "holdings_853_missing_8": "An 853 (Captions and Pattern) field has "
+    "no $8 (Field link and sequence number) -- the 863/864/865 "
+    "enumeration fields that should reference it can't be linked.",
+    "holdings_856_missing_u": "An 856 (Electronic Location and Access) "
+    "field has no $u (URI) -- the field exists but has no actual link.",
+    "missing_008": "Record has no 008 control field at all, mandatory "
+    "in every MARC21 record -- not auto-filled since the correct "
+    "default is material-type-specific.",
+    "split_holdings_multiple_852": "A holdings record had more than "
+    "one usable 852 (Location) -- split into one record per 852, with "
+    "\"-2\", \"-3\", etc. appended to each additional copy's 001.",
+    "non_numeric_tag": "A field's tag isn't 3 numeric digits -- "
+    "normally auto-renamed to an unused 9XX slot; this fires only when "
+    "that's disabled or every 9XX slot is already taken.",
+    "invalid_subfield_code": "A subfield code that isn't a lowercase "
+    "letter or digit was found but --no-strip-invalid-subfield-codes "
+    "left it in place instead of removing it.",
+    "dangling_880_link": "An 880 (Alternate Graphic Representation) "
+    "field's $6 linkage doesn't match any other field's own $6 "
+    "back-reference.",
+    "invalid_isbn_issn_checksum": "An 020/022 $a's check digit doesn't "
+    "match the rest of the number.",
+    "holdings_escape_sequence": "A holdings record contains a raw ESC "
+    "(0x1B) byte -- likely an un-transcoded MARC-8 escape sequence "
+    "(MARC-8-to-UTF-8 conversion is currently skipped for holdings).",
+    "transcode_marc8_failed": "MARC-8-to-UTF-8 transcoding failed for "
+    "this record's content -- left as MARC-8, error recorded.",
+    "added_default_008": "Record had no 008 -- a fixed generic "
+    "placeholder was inserted.",
+    "added_default_holdings_008": "Holdings record had no 008 -- a "
+    "fixed generic 32-byte placeholder was inserted.",
+    "added_default_245": "Record had no 245 -- a placeholder "
+    "($a \"No title\") was inserted.",
+    "added_missing_852c": "852 (Location) had no $c (Shelving "
+    "location) -- a placeholder was inserted (only with "
+    "--fix-missing-852c).",
+    "normalized_subfield_9_to_0": "A $9 subfield was rewritten to $0 "
+    "(MARC21's standard authority-control-number code).",
+    "normalized_smart_characters": "Typographic (\"smart\") quotes/"
+    "dashes were flattened to their plain-ASCII equivalents.",
+    "transcoded_marc8": "A MARC-8/ANSEL-encoded record was converted "
+    "to UTF-8 and the leader's encoding byte flipped to match.",
+    "fixed_misplaced_subfield_code": "A run of text that looked like a "
+    "missed subfield delimiter was corrected.",
+    "removed_null_identifier": "A subfield with no data at all (e.g. a "
+    "bare $8, or an empty $a immediately followed by another subfield) "
+    "was removed.",
+    "missing_call_number": "An 852 (Location) had no $h (call number) "
+    "at all -- left untouched; a call number can legitimately be "
+    "absent.",
+    "leader_byte_defaulted": "A leader byte (record status/type/bib "
+    "level/encoding level) held a value outside MARC21's defined set "
+    "-- reset to a safe default.",
+    "holdings_leader_byte_defaulted": "Same as leader_byte_defaulted, "
+    "using holdings' own valid-value set.",
+    "leader_entry_map_fixed": "Leader bytes 20-23 (the entry map) "
+    "weren't the MARC21-fixed constant \"4500\" -- corrected.",
+    "invalid_tag": "A non-numeric tag was renamed to an unused 9XX "
+    "slot (see non_numeric_tag for when this isn't possible).",
+    "invalid_indicator_value": "An indicator held a value outside "
+    "MARC21's defined set for that field.",
+    "invalid_bibliographic_level": "Leader byte 7 (bibliographic "
+    "level) held a value outside MARC21's defined set.",
+    "fixed_mojibake": "Double-encoded UTF-8 (\"mojibake\") was "
+    "corrected.",
+    "remapped_999_to_945": "A 999 field was retagged to 945 "
+    "(indicators forced to \"ff\") -- only with --remap-999-to-945.",
+    "oversized_sentinel_fixed": "A record's true length exceeds ISO "
+    "2709's 5-digit field -- leader declares the documented 99999 "
+    "sentinel instead (nothing lost; the real end is still found from "
+    "the record terminator).",
+    "padded_indicators": "A data field had 0 or 1 indicator characters "
+    "instead of 2 -- padded with spaces.",
+    "holdings_missing_004": "Holdings record has no 004 (link to its "
+    "bib record) at all.",
+    "holdings_multiple_004": "Holdings record has more than one 004 "
+    "-- not necessarily wrong (can legitimately link to more than one "
+    "bib record), surfaced for awareness.",
+    "holdings_852_duplicate_nr_subfield": "852 (Location) had a "
+    "non-repeatable subfield (e.g. $b) more than once.",
+    "fixed_008_length": "008 wasn't exactly 40 characters -- padded or "
+    "truncated to fit.",
+    "fixed_holdings_008_length": "Holdings 008 wasn't exactly 32 "
+    "characters -- padded or truncated to fit.",
+    "added_field": "A field required via --ensure-field was missing "
+    "entirely -- inserted with the given content.",
+    "added_missing_852_location": "852 (Location) had none of $a/$b/"
+    "$c -- a placeholder was inserted so the field means something.",
+    "reattached_orphaned_field": "A field that had drifted outside its "
+    "record's own boundaries was reattached to the record it actually "
+    "belongs to.",
+    "removed_empty_852_subfield": "An 852 (Location) subfield (other "
+    "than $h) was present but held no data -- removed.",
+    "recoded_852_b_to_i": "852 had a second $b positioned after $h -- "
+    "recoded to $i (it's the cutter/copy number that goes with $h, "
+    "just miscoded).",
+}
+
+
+#: Categories listed in full (every matching record) by default,
+#: rather than just the header + count `write_log` always writes for
+#: every category active in a run -- see `write_log`. Chosen by two
+#: criteria: real content was discarded or altered (a library needs to
+#: know exactly which records), or the finding is something a cataloger
+#: would plausibly want to go fix one-by-one (e.g. a broken URL) rather
+#: than accept in bulk. Everything else defaults to header+count only
+#: -- get the full list for any of those via --log-full (repeatable)
+#: or --log-informational (every currently-INFORMATIONAL category).
+#: Deliberately excludes a few categories that are both individually
+#: real and can be very high-volume across a file, unlikely to ever be
+#: individually fixed (dangling_880_link, invalid_isbn_issn_checksum,
+#: non_numeric_tag, invalid_subfield_code) -- on request.
+_ALWAYS_FULL_CATEGORIES = {
+    "unfixable",
+    "unresolved_record",
+    "oversized_unfixable",
+    "duplicate_identifier",
+    "removed_non_repeatable_duplicate",
+    "field_removed_because_missing_a",
+    "removed_invalid_subfield",
+    "removed_bad_call_number",
+    "removed_extra_852_b",
+    "incomplete_852",
+    "doubled_proxy_url",
+    "holdings_852_b_suspect_content",
+    "holdings_853_missing_8",
+    "holdings_856_missing_u",
+    "missing_008",
+    "split_holdings_multiple_852",
+    "holdings_escape_sequence",
+    "transcode_marc8_failed",
+    "reattached_orphaned_field",
+    "holdings_leader_byte_defaulted",
+    "holdings_missing_004",
+    "holdings_multiple_004",
+    "holdings_852_duplicate_nr_subfield",
+    "added_missing_852c",
+    "added_missing_852_location",
+}
+
+
 def _timestamped_log_path(path: str, run_ts: str) -> str:
     """Insert `run_ts` right before `path`'s extension, so every log this
     tool writes is timestamped -- even one named explicitly via --log --
@@ -3875,28 +4070,61 @@ def _timestamped_log_path(path: str, run_ts: str) -> str:
     return f"{base}_{run_ts}{ext}"
 
 
-def write_log(path: str, entries: list[LogEntry]) -> None:
+def write_log(
+    path: str,
+    entries: list[LogEntry],
+    active_categories: set[str] = frozenset(),
+    full_categories: set[str] | None = None,
+) -> None:
     """Write `entries` grouped into sections -- NOT FIXED, then FIXED/
     REQUIRES ATTENTION, then DUPLICATE RECORDS, then INFORMATIONAL at
     the bottom (there is no plain "FIXED" section -- see
-    `_section_for`) -- and then by category within each, with a header
-    per group -- so a run with (say) 375 missing-008 warnings and 7
-    doubled-proxy-URL warnings shows them as two clearly labeled,
-    contiguous blocks instead of interleaved in whatever order the
-    records happened to come in."""
+    `_section_for`) -- and then by category within each.
+
+    Every category in `active_categories` (every check that actually
+    ran this invocation, whether or not it found anything -- the
+    caller, `main`/`repair_holdings_records`, is responsible for this
+    set being complete: a category whose check didn't run at all this
+    invocation, e.g. one gated behind an off-by-default flag, must not
+    be in it) gets a 3-line header, even one with zero matching
+    records:
+
+        === <SECTION>: <category> ===
+        === <one-line description of what the check does> ===
+        === <N> record(s) ===
+
+    -- so a run's log always documents every check it performed, not
+    just the ones that found something. Below that header, every
+    matching record is listed in full only if `category` is in
+    `full_categories` (defaults to `_ALWAYS_FULL_CATEGORIES` when not
+    given); otherwise the header's count is all a reader gets, and
+    --log-full/--log-informational are how they'd ask for the rest.
+    This split point is the whole reason `_ALWAYS_FULL_CATEGORIES` is
+    a small curated set rather than "everything": a run with (say)
+    50,000 padded-indicator fixes and 3 doubled-proxy-URLs should make
+    both facts easy to find, not bury the 3 under the 50,000."""
+    if full_categories is None:
+        full_categories = _ALWAYS_FULL_CATEGORIES
     groups: dict[tuple[int, str, str], list[LogEntry]] = {}
     for e in entries:
         order, label = _section_for(e)
         groups.setdefault((order, label, e.category), []).append(e)
+    for category in active_categories:
+        order, label = _section_for_category(category)
+        groups.setdefault((order, label, category), [])
 
     with open(path, "a", encoding="utf-8") as fh:
         for section_num, (order, label, category) in enumerate(sorted(groups)):
             group = groups[(order, label, category)]
             if section_num > 0:
                 fh.write("\n")
-            fh.write(f"=== {label}: {category} ({len(group)}) ===\n")
-            for e in group:
-                fh.write(e.render() + "\n")
+            fh.write(f"=== {label}: {category} ===\n")
+            description = _CHECK_DESCRIPTIONS.get(category, "(no description available)")
+            fh.write(f"=== {description} ===\n")
+            fh.write(f"=== {len(group)} record(s) ===\n")
+            if category in full_categories:
+                for e in group:
+                    fh.write(e.render() + "\n")
 
 
 class ProgressReporter:
@@ -3997,14 +4225,51 @@ class ProgressReporter:
             print(file=sys.stderr)  # move off the in-place progress line
 
 
+#: Every category `repair_holdings_records` can log, run unconditionally
+#: on every invocation regardless of any of its own parameters -- used
+#: to build that run's `active_categories` for `write_log` (see below;
+#: "added_missing_852c" is the one holdings category NOT here, since it
+#: only runs at all when `fix_missing_852c` is set).
+_HOLDINGS_ALWAYS_ACTIVE_CATEGORIES = {
+    "unresolved_record",
+    "padded_indicators",
+    "holdings_escape_sequence",
+    "fixed_mojibake",
+    "holdings_leader_byte_defaulted",
+    "normalized_subfield_9_to_0",
+    "normalized_smart_characters",
+    "fixed_misplaced_subfield_code",
+    "removed_invalid_subfield",
+    "field_removed_because_missing_a",
+    "added_default_holdings_008",
+    "fixed_holdings_008_length",
+    "recoded_852_b_to_i",
+    "removed_extra_852_b",
+    "removed_bad_call_number",
+    "missing_call_number",
+    "added_missing_852_location",
+    "removed_empty_852_subfield",
+    "removed_null_identifier",
+    "holdings_missing_004",
+    "holdings_multiple_004",
+    "holdings_852_duplicate_nr_subfield",
+    "holdings_852_b_suspect_content",
+    "holdings_853_missing_8",
+    "holdings_856_missing_u",
+    "incomplete_852",
+    "split_holdings_multiple_852",
+    "oversized_unfixable",
+    "oversized_sentinel_fixed",
+}
+
+
 def repair_holdings_records(
     input_path: str,
     output_path: str,
     log_path: str,
     fix_missing_852c: bool = False,
-    log_fixed_misplaced_subfield_code: bool = False,
-    log_removed_null_identifier: bool = False,
-    log_missing_call_number: bool = False,
+    full_categories: set[str] | None = None,
+    log_informational: bool = False,
     on_progress: Callable[[int], None] | None = None,
     on_record: Callable[[int], None] | None = None,
     on_estimate: Callable[[int, int], None] | None = None,
@@ -4040,9 +4305,10 @@ def repair_holdings_records(
       * misplaced-subfield-code recovery (a stray space between the
         delimiter and its real code -- see `fix_misplaced_subfield_codes`),
         same as the bib pipeline; runs first so these are recovered
-        rather than caught by invalid-code removal below. Not logged
-        per-record by default (see `log_fixed_misplaced_subfield_code`)
-        since this can be a large fraction of a file with this defect
+        rather than caught by invalid-code removal below. Header+count
+        always shown; not listed per-record by default (see
+        `full_categories`) since this can be a large fraction of a
+        file with this defect
       * invalid (non a-z0-9) subfield code removal
       * empty-field removal
       * a missing 008 gets a blank, syntactically-valid placeholder
@@ -4136,10 +4402,10 @@ def repair_holdings_records(
         flagged (category "missing_call_number", INFORMATIONAL: a call
         number can legitimately be absent, e.g. for some serials/
         electronic holdings, so this isn't as urgent as a genuine
-        defect). Logged only when `log_missing_call_number` is set (off
-        by default -- see --log-missing-call-number -- since it can be
-        a large fraction of a file, same reasoning as
-        `log_removed_null_identifier`)
+        defect). Header+count always shown; per-record listing only
+        via `full_categories` -- off by default since it can be a
+        large fraction of a file, same reasoning as
+        "removed_null_identifier" below)
       * an 852 field that survives the above but has no usable location
         in $a, $b, or $c -- which subfield actually carries it is
         source-system-dependent (see `fix_missing_852_location`) --
@@ -4161,12 +4427,11 @@ def repair_holdings_records(
         up whatever they didn't already turn into something else
       * any subfield with no data at all on any OTHER field (852 is
         fully covered by the fixes above) is likewise removed -- see
-        `strip_null_identifiers` -- but only logged (category
-        "removed_null_identifier", INFORMATIONAL) when
-        `log_removed_null_identifier` is set (off by default -- see
-        --log-removed-null-identifier -- same large-fraction-of-a-file
-        reasoning as `log_fixed_misplaced_subfield_code`); the fix
-        itself always runs regardless
+        `strip_null_identifiers` (category "removed_null_identifier",
+        INFORMATIONAL). The fix itself always runs; header+count
+        always shown, per-record listing only via `full_categories`
+        -- off by default, same large-fraction-of-a-file reasoning as
+        "fixed_misplaced_subfield_code" above
       * a non-numeric tag is renamed to an unused 9XX slot, same
         deferred two-pass approach `main` uses for bib records (needs
         every tag in the *holdings* file specifically, so this is
@@ -4281,10 +4546,8 @@ def repair_holdings_records(
                 log("normalized_subfield_9_to_0", True, i, rec_id, detail)
             for detail in normalize_smart_characters(parsed):
                 log("normalized_smart_characters", True, i, rec_id, detail)
-            misplaced_details = fix_misplaced_subfield_codes(parsed)
-            if log_fixed_misplaced_subfield_code:
-                for detail in misplaced_details:
-                    log("fixed_misplaced_subfield_code", True, i, rec_id, detail)
+            for detail in fix_misplaced_subfield_codes(parsed):
+                log("fixed_misplaced_subfield_code", True, i, rec_id, detail)
             for detail in strip_invalid_subfield_codes(parsed):
                 log("removed_invalid_subfield", True, i, rec_id, detail)
             for detail in strip_missing_required_a(parsed, holdings_required_a_tags):
@@ -4307,9 +4570,8 @@ def repair_holdings_records(
             removed_call_number, missing_call_number = fix_852_call_number(parsed)
             for detail in removed_call_number:
                 log("removed_bad_call_number", True, i, rec_id, detail)
-            if log_missing_call_number:
-                for detail in missing_call_number:
-                    log("missing_call_number", False, i, rec_id, detail)
+            for detail in missing_call_number:
+                log("missing_call_number", False, i, rec_id, detail)
             for detail in fix_missing_852_location(parsed):
                 log("added_missing_852_location", True, i, rec_id, detail)
             if fix_missing_852c:
@@ -4317,10 +4579,8 @@ def repair_holdings_records(
                     log("added_missing_852c", True, i, rec_id, detail)
             for detail in strip_empty_852_subfields(parsed):
                 log("removed_empty_852_subfield", True, i, rec_id, detail)
-            null_identifier_details = strip_null_identifiers(parsed)
-            if log_removed_null_identifier:
-                for detail in null_identifier_details:
-                    log("removed_null_identifier", True, i, rec_id, detail)
+            for detail in strip_null_identifiers(parsed):
+                log("removed_null_identifier", True, i, rec_id, detail)
             n_004 = sum(1 for f in parsed.fields if f.tag == "004")
             for category, detail in _find_004_issues(n_004):
                 log(category, False, i, rec_id, detail)
@@ -4414,8 +4674,18 @@ def repair_holdings_records(
     dup_ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     log_entries.extend(find_duplicate_identifiers(id_records, dup_ts))
 
-    if log_entries:
-        write_log(log_path, log_entries)
+    active_categories = set(_HOLDINGS_ALWAYS_ACTIVE_CATEGORIES) | {"duplicate_identifier"}
+    if fix_missing_852c:
+        active_categories.add("added_missing_852c")
+    resolved_full_categories = _ALWAYS_FULL_CATEGORIES | (full_categories or set())
+    if log_informational:
+        resolved_full_categories |= {
+            c for c in active_categories if _section_for_category(c)[1] == "INFORMATIONAL"
+        }
+    write_log(
+        log_path, log_entries, active_categories=active_categories,
+        full_categories=resolved_full_categories,
+    )
     n_not_fixed = sum(1 for e in log_entries if _section_for(e)[1] == "NOT FIXED")
     return {
         "total": n_total,
@@ -4504,30 +4774,6 @@ def main(argv: list[str] | None = None) -> int:
         "placeholder, not a real value",
     )
     parser.add_argument(
-        "--log-removed-null-identifier",
-        action="store_true",
-        help="(used by every pipeline -- the default bib run, "
-        "--split-bib-holdings, and --repair-holdings) log each subfield "
-        "removed for having no data at all (a \"null identifier\", e.g. "
-        "a bare $8); on the holdings side this is outside of 852 "
-        "(Location), which already has its own specific fixes for the "
-        "same problem. The fix itself -- removing the empty subfield -- "
-        "always runs regardless of this flag; off by default since it "
-        "can be a large fraction of a file, same reasoning as "
-        "--log-fixed-misplaced-subfield-code",
-    )
-    parser.add_argument(
-        "--log-missing-call-number",
-        action="store_true",
-        help="(holdings records only, used by --split-bib-holdings and "
-        "--repair-holdings) log each 852 (Location) field missing $h "
-        "(Classification part -- the call number) entirely. The field "
-        "is always left untouched either way (there's nothing to fix "
-        "-- see fix_852_call_number); off by default since a call "
-        "number can legitimately be absent (e.g. some serials/"
-        "electronic holdings) and it can be a large fraction of a file",
-    )
-    parser.add_argument(
         "--mrk",
         nargs="?",
         const="",
@@ -4610,16 +4856,34 @@ def main(argv: list[str] | None = None) -> int:
         "double-encoded",
     )
     parser.add_argument(
+        "--log-full",
+        dest="log_full",
+        action="append",
+        default=[],
+        metavar="CATEGORY",
+        help="list every matching record for CATEGORY (e.g. "
+        "\"removed_null_identifier\" -- the machine-readable name in "
+        "the log's own \"=== SECTION: category ===\" headers, also in "
+        "docs/REPAIR_CATEGORIES.md) instead of just the header + count "
+        "every check that ran always gets (see --log). Repeatable. A "
+        "curated set of categories -- real data loss, or the kind of "
+        "content problem (e.g. a broken URL) a cataloger would "
+        "plausibly want to go fix one-by-one -- are already listed in "
+        "full without needing this; use it for anything else you need "
+        "the per-record detail on. See also --log-informational",
+    )
+    parser.add_argument(
         "--log-informational",
         dest="log_informational",
         action="store_true",
         default=False,
-        help="include the INFORMATIONAL section in the log file. Off "
-        "by default -- these are typically the highest-volume "
-        "categories (e.g. every MARC-8 record transcoded), so this "
-        "keeps the log lean unless you actually need that detail; the "
-        "underlying fixes/detections still run and affect the output "
-        "either way, only the log content changes",
+        help="list every matching record (like --log-full) for every "
+        "category currently in the INFORMATIONAL section -- typically "
+        "the highest-volume categories (e.g. every MARC-8 record "
+        "transcoded), which is why they aren't listed in full by "
+        "default; the header + count for each is written either way "
+        "(see --log). The underlying fixes/detections always run and "
+        "affect the output regardless of this flag",
     )
     parser.add_argument(
         "--no-fix-misplaced-subfield-codes",
@@ -4633,20 +4897,9 @@ def main(argv: list[str] | None = None) -> int:
         "data). By default this runs BEFORE --strip-invalid-subfield-"
         "codes so these are recovered rather than discarded; pass this "
         "flag to leave such subfields for --strip-invalid-subfield-codes "
-        "to remove instead. Not logged per-record by default (see "
-        "--log-fixed-misplaced-subfield-code) since this can be a large "
-        "fraction of a file with this defect",
-    )
-    parser.add_argument(
-        "--log-fixed-misplaced-subfield-code",
-        action="store_true",
-        help="log each individual misplaced-subfield-code fix (see "
-        "--no-fix-misplaced-subfield-codes) in either pipeline. Off by "
-        "default since this can be a large fraction of a file with this "
-        "defect, which would otherwise dominate the log; the fix itself "
-        "always runs regardless of this flag (the bib pipeline also "
-        "needs --log-informational; holdings has no such gate, so this "
-        "flag alone is enough there)",
+        "to remove instead. Header + count always logged (see --log); "
+        "not listed per-record by default (see --log-full) since this "
+        "can be a large fraction of a file with this defect",
     )
     parser.add_argument(
         "--no-strip-invalid-subfield-codes",
@@ -4762,42 +5015,10 @@ def main(argv: list[str] | None = None) -> int:
         "retagged instead to 945, a locally-defined field other "
         "systems will actually accept. Off by default since it's not a "
         "structural defect and not every source is Sierra-originated. "
-        "Not logged unless --log-999-to-945 is also given (this remap "
-        "is typically extremely high-volume -- multiple 999s per "
-        "record -- so it's excluded from the log by default)",
-    )
-    parser.add_argument(
-        "--log-999-to-945",
-        action="store_true",
-        help="log each individual 999-to-945 remap (see --remap-999-to-945). "
-        "Off by default since a real file can have many 999 fields per "
-        "record, which would otherwise dominate the log",
-    )
-    parser.add_argument(
-        "--log-leader-entry-map-fixed",
-        action="store_true",
-        help="log each individual leader entry-map correction (bytes "
-        "20-23 forced back to the fixed constant '4500'). Off by "
-        "default since this can be nearly every record in a file with "
-        "this specific corruption, which would otherwise dominate the "
-        "log; the fix itself always runs regardless of this flag",
-    )
-    parser.add_argument(
-        "--log-transcoded-marc8",
-        action="store_true",
-        help="log each individual MARC-8-to-UTF-8 transcoding (see "
-        "--no-transcode-marc8). Off by default since this can be "
-        "nearly every record in a legacy file, which would otherwise "
-        "dominate the log",
-    )
-    parser.add_argument(
-        "--log-normalized-smart-characters",
-        action="store_true",
-        help="log each individual smart-character normalization (see "
-        "--no-normalize-smart-characters). Off by default since this "
-        "can be nearly every record in a file with typographic "
-        "punctuation, which would otherwise dominate the log; the fix "
-        "itself always runs regardless of this flag",
+        "Header + count always logged when this runs (see --log); not "
+        "listed per-record by default (see --log-full) since this "
+        "remap is typically extremely high-volume -- multiple 999s per "
+        "record",
     )
     parser.add_argument(
         "--no-normalize-subfield-9",
@@ -4808,18 +5029,9 @@ def main(argv: list[str] | None = None) -> int:
         "$9 is unconditionally rewritten to $0 (a long-standing cleanup "
         "convention treating $9 as a legacy/local stand-in for the "
         "standard authority-linking subfield); pass this flag to leave "
-        "$9 subfields as-is instead. Not logged per-record by default "
-        "(see --log-normalized-subfield-9-to-0) since this can be "
-        "nearly every record in a file that uses $9",
-    )
-    parser.add_argument(
-        "--log-normalized-subfield-9-to-0",
-        action="store_true",
-        help="log each individual $9-to-$0 rewrite (see "
-        "--no-normalize-subfield-9). Off by default since this can be "
-        "nearly every record in a file that uses $9, which would "
-        "otherwise dominate the log; the fix itself always runs "
-        "regardless of this flag",
+        "$9 subfields as-is instead. Header + count always logged (see "
+        "--log); not listed per-record by default (see --log-full) "
+        "since this can be nearly every record in a file that uses $9",
     )
     parser.add_argument(
         "--check-isbn-issn-checksum",
@@ -4828,8 +5040,9 @@ def main(argv: list[str] | None = None) -> int:
         "fails the standard checksum for its length. Off by default "
         "since it's a detect-only, no-fix check on data that's often "
         "already correct; pass this flag to have it run and be logged "
-        "as invalid_isbn_issn_checksum (INFORMATIONAL, still needs "
-        "--log-informational too)",
+        "as invalid_isbn_issn_checksum (header + count always shown; "
+        "--log-full invalid_isbn_issn_checksum or --log-informational "
+        "for the full per-record list)",
     )
     parser.add_argument(
         "--check-dangling-880-links",
@@ -4838,7 +5051,8 @@ def main(argv: list[str] | None = None) -> int:
         "a tag that doesn't exist elsewhere in the record. Off by "
         "default since it's a detect-only, no-fix check; pass this "
         "flag to have it run and be logged as dangling_880_link "
-        "(INFORMATIONAL, still needs --log-informational too)",
+        "(header + count always shown; --log-full dangling_880_link "
+        "or --log-informational for the full per-record list)",
     )
     parser.add_argument(
         "--no-normalize-smart-characters",
@@ -4867,9 +5081,10 @@ def main(argv: list[str] | None = None) -> int:
         help="do NOT convert MARC-8/ANSEL encoded records to UTF-8. By "
         "default such records ARE converted (leader's encoding byte "
         "flipped accordingly; records already declaring Unicode are "
-        "left alone); not logged per-record by default (see "
-        "--log-transcoded-marc8) since this can be nearly every record "
-        "in a legacy file. Requires pymarc (pip install -r "
+        "left alone); header + count always logged, not listed "
+        "per-record by default (see --log-full) since this can be "
+        "nearly every record in a legacy file. Requires pymarc (pip "
+        "install -r "
         "requirements.txt) -- if it's not installed, the run fails "
         "immediately rather than silently producing non-UTF-8 output; "
         "pass this flag to skip transcoding deliberately instead",
@@ -4915,9 +5130,8 @@ def main(argv: list[str] | None = None) -> int:
                 holdings_repaired_path,
                 holdings_log_path,
                 fix_missing_852c=args.fix_missing_852c,
-                log_fixed_misplaced_subfield_code=args.log_fixed_misplaced_subfield_code,
-                log_removed_null_identifier=args.log_removed_null_identifier,
-                log_missing_call_number=args.log_missing_call_number,
+                full_categories=set(args.log_full),
+                log_informational=args.log_informational,
                 on_progress=holdings_progress.on_progress,
                 on_record=holdings_progress.maybe_print,
                 on_estimate=holdings_progress.maybe_print_estimate,
@@ -4930,13 +5144,13 @@ def main(argv: list[str] | None = None) -> int:
                 f"({result['total'] - result['unresolved']} corrected/passed clean, "
                 f"{result['unresolved']} passed through unchanged)"
             )
-            if result["log_lines"]:
-                print(
-                    f"{result['log_lines']} holdings log line(s) written to "
-                    f"{holdings_log_path} ({result['not_fixed']} not fixed, "
-                    f"{result['log_lines'] - result['not_fixed']} fixed)",
-                    file=sys.stderr,
-                )
+            print(
+                f"holdings log (every check run, one header per category) written to "
+                f"{holdings_log_path} ({result['log_lines']} record-level finding(s): "
+                f"{result['not_fixed']} not fixed, "
+                f"{result['log_lines'] - result['not_fixed']} fixed)",
+                file=sys.stderr,
+            )
         if counts["bib"]:
             bib_repaired_path = f"{base}_bib_repaired{ext}"
             # Recurses into this same function for the bib side, exactly
@@ -4967,9 +5181,8 @@ def main(argv: list[str] | None = None) -> int:
             out_path,
             log_path,
             fix_missing_852c=args.fix_missing_852c,
-            log_fixed_misplaced_subfield_code=args.log_fixed_misplaced_subfield_code,
-            log_removed_null_identifier=args.log_removed_null_identifier,
-            log_missing_call_number=args.log_missing_call_number,
+            full_categories=set(args.log_full),
+            log_informational=args.log_informational,
             on_progress=progress.on_progress,
             on_record=progress.maybe_print,
             on_estimate=progress.maybe_print_estimate,
@@ -4982,13 +5195,12 @@ def main(argv: list[str] | None = None) -> int:
             f"({result['total'] - result['unresolved']} corrected/passed clean, "
             f"{result['unresolved']} passed through unchanged) in {elapsed:.2f}s"
         )
-        if result["log_lines"]:
-            print(
-                f"{result['log_lines']} log line(s) written to {log_path} "
-                f"({result['not_fixed']} not fixed, "
-                f"{result['log_lines'] - result['not_fixed']} fixed)",
-                file=sys.stderr,
-            )
+        print(
+            f"log (every check run, one header per category) written to {log_path} "
+            f"({result['log_lines']} record-level finding(s): {result['not_fixed']} not "
+            f"fixed, {result['log_lines'] - result['not_fixed']} fixed)",
+            file=sys.stderr,
+        )
         if result["unresolved"]:
             print(
                 f"{result['unresolved']} record(s) could not be auto-repaired "
@@ -5189,7 +5401,7 @@ def main(argv: list[str] | None = None) -> int:
                             f"could not transcode MARC-8 -> UTF-8: {exc}",
                         )
                     else:
-                        if transcoded and args.log_transcoded_marc8:
+                        if transcoded:
                             rec_id = record_identifier(parsed)
                             log("transcoded_marc8", True, i, rec_id, "transcoded MARC-8 -> UTF-8")
                 if args.fix_mojibake:
@@ -5201,38 +5413,28 @@ def main(argv: list[str] | None = None) -> int:
                     for detail in fix_invalid_leader_bytes(parsed):
                         log("leader_byte_defaulted", True, i, rec_id, detail)
                 if args.remap_999_to_945:
-                    details = remap_999_to_945(parsed)
-                    if args.log_999_to_945:
-                        rec_id = record_identifier(parsed)
-                        for detail in details:
-                            log("remapped_999_to_945", True, i, rec_id, detail)
+                    rec_id = record_identifier(parsed)
+                    for detail in remap_999_to_945(parsed):
+                        log("remapped_999_to_945", True, i, rec_id, detail)
                 if args.normalize_subfield_9:
                     rec_id = record_identifier(parsed)
-                    details = normalize_subfield_9_to_0(parsed)
-                    if args.log_normalized_subfield_9_to_0:
-                        for detail in details:
-                            log("normalized_subfield_9_to_0", True, i, rec_id, detail)
+                    for detail in normalize_subfield_9_to_0(parsed):
+                        log("normalized_subfield_9_to_0", True, i, rec_id, detail)
                 if args.normalize_smart_characters:
                     rec_id = record_identifier(parsed)
-                    details = normalize_smart_characters(parsed)
-                    if args.log_normalized_smart_characters:
-                        for detail in details:
-                            log("normalized_smart_characters", True, i, rec_id, detail)
+                    for detail in normalize_smart_characters(parsed):
+                        log("normalized_smart_characters", True, i, rec_id, detail)
                 if args.fix_misplaced_subfield_codes:
                     rec_id = record_identifier(parsed)
-                    details = fix_misplaced_subfield_codes(parsed)
-                    if args.log_fixed_misplaced_subfield_code:
-                        for detail in details:
-                            log("fixed_misplaced_subfield_code", True, i, rec_id, detail)
+                    for detail in fix_misplaced_subfield_codes(parsed):
+                        log("fixed_misplaced_subfield_code", True, i, rec_id, detail)
                 if args.strip_invalid_subfield_codes:
                     rec_id = record_identifier(parsed)
                     for detail in strip_invalid_subfield_codes(parsed):
                         log("removed_invalid_subfield", True, i, rec_id, detail)
-                null_identifier_details = strip_null_identifiers(parsed)
-                if args.log_removed_null_identifier:
-                    rec_id = record_identifier(parsed)
-                    for detail in null_identifier_details:
-                        log("removed_null_identifier", True, i, rec_id, detail)
+                rec_id = record_identifier(parsed)
+                for detail in strip_null_identifiers(parsed):
+                    log("removed_null_identifier", True, i, rec_id, detail)
                 if args.strip_missing_required_a:
                     rec_id = record_identifier(parsed)
                     for detail in strip_missing_required_a(parsed, required_a_tags):
@@ -5283,7 +5485,7 @@ def main(argv: list[str] | None = None) -> int:
                         continue
                     rec_id = record_identifier(parsed)
                     log(category, False, i, rec_id, detail)
-                if parsed.leader[20:24] != "4500" and args.log_leader_entry_map_fixed:
+                if parsed.leader[20:24] != "4500":
                     rec_id = record_identifier(parsed)
                     log(
                         "leader_entry_map_fixed", True, i, rec_id,
@@ -5381,40 +5583,98 @@ def main(argv: list[str] | None = None) -> int:
     dup_ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     log_entries.extend(find_duplicate_identifiers(id_records, dup_ts))
 
-    if not args.log_informational:
-        # --no-log-informational: the underlying fixes/detections still
-        # ran and affected the output regardless -- this only trims
-        # what gets written to the log file, typically the
-        # highest-volume section (e.g. every MARC-8 record transcoded).
-        log_entries = [e for e in log_entries if _section_for(e)[1] != "INFORMATIONAL"]
+    # Every category this run's flags actually allow to fire -- used so
+    # `write_log` can print a header (with a real count, even zero) for
+    # every check that ran, not just the ones that found something. A
+    # category left out here because its flag is off must genuinely
+    # never be logged this run (see each `log(...)` call site above).
+    active_categories = {
+        "unfixable", "missing_008", "doubled_proxy_url", "invalid_subfield_code",
+        "non_numeric_tag", "invalid_indicator_value", "invalid_bibliographic_level",
+        "leader_entry_map_fixed", "oversized_sentinel_fixed", "duplicate_identifier",
+        "removed_null_identifier",
+    }
+    if args.fix_bad_indicators:
+        active_categories.add("padded_indicators")
+    if args.reattach_orphaned_fields:
+        active_categories.add("reattached_orphaned_field")
+    if args.transcode_marc8:
+        active_categories |= {"transcoded_marc8", "transcode_marc8_failed"}
+    if args.fix_mojibake:
+        active_categories.add("fixed_mojibake")
+    if args.fix_invalid_leader_bytes:
+        active_categories.add("leader_byte_defaulted")
+    if args.remap_999_to_945:
+        active_categories.add("remapped_999_to_945")
+    if args.normalize_subfield_9:
+        active_categories.add("normalized_subfield_9_to_0")
+    if args.normalize_smart_characters:
+        active_categories.add("normalized_smart_characters")
+    if args.fix_misplaced_subfield_codes:
+        active_categories.add("fixed_misplaced_subfield_code")
+    if args.strip_invalid_subfield_codes:
+        active_categories.add("removed_invalid_subfield")
+    if args.strip_missing_required_a:
+        active_categories.add("field_removed_because_missing_a")
+    if args.strip_duplicate_non_repeatable_fields:
+        active_categories.add("removed_non_repeatable_duplicate")
+    if ensure_specs:
+        active_categories.add("added_field")
+    if args.add_default_245:
+        active_categories.add("added_default_245")
+    if args.add_default_008:
+        active_categories.add("added_default_008")
+    if args.fix_008_length:
+        active_categories.add("fixed_008_length")
+    if args.check_dangling_880_links:
+        active_categories.add("dangling_880_link")
+    if args.check_isbn_issn_checksum:
+        active_categories.add("invalid_isbn_issn_checksum")
+    if args.fix_invalid_tags:
+        active_categories.add("invalid_tag")
 
+    resolved_full_categories = _ALWAYS_FULL_CATEGORIES | set(args.log_full)
+    if args.log_informational:
+        # --log-informational: list every record for every currently
+        # INFORMATIONAL category in full, on top of whatever
+        # --log-full already named -- the underlying fixes/detections
+        # ran and affected the output regardless of this flag either
+        # way; it only controls what gets listed (a header+count for
+        # every category is always written -- see `write_log`).
+        resolved_full_categories |= {
+            c for c in active_categories if _section_for_category(c)[1] == "INFORMATIONAL"
+        }
+
+    # Not-fixable/not-fixed-in-this-run issues first (still need your
+    # attention in the output), fixed ones last; within each, grouped
+    # by category with a header and count, so e.g. all 375 missing-008
+    # findings sit together instead of scattered by record order.
+    log_path = (
+        _timestamped_log_path(args.log, run_ts) if args.log
+        else os.path.splitext(out_path)[0] + f"_log_{run_ts}.log"
+    )
+    write_log(
+        log_path, log_entries, active_categories=active_categories,
+        full_categories=resolved_full_categories,
+    )
     n_log_lines = len(log_entries)
-    if n_log_lines:
-        # Not-fixable/not-fixed-in-this-run issues first (still need your
-        # attention in the output), fixed ones last; within each, grouped
-        # by category with a header and count, so e.g. all 375 missing-008
-        # findings sit together instead of scattered by record order.
-        log_path = (
-            _timestamped_log_path(args.log, run_ts) if args.log
-            else os.path.splitext(out_path)[0] + f"_log_{run_ts}.log"
-        )
-        write_log(log_path, log_entries)
-        # Based on which section an entry actually lands in, not the
-        # raw `fixed` flag -- INFORMATIONAL can now include detect-only
-        # findings (e.g. invalid_indicator_value) logged with
-        # fixed=False for correct section placement, which would
-        # otherwise inflate this "not fixed" count. UNFIXABLE counts as
-        # not fixed too -- it's the same "still needs a human" idea,
-        # just urgent enough to also be diverted out of the main output.
-        n_not_fixed = sum(
-            1 for e in log_entries if _section_for(e)[1] in ("NOT FIXED", "UNFIXABLE")
-        )
-        n_fixed = n_log_lines - n_not_fixed
-        print(
-            f"{n_log_lines} log line(s) written to {log_path} "
-            f"({n_not_fixed} not fixed, {n_fixed} fixed)",
-            file=sys.stderr,
-        )
+    # Based on which section an entry actually lands in, not the raw
+    # `fixed` flag -- INFORMATIONAL can now include detect-only findings
+    # (e.g. invalid_indicator_value) logged with fixed=False for correct
+    # section placement, which would otherwise inflate this "not fixed"
+    # count. UNFIXABLE counts as not fixed too -- it's the same "still
+    # needs a human" idea, just urgent enough to also be diverted out of
+    # the main output.
+    n_not_fixed = sum(
+        1 for e in log_entries if _section_for(e)[1] in ("NOT FIXED", "UNFIXABLE")
+    )
+    n_fixed = n_log_lines - n_not_fixed
+    print(
+        f"log (every check run, one header per category) written to {log_path} "
+        f"({n_log_lines} record-level finding(s): {n_not_fixed} not fixed, "
+        f"{n_fixed} fixed)",
+        file=sys.stderr,
+    )
 
     elapsed = time.perf_counter() - start_time
     n_clean = n_total - n_unfixable

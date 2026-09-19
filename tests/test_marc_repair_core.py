@@ -471,6 +471,17 @@ class TestFindDuplicateIdentifiers:
         assert content.count("dup1") >= 2
 
 
+def _category_header_line(lines: list[str], category: str) -> int:
+    """Index of the first ("=== SECTION: category ===") of the 3 header
+    lines `write_log` now always writes for `category` -- distinct from
+    the description/count lines that follow it, which also start with
+    "===" but don't have this "SECTION: category" shape."""
+    return next(
+        i for i, ln in enumerate(lines)
+        if ln.startswith("===") and f": {category} ===" in ln
+    )
+
+
 class TestWriteLog:
     def test_groups_by_fixed_then_category_with_headers(self, tmp_path):
         entries = [
@@ -486,28 +497,30 @@ class TestWriteLog:
             m.LogEntry("some_other_fixed_thing", True, "t4", 1, "u2", "removed 650"),
         ]
         log_path = tmp_path / "run.log"
-        m.write_log(str(log_path), entries)
+        m.write_log(str(log_path), entries, full_categories={"missing_008"})
         lines = log_path.read_text(encoding="utf-8").splitlines()
 
-        not_fixed_header = next(i for i, ln in enumerate(lines) if "NOT FIXED: missing_008" in ln)
-        fixed_added_header = next(
-            i for i, ln in enumerate(lines) if "INFORMATIONAL: some_fixed_thing" in ln
-        )
-        fixed_removed_header = next(
-            i for i, ln in enumerate(lines) if "INFORMATIONAL: some_other_fixed_thing" in ln
-        )
-        assert "(2)" in lines[not_fixed_header]
+        not_fixed_header = _category_header_line(lines, "missing_008")
+        fixed_added_header = _category_header_line(lines, "some_fixed_thing")
+        fixed_removed_header = _category_header_line(lines, "some_other_fixed_thing")
+        assert lines[not_fixed_header].startswith("=== NOT FIXED")
+        assert "2 record(s)" in lines[not_fixed_header + 2]
         assert not_fixed_header < fixed_added_header
         assert not_fixed_header < fixed_removed_header
         # the two missing_008 entries are adjacent, not interleaved with
         # the unrelated fixed entries
-        missing_008_lines = [ln for ln in lines if "no 008" in ln]
+        missing_008_lines = [ln for ln in lines if ln.startswith("[") and "no 008" in ln]
         assert len(missing_008_lines) == 2
 
     def test_appends_rather_than_overwrites(self, tmp_path):
         log_path = tmp_path / "run.log"
-        m.write_log(str(log_path), [m.LogEntry("cat_a", True, "t1", 0, "", "first")])
-        m.write_log(str(log_path), [m.LogEntry("cat_b", True, "t2", 0, "", "second")])
+        full = {"cat_a", "cat_b"}
+        m.write_log(
+            str(log_path), [m.LogEntry("cat_a", True, "t1", 0, "", "first")], full_categories=full,
+        )
+        m.write_log(
+            str(log_path), [m.LogEntry("cat_b", True, "t2", 0, "", "second")], full_categories=full,
+        )
         content = log_path.read_text(encoding="utf-8")
         assert "first" in content
         assert "second" in content
@@ -542,16 +555,19 @@ class TestWriteLog:
             m.LogEntry("normalized_subfield_9_to_0", True, "t7", 2, "u3", "9 -> 0"),
         ]
         log_path = tmp_path / "run.log"
-        m.write_log(str(log_path), entries)
+        informational_categories = {
+            "added_default_008", "leader_byte_defaulted", "leader_entry_map_fixed",
+            "normalized_subfield_9_to_0",
+        }
+        m.write_log(str(log_path), entries, full_categories=informational_categories)
         lines = log_path.read_text(encoding="utf-8").splitlines()
 
         not_fixed_header = next(i for i, ln in enumerate(lines) if ln.startswith("=== NOT FIXED"))
         fixed_header = next(i for i, ln in enumerate(lines) if ln.startswith("=== FIXED"))
         dup_header = next(i for i, ln in enumerate(lines) if ln.startswith("=== DUPLICATE"))
         informational_headers = [
-            i for i, ln in enumerate(lines) if ln.startswith("=== INFORMATIONAL")
+            _category_header_line(lines, c) for c in informational_categories
         ]
-        assert len(informational_headers) == 4
         assert not_fixed_header < fixed_header < dup_header < min(informational_headers)
         info_lines = [ln for ln in lines if ln.startswith("[INFORMATIONAL]")]
         assert len(info_lines) == 4
@@ -564,12 +580,15 @@ class TestWriteLog:
         log_path = tmp_path / "run.log"
         m.write_log(str(log_path), entries)
         lines = log_path.read_text(encoding="utf-8").splitlines()
-        header_indices = [i for i, ln in enumerate(lines) if ln.startswith("===")]
-        assert len(header_indices) == 2
-        # first header has no blank line before it -- it's the first line
-        assert header_indices[0] == 0
-        # second header is preceded by a blank line
-        assert lines[header_indices[1] - 1] == ""
+        # 2 categories * 3 header lines each (SECTION: category /
+        # description / count)
+        header_block_starts = [
+            _category_header_line(lines, "missing_008"),
+            _category_header_line(lines, "added_field"),
+        ]
+        assert header_block_starts[0] == 0
+        # second category's header block is preceded by a blank line
+        assert lines[header_block_starts[1] - 1] == ""
 
 
 # ---------------------------------------------------------------------------
@@ -673,9 +692,14 @@ class TestCLIHelpers:
         assert len(title_fields) == 1
         assert title_fields[0].subfields == [("a", "No title"), ("h", "[electronic resource]")]
         # both the patched 245 and the missing-008 default are logged as
-        # added_default_245/added_default_008, both INFORMATIONAL and
-        # off by default -- nothing else fired, so no log file at all
-        assert not _resolve_log(log).exists()
+        # added_default_245/added_default_008, both INFORMATIONAL --
+        # header + count always shown, but neither is listed in full by
+        # default
+        content = _resolve_log(log).read_text(encoding="utf-8")
+        assert "INFORMATIONAL: added_default_245" in content
+        assert "INFORMATIONAL: added_default_008" in content
+        assert "[INFORMATIONAL]\tadded_default_245" not in content
+        assert "[INFORMATIONAL]\tadded_default_008" not in content
 
 
 # ---------------------------------------------------------------------------
@@ -964,10 +988,13 @@ class TestLogInformational:
         log = tmp_path / "run.log"
         rc = m.main([str(src), "-o", str(out), "--log", str(log)])
         assert rc == 0
-        # every entry for this record is informational-only, so once
-        # filtered out there's nothing left to log at all -- no file
-        assert not _resolve_log(log).exists()
-        # the fix itself still ran, even though it's not in the log
+        # every entry for this record is informational-only -- the
+        # header + count still gets written (every check that ran
+        # always gets one), just not the per-record detail line
+        content = _resolve_log(log).read_text(encoding="utf-8")
+        assert "INFORMATIONAL: normalized_smart_characters" in content
+        assert "[INFORMATIONAL]\tnormalized_smart_characters" not in content
+        # the fix itself still ran, even though it's not listed in full
         results = m.repair_text(m._read_text(str(out)))
         field = next(f for f in results[0].fields if f.tag == "520")
         assert field.subfields == [("a", "It's great.")]
@@ -987,4 +1014,6 @@ class TestLogInformational:
         log = tmp_path / "run.log"
         rc = m.main([str(src), "-o", str(out), "--log-informational", "--log", str(log)])
         assert rc == 0
-        assert "INFORMATIONAL" in _resolve_log(log).read_text(encoding="utf-8")
+        assert "[INFORMATIONAL]\tnormalized_smart_characters" in _resolve_log(log).read_text(
+            encoding="utf-8"
+        )

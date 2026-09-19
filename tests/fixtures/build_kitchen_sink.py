@@ -440,6 +440,19 @@ def build_bib_records() -> list[bytes]:
         m.Field_("020", "  ", [("a", "0596000271")]),
     ]))
 
+    # removed_null_identifier: empty $a immediately followed by another
+    # subfield -- seen in the wild as 035 $a$0<local number>, where
+    # whatever produced the file split a single value across two
+    # subfields and left the first one empty. Only ever logged in full
+    # via --log-full/--log-informational (see docs/REPAIR_CATEGORIES.md);
+    # the fix itself always runs.
+    records.append(_record(_BIB_LEADER, [
+        m.Field_("001", None, None, content="ks-nullid"),
+        m.Field_("008", None, None, content="x" * 40),
+        m.Field_("245", "00", [("a", "Title.")]),
+        m.Field_("035", "  ", [("a", ""), ("0", "COLOFB  1492")]),
+    ]))
+
     # duplicate_identifier: two records sharing the same 001 -- both
     # flagged (added as a pair, right after each other).
     records.append(_record(_BIB_LEADER, [
