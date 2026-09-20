@@ -3791,6 +3791,8 @@ _FIXED_REQUIRES_ATTENTION = {
     "removed_extra_852_b",
     "removed_empty_852_subfield",
     "split_holdings_multiple_852",
+    "added_default_245",
+    "padded_indicators",
 }
 
 #: INFORMATIONAL, at the very bottom: a fix applied via a fixed
@@ -3812,7 +3814,6 @@ _INFORMATIONAL = {
     "holdings_852_duplicate_nr_subfield",
     "removed_null_identifier",
     "missing_call_number",
-    "added_default_245",
     "leader_byte_defaulted",
     "leader_entry_map_fixed",
     "normalized_subfield_9_to_0",
@@ -3827,7 +3828,6 @@ _INFORMATIONAL = {
     "fixed_mojibake",
     "remapped_999_to_945",
     "oversized_sentinel_fixed",
-    "padded_indicators",
 }
 
 #: UNFIXABLE, above even NOT FIXED: a record this tool concluded it
@@ -4058,6 +4058,8 @@ _ALWAYS_FULL_CATEGORIES = {
     "holdings_852_duplicate_nr_subfield",
     "added_missing_852c",
     "added_missing_852_location",
+    "added_default_245",
+    "padded_indicators",
 }
 
 

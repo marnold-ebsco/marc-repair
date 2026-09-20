@@ -691,14 +691,15 @@ class TestCLIHelpers:
         title_fields = [f for f in results[0].fields if f.tag == "245"]
         assert len(title_fields) == 1
         assert title_fields[0].subfields == [("a", "No title"), ("h", "[electronic resource]")]
-        # both the patched 245 and the missing-008 default are logged as
-        # added_default_245/added_default_008, both INFORMATIONAL --
-        # header + count always shown, but neither is listed in full by
-        # default
+        # the patched 245 is logged as added_default_245
+        # (FIXED/REQUIRES ATTENTION, listed in full by default); the
+        # missing-008 default is added_default_008 (INFORMATIONAL --
+        # header + count always shown, but not listed in full by
+        # default)
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert "INFORMATIONAL: added_default_245" in content
+        assert "FIXED/REQUIRES ATTENTION: added_default_245" in content
         assert "INFORMATIONAL: added_default_008" in content
-        assert "[INFORMATIONAL]\tadded_default_245" not in content
+        assert "[FIXED/REQUIRES ATTENTION]\tadded_default_245" in content
         assert "[INFORMATIONAL]\tadded_default_008" not in content
 
 

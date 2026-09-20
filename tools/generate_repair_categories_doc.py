@@ -89,10 +89,9 @@ BIB_ROWS = [
     CategoryRow(
         "Short-indicator padding", "Padded indicators to 2 chars",
         "Yes (`--no-fix-bad-indicators` to disable)", "`padded_indicators`",
-        "INFORMATIONAL",
-        "No (header + count always shown; full per-record list via --log-full "
-        "padded_indicators or --log-informational)",
-        "`--no-fix-bad-indicators`; `--log-informational`",
+        "FIXED/REQUIRES ATTENTION",
+        "**Yes**",
+        "`--no-fix-bad-indicators`",
     ),
     CategoryRow(
         "MARC-8 -> UTF-8 transcoding", "Transcoded field data",
@@ -205,10 +204,8 @@ BIB_ROWS = [
     CategoryRow(
         "Placeholder 245 added", "Added default field",
         "Yes (`--no-add-default-245`)", "`added_default_245`",
-        "INFORMATIONAL", "No (header + count always shown; full per-record list via --log-full "
-                         "added_default_245 or --log-informational)",
-        "`--no-add-default-245`; `--ensure-field` (takes priority per-record); "
-        "`--log-informational`",
+        "FIXED/REQUIRES ATTENTION", "**Yes**",
+        "`--no-add-default-245`; `--ensure-field` (takes priority per-record)",
     ),
     CategoryRow(
         "Placeholder 008 added", "Added default field",
@@ -346,9 +343,8 @@ HOLDINGS_ROWS = [
     ),
     CategoryRow(
         "Short-indicator padding", "Padded indicators to 2 chars",
-        "Yes (always, hardcoded)", "`padded_indicators`", "INFORMATIONAL",
-        "No (header + count always shown; full per-record list via --log-full padded_indicators or "
-        "--log-informational)",
+        "Yes (always, hardcoded)", "`padded_indicators`",
+        "FIXED/REQUIRES ATTENTION", "**Yes**",
         "-- (no switch -- always runs and always logged)",
     ),
     CategoryRow(

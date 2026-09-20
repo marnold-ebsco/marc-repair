@@ -276,15 +276,23 @@ class TestFixBadIndicators:
         log = tmp_path / "run.log"
         rc = m.main([
             str(src), "-o", str(out), "--no-strip-invalid-subfield-codes",
-            "--log-informational", "--log-full", "invalid_subfield_code", "--log", str(log),
+            "--log-full", "invalid_subfield_code", "--log", str(log),
         ])
         assert rc == 0
         lines = _resolve_log(log).read_text(encoding="utf-8").splitlines()
         not_fixed_idx = next(i for i, ln in enumerate(lines) if ln.startswith("=== NOT FIXED"))
-        info_idx = next(i for i, ln in enumerate(lines) if ln.startswith("=== INFORMATIONAL"))
-        assert not_fixed_idx < info_idx, "NOT FIXED block must come before INFORMATIONAL block"
-        assert any("[INFORMATIONAL]" in ln and "padded" in ln for ln in lines[info_idx:])
-        assert any("[NOT FIXED]" in ln for ln in lines[not_fixed_idx:info_idx])
+        attention_idx = next(
+            i for i, ln in enumerate(lines)
+            if ln.startswith("=== FIXED/REQUIRES ATTENTION")
+        )
+        assert not_fixed_idx < attention_idx, (
+            "NOT FIXED block must come before FIXED/REQUIRES ATTENTION block"
+        )
+        assert any(
+            "[FIXED/REQUIRES ATTENTION]" in ln and "padded" in ln
+            for ln in lines[attention_idx:]
+        )
+        assert any("[NOT FIXED]" in ln for ln in lines[not_fixed_idx:attention_idx])
 
 
 # ---------------------------------------------------------------------------
@@ -1549,9 +1557,10 @@ class TestUnfixableErrorFile:
 
     def test_unfixable_section_appears_before_every_other_section(self, tmp_path):
         # A file with one of everything: unresolvable garbage (UNFIXABLE),
-        # a record missing 245 (INFORMATIONAL, added_default_245), and a
-        # clean record -- UNFIXABLE must render first regardless of
-        # write_log's usual NOT FIXED-first ordering.
+        # a record missing both 008 and 245 -- 008 (added_default_008)
+        # still lands in INFORMATIONAL -- and a clean record. UNFIXABLE
+        # must render first regardless of write_log's usual NOT
+        # FIXED-first ordering.
         missing_245 = m.assemble_marc(m.ParsedRecord(
             leader=_SYNTHETIC_LEADER, entries=[],
             fields=[m.Field_("001", None, None, content="no245")],
@@ -2658,23 +2667,6 @@ _INFORMATIONAL_BY_DEFAULT_CASES = [
         verify=lambda results: results[0].leader[5] == "c",
     ),
     _CliDefaultCase(
-        id="added_default_245",
-        build=lambda: m.assemble_marc(m.ParsedRecord(
-            leader=_SYNTHETIC_LEADER,
-            entries=[],
-            fields=[m.Field_("008", None, None, content="x" * 40)],
-        )),
-        extra_cli_args=["--log-informational"],
-        required_log_substrings=[
-            "=== INFORMATIONAL: added_default_245 ===",
-            _detail_line_marker("added_default_245"),
-        ],
-        verify=lambda results: (
-            next(f for f in results[0].fields if f.tag == "245").subfields
-            == [("a", "No title")]
-        ),
-    ),
-    _CliDefaultCase(
         id="added_default_008",
         build=lambda: m.assemble_marc(m.ParsedRecord(
             leader=_SYNTHETIC_LEADER,
@@ -2813,6 +2805,22 @@ _FIXED_REQUIRES_ATTENTION_CASES = [
         required_log_substrings=["=== FIXED/REQUIRES ATTENTION: fixed_008_length ==="],
         verify=lambda results: (
             len(next(f for f in results[0].fields if f.tag == "008").content) == 40
+        ),
+    ),
+    _CliDefaultCase(
+        id="added_default_245",
+        build=lambda: m.assemble_marc(m.ParsedRecord(
+            leader=_SYNTHETIC_LEADER,
+            entries=[],
+            fields=[m.Field_("008", None, None, content="x" * 40)],
+        )),
+        required_log_substrings=[
+            "=== FIXED/REQUIRES ATTENTION: added_default_245 ===",
+            _detail_line_marker("added_default_245"),
+        ],
+        verify=lambda results: (
+            next(f for f in results[0].fields if f.tag == "245").subfields
+            == [("a", "No title")]
         ),
     ),
 ]

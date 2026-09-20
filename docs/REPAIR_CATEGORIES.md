@@ -32,7 +32,7 @@ FIXED.
 | Repair / check | Action taken | On by default? | Category | Section | Logged by default? | Relevant switches |
 |---|---|---|---|---|---|---|
 | Mode 1/2 structural repair (bad length/directory) | Rebuilt record length/directory | Yes | -- (silent, just works) | -- | -- | -- |
-| Short-indicator padding | Padded indicators to 2 chars | Yes (`--no-fix-bad-indicators` to disable) | `padded_indicators` | INFORMATIONAL | No (header + count always shown; full per-record list via --log-full padded_indicators or --log-informational) | `--no-fix-bad-indicators`; `--log-informational` |
+| Short-indicator padding | Padded indicators to 2 chars | Yes (`--no-fix-bad-indicators` to disable) | `padded_indicators` | FIXED/REQUIRES ATTENTION | **Yes** | `--no-fix-bad-indicators` |
 | MARC-8 -> UTF-8 transcoding | Transcoded field data | Yes (`--no-transcode-marc8`) | `transcoded_marc8` | INFORMATIONAL | No (header + count always shown; full per-record list via --log-full transcoded_marc8 or --log-informational) | `--no-transcode-marc8`; `--log-full transcoded_marc8`; `--log-informational` |
 | Transcode failure | Left field untranscoded | n/a (only if it occurs) | `transcode_marc8_failed` | NOT FIXED | **Yes** | `--no-transcode-marc8` (skips this entirely) |
 | Mojibake (double-encoded UTF-8) fix | Re-decoded field data | Yes (`--no-fix-mojibake`) | `fixed_mojibake` | INFORMATIONAL | No (header + count always shown; full per-record list via --log-full fixed_mojibake or --log-informational) | `--no-fix-mojibake`; `--log-informational` |
@@ -47,7 +47,7 @@ FIXED.
 | Empty-field removal | Removed field | Yes (`--no-strip-empty-fields`) | -- (unconditional, unlogged either way) | -- | -- | `--no-strip-empty-fields` |
 | Duplicate non-repeatable field removal | Removed field | Yes (`--no-strip-duplicate-non-repeatable-fields`) | `removed_non_repeatable_duplicate` | FIXED/REQUIRES ATTENTION | **Yes** | `--no-strip-duplicate-non-repeatable-fields`; `--non-repeatable-tags-file` |
 | `--ensure-field` insertion | Added field | n/a (only if flag given) | `added_field` | FIXED/REQUIRES ATTENTION | No (header + count always shown; full per-record list via --log-full added_field) | `--ensure-field` |
-| Placeholder 245 added | Added default field | Yes (`--no-add-default-245`) | `added_default_245` | INFORMATIONAL | No (header + count always shown; full per-record list via --log-full added_default_245 or --log-informational) | `--no-add-default-245`; `--ensure-field` (takes priority per-record); `--log-informational` |
+| Placeholder 245 added | Added default field | Yes (`--no-add-default-245`) | `added_default_245` | FIXED/REQUIRES ATTENTION | **Yes** | `--no-add-default-245`; `--ensure-field` (takes priority per-record) |
 | Placeholder 008 added | Added default field | Yes (`--no-add-default-008`) | `added_default_008` | INFORMATIONAL | No (header + count always shown; full per-record list via --log-full added_default_008 or --log-informational) | `--no-add-default-008`; `--ensure-field` (takes priority per-record); `--log-informational` |
 | 008 length pad/truncate (40 bytes) | Padded/truncated field | Yes (`--no-fix-008-length`) | `fixed_008_length` | FIXED/REQUIRES ATTENTION | No (header + count always shown; full per-record list via --log-full fixed_008_length) | `--no-fix-008-length` |
 | Orphaned trailing field (present in the file, no directory entry of its own) reattached as `700` | Merged into the preceding record, as a new field | Yes (`--no-reattach-orphaned-fields`) | `reattached_orphaned_field` | FIXED/REQUIRES ATTENTION | **Yes** | `--no-reattach-orphaned-fields` (leaves it `unfixable`/`UNFIXABLE` instead) |
@@ -71,7 +71,7 @@ FIXED.
 | Repair / check | Action taken | On by default? | Category | Section | Logged by default? | Relevant switches |
 |---|---|---|---|---|---|---|
 | Mode 1/2 structural repair (bad length/directory) | Rebuilt record length/directory | Yes | -- | -- | -- | -- |
-| Short-indicator padding | Padded indicators to 2 chars | Yes (always, hardcoded) | `padded_indicators` | INFORMATIONAL | No (header + count always shown; full per-record list via --log-full padded_indicators or --log-informational) | -- (no switch -- always runs and always logged) |
+| Short-indicator padding | Padded indicators to 2 chars | Yes (always, hardcoded) | `padded_indicators` | FIXED/REQUIRES ATTENTION | **Yes** | -- (no switch -- always runs and always logged) |
 | Mojibake fix | Re-decoded field data | Yes, always | `fixed_mojibake` | INFORMATIONAL | No (header + count always shown; full per-record list via --log-full fixed_mojibake or --log-informational) | -- (no switch -- always runs and always logged) |
 | Leader bytes 05/06/17 defaulted (holdings-specific byte 6 -> `u`, byte 17 code set) | Defaulted leader byte | Yes, always | `holdings_leader_byte_defaulted` | FIXED/REQUIRES ATTENTION | **Yes** | -- (no switch -- always runs and always logged) |
 | $9 -> $0 normalization | Renamed subfield code | Yes, always | `normalized_subfield_9_to_0` | INFORMATIONAL | No (header + count always shown; full per-record list via --log-full normalized_subfield_9_to_0 or --log-informational) | -- (no switch -- always runs and always logged) |
