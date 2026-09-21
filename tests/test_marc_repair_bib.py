@@ -2462,6 +2462,9 @@ class TestDetectOnlyChecks:
         findings = m.find_invalid_indicator_values(parsed)
         assert len(findings) == 1
         assert findings[0][0] == "invalid_indicator_value"
+        # detail includes both indicators together, not just the bad one,
+        # so a reader has the full context without going back to the record
+        assert "'X0'" in findings[0][1]
 
     def test_does_not_flag_digits_or_blanks(self):
         parsed = m.ParsedRecord(
@@ -2490,19 +2493,6 @@ class TestDetectOnlyChecks:
             fields=[m.Field_("008", None, None, content="x" * 40)],
         )
         assert m.find_invalid_indicator_values(parsed) == []
-
-    # -- find_invalid_bibliographic_level --
-
-    def test_flags_invalid_byte_07(self):
-        leader = _VALID_LEADER[:7] + "9" + _VALID_LEADER[8:]
-        parsed = m.ParsedRecord(leader=leader, entries=[], fields=[])
-        findings = m.find_invalid_bibliographic_level(parsed)
-        assert len(findings) == 1
-        assert findings[0][0] == "invalid_bibliographic_level"
-
-    def test_valid_byte_07_not_flagged(self):
-        parsed = m.ParsedRecord(leader=_VALID_LEADER, entries=[], fields=[])
-        assert m.find_invalid_bibliographic_level(parsed) == []
 
     # -- find_dangling_880_links --
 
@@ -2753,6 +2743,22 @@ _FIXED_REQUIRES_ATTENTION_CASES = [
         verify=lambda results: len([f for f in results[0].fields if f.tag == "245"]) == 1,
     ),
     _CliDefaultCase(
+        id="invalid_bibliographic_level",
+        build=lambda: m.assemble_marc(m.ParsedRecord(
+            leader=_SYNTHETIC_LEADER[:7] + "9" + _SYNTHETIC_LEADER[8:],
+            entries=[],
+            fields=[
+                m.Field_("008", None, None, content="x" * 40),
+                m.Field_("245", "00", [("a", "Title.")]),
+            ],
+        )),
+        required_log_substrings=[
+            "=== FIXED/REQUIRES ATTENTION: invalid_bibliographic_level ===",
+            _detail_line_marker("invalid_bibliographic_level"),
+        ],
+        verify=lambda results: results[0].leader[7] == "m",
+    ),
+    _CliDefaultCase(
         id="fixed_008_length",
         build=lambda: m.assemble_marc(m.ParsedRecord(
             leader=_SYNTHETIC_LEADER,
@@ -2800,6 +2806,26 @@ _FIXED_REQUIRES_ATTENTION_CASES = [
         ),
     ),
 ]
+
+
+class TestFixInvalidBibliographicLevel:
+    def test_defaults_invalid_byte_07(self):
+        leader = _VALID_LEADER[:7] + "9" + _VALID_LEADER[8:]
+        parsed = m.ParsedRecord(leader=leader, entries=[], fields=[])
+        details = m.fix_invalid_bibliographic_level(parsed)
+        assert len(details) == 1
+        assert parsed.leader[7] == "m"
+
+    def test_valid_byte_07_left_alone(self):
+        parsed = m.ParsedRecord(leader=_VALID_LEADER, entries=[], fields=[])
+        assert m.fix_invalid_bibliographic_level(parsed) == []
+        assert parsed.leader == _VALID_LEADER
+
+    def test_custom_default(self):
+        leader = _VALID_LEADER[:7] + "9" + _VALID_LEADER[8:]
+        parsed = m.ParsedRecord(leader=leader, entries=[], fields=[])
+        m.fix_invalid_bibliographic_level(parsed, default="s")
+        assert parsed.leader[7] == "s"
 
 
 class TestCliDefaultBehaviors:

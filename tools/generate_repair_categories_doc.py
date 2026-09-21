@@ -289,20 +289,15 @@ BIB_ROWS = [
     CategoryRow(
         "Invalid indicator *value* (present but not digit/blank)",
         "Flagged only, no change", "detect-only",
-        "`invalid_indicator_value`", "INFORMATIONAL", "No (header + count always shown; full "
-                                                      "per-record list via --log-full "
-                                                      "invalid_indicator_value or "
-                                                      "--log-informational)",
-        "`--log-informational` (detect-only, no fix switch)",
+        "`invalid_indicator_value`", "INFORMATIONAL", "**Yes**",
+        "-- (detect-only, no switch)",
     ),
     CategoryRow(
         "Invalid bibliographic level (leader byte 07)",
-        "Flagged only, no change", "detect-only",
-        "`invalid_bibliographic_level`", "INFORMATIONAL", "No (header + count always shown; full "
-                                                          "per-record list via --log-full "
-                                                          "invalid_bibliographic_level or "
-                                                          "--log-informational)",
-        "`--log-informational` (detect-only, no fix switch)",
+        "Defaulted to 'm' (Monograph/Item)",
+        "Yes, always",
+        "`invalid_bibliographic_level`", "FIXED/REQUIRES ATTENTION", "**Yes**",
+        "-- (no switch -- always runs and always logged)",
     ),
     CategoryRow(
         "Dangling 880 $6 link", "Flagged only, no change",

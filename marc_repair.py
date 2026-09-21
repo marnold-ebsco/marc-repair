@@ -1758,7 +1758,9 @@ VALID_SUBFIELD_CODE_CHARS = set("abcdefghijklmnopqrstuvwxyz0123456789")
 # format, so byte 06's set below is the *union* across bib/authority/
 # holdings, since which format a given record is meant to be is exactly
 # what this check can't assume). See `fix_invalid_leader_bytes` for the
-# defaults applied to invalid values in each.
+# defaults applied to bytes 05/06/08/17, and `fix_invalid_bibliographic_
+# level` for byte 07's own default (kept separate since it's logged
+# under its own category, not lumped into "leader_byte_defaulted").
 LEADER_05_RECORD_STATUS_VALID = set("acdnp")
 LEADER_06_TYPE_OF_RECORD_VALID = set("acdefgijkmoprtzuvxy")
 LEADER_07_BIBLIOGRAPHIC_LEVEL_VALID = set("abcdims")
@@ -1902,24 +1904,36 @@ def find_invalid_indicator_values(parsed: ParsedRecord) -> list[tuple[str, str]]
             if ch not in VALID_INDICATOR_CHARS:
                 findings.append((
                     "invalid_indicator_value",
-                    f"tag {f.tag} indicator {pos} is {ch!r}, not a digit or blank",
+                    f"tag {f.tag} indicators {f.indicators!r}: indicator {pos} is "
+                    f"{ch!r}, not a digit or blank",
                 ))
     return findings
 
 
-def find_invalid_bibliographic_level(parsed: ParsedRecord) -> list[tuple[str, str]]:
-    """Flag leader byte 07 (bibliographic level) outside its valid
-    MARC21 code set (see `LEADER_07_BIBLIOGRAPHIC_LEVEL_VALID`).
-    Detect-only, unlike the byte 05/06/08/17 checks in
-    `fix_invalid_leader_bytes` -- logged separately as informational
-    rather than defaulted. category: "invalid_bibliographic_level"."""
+def fix_invalid_bibliographic_level(
+    parsed: ParsedRecord, default: str = "m"
+) -> list[str]:
+    """Default leader byte 07 (bibliographic level) to `default` ('m',
+    Monograph/Item -- the single most common real-world value) when it
+    holds something outside its valid MARC21 code set (see
+    `LEADER_07_BIBLIOGRAPHIC_LEVEL_VALID`), mirroring the byte 05/06/08/17
+    defaults `fix_invalid_leader_bytes` already applies. This byte
+    carries real classification information, so overwriting an invalid
+    value is an arbitrary replacement, not a recovery of the original
+    intent -- logged individually with the byte's original and new
+    value (category "invalid_bibliographic_level", FIXED/REQUIRES
+    ATTENTION: worth a second look even though nothing is technically
+    broken anymore; NO DATA LOSS since the original value was already
+    outside the valid set, not real classification data)."""
     leader = parsed.leader
     if len(leader) >= 8 and leader[7] not in LEADER_07_BIBLIOGRAPHIC_LEVEL_VALID:
-        return [(
-            "invalid_bibliographic_level",
-            f"leader byte 07 (bibliographic level) is {leader[7]!r}, not one "
-            f"of {sorted(LEADER_07_BIBLIOGRAPHIC_LEVEL_VALID)!r}",
-        )]
+        original = leader[7]
+        parsed.leader = leader[:7] + default + leader[8:]
+        return [
+            f"leader byte 07 (bibliographic level) was {original!r}, not one "
+            f"of {sorted(LEADER_07_BIBLIOGRAPHIC_LEVEL_VALID)!r}; defaulted to "
+            f"{default!r}"
+        ]
     return []
 
 
@@ -3918,6 +3932,7 @@ _FIXED_REQUIRES_ATTENTION = {
     "padded_indicators",
     "unfixed_non_numeric_tag",
     "incomplete_852",
+    "invalid_bibliographic_level",
 }
 
 #: INFORMATIONAL, at the very bottom: a fix applied via a fixed
@@ -3946,7 +3961,6 @@ _INFORMATIONAL = {
     "normalized_smart_characters",
     "transcoded_marc8",
     "invalid_indicator_value",
-    "invalid_bibliographic_level",
     "dangling_880_link",
     "invalid_isbn_issn_checksum",
     "fixed_mojibake",
@@ -4125,7 +4139,8 @@ _CHECK_DESCRIPTIONS: dict[str, str] = {
     "invalid_indicator_value": "An indicator held a value outside "
     "MARC21's defined set for that field. NO DATA LOSS.",
     "invalid_bibliographic_level": "Leader byte 7 (bibliographic "
-    "level) held a value outside MARC21's defined set. NO DATA LOSS.",
+    "level) held a value outside MARC21's defined set -- defaulted to "
+    "'m' (Monograph/Item). NO DATA LOSS.",
     "fixed_mojibake": "Double-encoded UTF-8 (\"mojibake\") was "
     "corrected. NO DATA LOSS.",
     "remapped_999_to_945": "A 999 field was retagged to 945 "
@@ -4216,6 +4231,8 @@ _ALWAYS_FULL_CATEGORIES = {
     "added_default_008",
     "padded_indicators",
     "unfixed_non_numeric_tag",
+    "invalid_bibliographic_level",
+    "invalid_indicator_value",
 }
 
 
@@ -5609,6 +5626,9 @@ def main(argv: list[str] | None = None) -> int:
                     rec_id = record_identifier(parsed)
                     for detail in fix_008_length(parsed):
                         log("fixed_008_length", True, i, rec_id, detail)
+                rec_id = record_identifier(parsed)
+                for detail in fix_invalid_bibliographic_level(parsed):
+                    log("invalid_bibliographic_level", True, i, rec_id, detail)
                 extra_detect_only_findings = []
                 if args.check_dangling_880_links:
                     extra_detect_only_findings += find_dangling_880_links(parsed)
@@ -5616,7 +5636,6 @@ def main(argv: list[str] | None = None) -> int:
                     extra_detect_only_findings += find_invalid_isbn_issn_checksums(parsed)
                 for category, detail in (
                     find_invalid_indicator_values(parsed)
-                    + find_invalid_bibliographic_level(parsed)
                     + extra_detect_only_findings
                 ):
                     rec_id = record_identifier(parsed)

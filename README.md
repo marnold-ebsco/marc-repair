@@ -151,8 +151,8 @@ left in the main holdings output.
 | Double-encoded UTF-8 ("mojibake" — see table below) in a record already declaring UTF-8 | Fixed by default (only when re-decoding as UTF-8 actually succeeds, which is effectively impossible by coincidence for text that wasn't really double-encoded); `--no-fix-mojibake` to leave as-is; logged as `fixed_mojibake` (INFORMATIONAL) |
 | A Not-Repeatable field appears more than once (see `non_repeatable_tags.txt`, editable — e.g. two `245`s; real data found: a second "245" containing only `$a "2nd ed."`, almost certainly a mistagged `250`) | One occurrence is kept, every later one removed by default so the record is loadable — a strict importer like FOLIO can reject or mishandle the duplicate otherwise. Which one is kept is normally the first, with tag-specific exceptions: a duplicated `001` in a Sierra/Symphony record (`003` = "SIRSI", case-insensitive) keeps whichever occurrence starts with `u` (that system's real bib-id convention) rather than a stray OCLC number/barcode; a duplicated `005` or `008` keeps the most recent by date (ties keep the first). `--no-strip-duplicate-non-repeatable-fields` to leave as-is; the exact removed content is logged in full as `removed_non_repeatable_duplicate` under **FIXED/REQUIRES ATTENTION** (see Logging below) since real data was discarded |
 | 008 not exactly 40 characters | Padded with trailing spaces or truncated to 40 by default — a wrong-length 008 can make a record unloadable; `--no-fix-008-length` to leave as-is; the original content is logged in full as `fixed_008_length` under **FIXED/REQUIRES ATTENTION** |
-| A data field indicator character that isn't a digit or blank | Always detected and logged as `invalid_indicator_value` (INFORMATIONAL), never auto-fixed — no safe correction to guess |
-| Leader byte 07 (bibliographic level) outside its valid MARC21 code set | Always detected and logged as `invalid_bibliographic_level` (INFORMATIONAL), never auto-fixed |
+| A data field indicator character that isn't a digit or blank | Always detected and logged in full as `invalid_indicator_value` (INFORMATIONAL), never auto-fixed — no safe correction to guess |
+| Leader byte 07 (bibliographic level) outside its valid MARC21 code set | Defaulted to `m` (Monograph/Item) by default; logged in full as `invalid_bibliographic_level` under **FIXED/REQUIRES ATTENTION**, since overwriting an invalid value is an arbitrary replacement, not a recovery of the original intent |
 | An 880 field's `$6` linking subfield references a tag that doesn't exist elsewhere in the record | Off by default — pass `--check-dangling-880-links` to detect and log it as `dangling_880_link` (INFORMATIONAL); never auto-fixed — breaks the record's own romanized/original-script pairing |
 | A 020 (ISBN) or 022 (ISSN) `$a` whose check digit fails the standard checksum for its length | Off by default — pass `--check-isbn-issn-checksum` to detect and log it as `invalid_isbn_issn_checksum` (INFORMATIONAL); never auto-fixed — no safe way to know which digit was wrong |
 | A record that can't be auto-repaired by either mode at all | Never dropped, but not written into the main output either — diverted unchanged to a separate `_error` file (see above), logged as `unfixable` (UNFIXABLE) |
@@ -215,10 +215,11 @@ which bucket a given fix fell into:
    heading field missing its required `$a` removed (`field_removed_because_missing_a`),
    a missing field added from a human-supplied `--ensure-field` value
    (`added_field`), a placeholder 008/245 inserted
-   (`added_default_008`/`added_default_245`), or a non-numeric tag with
+   (`added_default_008`/`added_default_245`), a non-numeric tag with
    nowhere left to rename to, removed entirely
    (`unfixed_non_numeric_tag`, when every 900-999 slot is already
-   taken). The goal throughout this tool
+   taken), or leader byte 07 (bibliographic level) reset to a default
+   code (`invalid_bibliographic_level`). The goal throughout this tool
    is a MARC file that's always loadable, even when that requires
    discarding something — but that loss is always surfaced here, never
    silent.
@@ -232,11 +233,11 @@ which bucket a given fix fell into:
    tag renamed to an unused 9XX slot, `999` remapped to `945`, an
    oversized record's leader sentinel applied), or a detect-only
    finding not urgent enough for NOT FIXED (a doubled proxy URL prefix,
-   an indicator value outside `[0-9 ]`, leader byte 07 outside its
-   valid code set, a dangling 880 `$6` link, an ISBN/ISSN with a bad
-   check digit). **Off by default** — pass
-   `--log-informational` to include this section, since it's typically
-   the highest-volume one (e.g. every MARC-8 record transcoded)
+   an indicator value outside `[0-9 ]`, a dangling 880 `$6` link, an
+   ISBN/ISSN with a bad check digit). The header + count for every
+   category here always shows; some of the highest-volume ones need
+   `--log-informational` (or their own `--log-full`) before every
+   matching record is also listed — see the flag list right below
 
 Five of the highest-volume fixes need their own flag in addition to
 `--log-informational` before they're logged at all — the fix always
