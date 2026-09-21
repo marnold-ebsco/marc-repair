@@ -66,15 +66,16 @@ Quick examples:
     # $a is just a bare subject subdivision, not a subject) -- by default
     # such fields are removed (see required_a_tags.txt, editable) and
     # non-empty content that's discarded is timestamp-logged. A subfield
-    # code that isn't a lowercase letter or digit, a data field with 0 or 1
-    # indicator characters instead of 2, a field with no non-empty
-    # subfields at all, and any individual subfield with no data at all
-    # (a "null identifier", e.g. a bare $8, or an empty $a immediately
-    # followed by another subfield) are also fixed by default. Turn any
-    # of these off with --no-strip-missing-required-a,
-    # --no-strip-invalid-subfield-codes, --no-fix-bad-indicators,
-    # --no-strip-empty-fields respectively (null-identifier stripping has
-    # no --no- switch -- see --log-removed-null-identifier).
+    # code that isn't a lowercase letter or digit (unconditional -- no
+    # --no- switch, since there's no safe way to leave one in place), a
+    # data field with 0 or 1 indicator characters instead of 2, a field
+    # with no non-empty subfields at all, and any individual subfield
+    # with no data at all (a "null identifier", e.g. a bare $8, or an
+    # empty $a immediately followed by another subfield) are also fixed
+    # by default. Turn any of the rest off with
+    # --no-strip-missing-required-a, --no-fix-bad-indicators,
+    # --no-strip-empty-fields respectively (null-identifier stripping
+    # also has no --no- switch -- see --log-removed-null-identifier).
     python marc_repair.py bad_bib_mandatoryfields.mrc
 
     # A record legitimately declares legacy MARC-8/ANSEL encoding (leader
@@ -1863,11 +1864,6 @@ def find_suspicious_fields(parsed: ParsedRecord) -> list[tuple[str, str]]:
         see `fix_invalid_tags`), so this only fires when that's disabled
         (--no-fix-invalid-tags) or every 9XX slot is already taken.
         category: "non_numeric_tag"
-      * A subfield code that isn't a lowercase letter or digit. Not
-        auto-fixed here -- see `strip_invalid_subfield_codes`, which the
-        CLI runs by default (--no-strip-invalid-subfield-codes to skip
-        it); this only fires when that's disabled.
-        category: "invalid_subfield_code"
       * A record with no 008 control field, mandatory in every MARC21
         bibliographic/authority/holdings record. Not auto-fixed: the
         correct default content is material-type-specific and genuinely a
@@ -1888,11 +1884,6 @@ def find_suspicious_fields(parsed: ParsedRecord) -> list[tuple[str, str]]:
                 warnings.append((
                     "doubled_proxy_url",
                     f"tag {f.tag} $u has a literally duplicated proxy prefix: {data!r}",
-                ))
-            if code not in VALID_SUBFIELD_CODE_CHARS:
-                warnings.append((
-                    "invalid_subfield_code",
-                    f"tag {f.tag} has invalid subfield code {code!r}",
                 ))
     return warnings
 
@@ -2422,9 +2413,9 @@ DEFAULT_HOLDINGS_008_CONTENT = " " * HOLDINGS_008_LENGTH
 
 #: Placeholder content for an 852 (Location) with no usable location in
 #: $a, $b, or $c at all -- see `fix_missing_852_location`. Unlike
-#: `add_missing_852c` below (which only ever adds $c, and only when
-#: enabled via --fix-missing-852c), this always runs, no opt-in flag,
-#: and is logged under FIXED/REQUIRES ATTENTION rather than
+#: `add_missing_852c` below (which only ever adds $c, and can be
+#: disabled via --no-fix-missing-852c), this always runs, no opt-out
+#: flag, and is logged under FIXED/REQUIRES ATTENTION rather than
 #: INFORMATIONAL -- a record with no usable location anywhere is a
 #: bigger problem than one merely missing a shelving detail.
 DEFAULT_852_LOCATION_CONTENT = "Migration"
@@ -2479,7 +2470,7 @@ def fix_missing_852_location(parsed: ParsedRecord) -> list[str]:
     bearing, primary or secondary) -- so the placeholder always matches
     the convention the rest of a given file already uses rather than
     introducing a subfield code that convention never touches.
-    Always runs (no opt-in flag, unlike --fix-missing-852c): a location
+    Always runs (no opt-out flag, unlike --no-fix-missing-852c): a location
     this tool can't find in any of $a/$b/$c is missing, not just
     missing a shelving detail. Logged (category
     "added_missing_852_location") every time it runs, since it's adding
@@ -2829,31 +2820,50 @@ _852_NON_REPEATABLE_CODES = frozenset({
 })
 
 
-def find_852_duplicate_non_repeatable_subfields(parsed: ParsedRecord) -> list[str]:
-    """Detect (never fix) an 852 (Location) field with more than one
-    occurrence of a subfield the spec defines as Not Repeatable (see
-    `_852_NON_REPEATABLE_CODES`) -- e.g. two $h (Classification part).
-    Flagged only, one detail line per offending code per field -- see
-    `repair_holdings_records` (category
-    "holdings_852_duplicate_nr_subfield", INFORMATIONAL: not touched,
-    just surfaced, same treatment as `holdings_multiple_004`). No
-    occurrences of this were found in a real 79,853-record holdings
-    export, but the check exists because the violation is unambiguous
-    by spec regardless of what any one file happens to contain.
+def strip_852_duplicate_non_repeatable_subfields(parsed: ParsedRecord) -> list[str]:
+    """Remove every occurrence after the first of an 852 (Location)
+    subfield the spec defines as Not Repeatable (see
+    `_852_NON_REPEATABLE_CODES`) -- e.g. a second $h (Classification
+    part). No occurrences of this were found in a real 79,853-record
+    holdings export, but the check exists because the violation is
+    unambiguous by spec regardless of what any one file happens to
+    contain.
+
+    Which occurrence is kept is just the first -- there's no principled
+    way to pick otherwise, unlike `_DUPLICATE_FIELD_RESOLVERS`' tag-
+    specific rules for a whole duplicated field. This discards real
+    data (the kept copy may not be the "right" one), so it's logged
+    under FIXED/REQUIRES ATTENTION (category
+    "holdings_852_duplicate_nr_subfield" -- see
+    `repair_holdings_records`) with the full removed subfield content,
+    same treatment `strip_duplicate_non_repeatable_fields` gives a
+    duplicated whole field.
     """
     details = []
     for f in parsed.fields:
         if f.tag != "852" or f.is_control():
             continue
         codes = [code for code, _ in f.subfields]
-        for code in sorted(_852_NON_REPEATABLE_CODES):
-            n = codes.count(code)
-            if n > 1:
-                body = "".join(f"${c}{d}" for c, d in f.subfields)
-                details.append(
-                    f"={f.tag}  {f.indicators}{body} has {n} ${code} subfields "
-                    f"(${code} is Not Repeatable per the MARC 21 852 spec)"
-                )
+        offending = {code for code in _852_NON_REPEATABLE_CODES if codes.count(code) > 1}
+        if not offending:
+            continue
+        body = "".join(f"${c}{d}" for c, d in f.subfields)
+        seen: set[str] = set()
+        kept = []
+        removed = []
+        for code, data in f.subfields:
+            if code in offending:
+                if code in seen:
+                    removed.append((code, data))
+                    continue
+                seen.add(code)
+            kept.append((code, data))
+        f.subfields = kept
+        removed_str = ", ".join(f"${c}{d}" for c, d in removed)
+        details.append(
+            f"removed duplicate Not-Repeatable subfield(s) {removed_str} from "
+            f"={f.tag}  {f.indicators}{body}"
+        )
     return details
 
 
@@ -2906,7 +2916,7 @@ def find_852_b_suspect_content(parsed: ParsedRecord) -> list[str]:
 def add_missing_852c(parsed: ParsedRecord) -> list[str]:
     """Append subfield $c (shelving location) to every 852 (Location)
     field that's missing it, with placeholder content
-    `DEFAULT_852_C_CONTENT`. Off by default (see --fix-missing-852c);
+    `DEFAULT_852_C_CONTENT`. On by default (see --no-fix-missing-852c);
     logged (category "added_missing_852c") every time it runs, since
     it's adding content -- not just correcting structure -- and a
     placeholder rather than a value recovered from the record's own
@@ -3453,8 +3463,10 @@ _9XX_CANDIDATES = [str(n) for n in range(900, 1000)]
 
 def pick_unused_9xx_tag(used_tags: set[str]) -> str | None:
     """First tag in 900-999 not present in `used_tags`, or None if all 100
-    are somehow already in use (a caller should fall back to leaving
-    invalid tags unfixed in that case)."""
+    are somehow already in use (a caller should fall back to stripping
+    the invalid-tag field(s) out entirely in that case -- see
+    `strip_invalid_tags` -- since FOLIO can't load a non-numeric tag and
+    there's nowhere left to rename it to)."""
     for candidate in _9XX_CANDIDATES:
         if candidate not in used_tags:
             return candidate
@@ -3477,6 +3489,94 @@ def fix_invalid_tags(parsed: ParsedRecord, replacement_tag: str) -> list[str]:
             details.append(f"Invalid tag {f.tag!r} renamed to ={replacement_tag}")
             f.tag = replacement_tag
     return details
+
+
+def strip_invalid_tags(parsed: ParsedRecord) -> list[str]:
+    """Remove every field whose tag isn't 3 numeric digits outright --
+    the fallback for when `fix_invalid_tags` has nowhere left to rename
+    one to (every 900-999 tag already used elsewhere in the file; see
+    `pick_unused_9xx_tag`). FOLIO (like any strict MARC21 importer)
+    can't load a non-numeric tag at all, so leaving it in place isn't
+    actually safer than discarding it -- this is real content loss
+    (category "non_numeric_tag", still FIXED/REQUIRES ATTENTION,
+    POSSIBLE DATA LOSS: this is the one path where the field's own
+    content, not just its tag, is gone for good; logged with the full
+    removed field so a human can decide whether it needed to go
+    somewhere else instead). Unlike a rename, this changes the record's
+    total assembled length, so a caller can't patch it in place the way
+    `fix_invalid_tags` is -- see `main`'s deferred-fix pass for the
+    full-file rewrite this actually requires.
+    """
+    details = []
+    kept = []
+    for f in parsed.fields:
+        if f.tag.isdigit():
+            kept.append(f)
+            continue
+        if f.is_control():
+            body = f.content or ""
+        else:
+            body = f.indicators + "".join(f"${c}{d}" for c, d in f.subfields)
+        details.append(
+            f"removed =~{f.tag}  {body}\t(invalid tag, no free 9XX slot to rename to; "
+            "content discarded)"
+        )
+    parsed.fields = kept
+    return details
+
+
+def _rewrite_stripping_invalid_tags(
+    out_path: str,
+    pending: list[tuple[int, int, int, str]],
+    log_entries: list["LogEntry"],
+    fix_ts: str,
+) -> None:
+    """Full second pass over an already-written output file, for the
+    rare case where every 900-999 tag is already taken and an invalid
+    (non-numeric) tag can't be renamed out of the way -- see
+    `pick_unused_9xx_tag`, and `main`'s/`repair_holdings_records`'s own
+    deferred tag-fix passes, both of which call this. Unlike a rename
+    (`fix_invalid_tags`, patched in place at each record's known byte
+    offset), stripping the field (`strip_invalid_tags`) changes the
+    record's byte length, so it can't be patched in place the same way
+    -- every later record's offset in the file would shift too.
+    Instead, every record in `out_path` is re-split on its record
+    terminator (RECTERM, `\\x1d`) -- NOT trusted by its own leader-
+    declared 5-byte length, which is a lie (the documented `99999`
+    sentinel) for any record `oversized_sentinel_fixed` already caught
+    -- and written to a temporary file: unchanged for every record
+    whose index isn't in `pending`, with its invalid-tag field(s)
+    stripped and the record reassembled for the ones that are. The
+    temp file then atomically replaces `out_path`.
+
+    `pending` is `(record_idx, offset, length, rec_encoding)` tuples --
+    same shape the caller already built for the in-place rename path;
+    only `record_idx` and `rec_encoding` are used here, since offsets
+    into the *original* file are meaningless once record lengths start
+    changing.
+    """
+    encodings = {record_idx: rec_encoding for record_idx, _, _, rec_encoding in pending}
+    with open(out_path, "rb") as src:
+        data = src.read()
+    records_raw = data.split(b"\x1d")
+    if records_raw and records_raw[-1] == b"":
+        records_raw.pop()
+    tmp_path = out_path + ".tagstrip.tmp"
+    with open(tmp_path, "wb") as dst:
+        for record_idx, body in enumerate(records_raw):
+            raw = body + b"\x1d"
+            rec_encoding = encodings.get(record_idx)
+            if rec_encoding is None:
+                dst.write(raw)
+            else:
+                rec = read_intact_record(raw.decode(rec_encoding))
+                rec_id = record_identifier(rec)
+                for detail in strip_invalid_tags(rec):
+                    log_entries.append(
+                        LogEntry("non_numeric_tag", True, fix_ts, record_idx, rec_id, detail)
+                    )
+                dst.write(assemble_marc(rec))
+    os.replace(tmp_path, out_path)
 
 
 #: Typographic "smart" Unicode punctuation -> plain ASCII equivalent. These
@@ -3790,9 +3890,14 @@ _FIXED_REQUIRES_ATTENTION = {
     "recoded_852_b_to_i",
     "removed_extra_852_b",
     "removed_empty_852_subfield",
+    "holdings_852_duplicate_nr_subfield",
     "split_holdings_multiple_852",
     "added_default_245",
+    "added_default_008",
     "padded_indicators",
+    "non_numeric_tag",
+    "incomplete_852",
+    "missing_008",
 }
 
 #: INFORMATIONAL, at the very bottom: a fix applied via a fixed
@@ -3807,11 +3912,10 @@ _FIXED_REQUIRES_ATTENTION = {
 #: with spaces) -- or a detect-only finding not urgent enough for NOT
 #: FIXED.
 _INFORMATIONAL = {
-    "added_default_008",
     "added_default_holdings_008",
     "added_missing_852c",
+    "doubled_proxy_url",
     "holdings_multiple_004",
-    "holdings_852_duplicate_nr_subfield",
     "removed_null_identifier",
     "missing_call_number",
     "leader_byte_defaulted",
@@ -3890,132 +3994,161 @@ def _section_for_category(category: str) -> tuple[int, str]:
 #: source, but should never say something different).
 _CHECK_DESCRIPTIONS: dict[str, str] = {
     "unfixable": "Record has no consistent directory in either parsing "
-    "mode (or a field/base address too large for ISO 2709 to represent) "
-    "-- written unchanged to the _error file instead of the main output.",
-    "unresolved_record": "Holdings record could not be structurally "
-    "parsed at all -- passed through to the main output unchanged.",
-    "oversized_unfixable": "A split copy's assembled length can't be "
-    "represented in ISO 2709's fixed-width leader/directory -- passed "
-    "through unchanged.",
+    "mode (or a field/base address too large for ISO 2709 to represent), "
+    "or (holdings only) could not be structurally parsed at all, or a "
+    "split copy's assembled length can't be represented in ISO 2709's "
+    "fixed-width leader/directory -- written unchanged to the _error "
+    "file instead of the main output. DATA LOSS. These records cannot "
+    "be loaded.",
     "duplicate_identifier": "The same identifier (usually 001, or 907 $a "
     "for Sierra records) is used by more than one distinct record in "
-    "this file.",
+    "this file. POSSIBLE DATA LOSS.",
     "removed_non_repeatable_duplicate": "A non-repeatable field (e.g. "
     "001/005/008) appeared more than once on one record -- all but one "
-    "copy removed.",
+    "copy removed. POSSIBLE DATA LOSS.",
     "field_removed_because_missing_a": "A heading/added-entry field (or "
     "a holdings caption field) lacked a non-empty, non-punctuation-only "
-    "$a -- the whole field removed.",
+    "$a -- the whole field removed. POSSIBLE DATA LOSS.",
     "removed_invalid_subfield": "A subfield code that isn't a lowercase "
-    "letter or digit -- the subfield removed.",
+    "letter or digit -- the subfield removed. POSSIBLE DATA LOSS.",
     "removed_bad_call_number": "An 852 $h (call number) that was "
-    "unusable (e.g. punctuation-only) -- removed.",
+    "unusable (e.g. punctuation-only) -- removed. POSSIBLE DATA LOSS.",
     "removed_extra_852_b": "An 852 had more than one $b (Sublocation) "
-    "after the first was already recoded to $i -- the extras removed.",
+    "after the first was already recoded to $i -- the extras removed. "
+    "POSSIBLE DATA LOSS.",
     "incomplete_852": "One 852 (Location) among several on a holdings "
     "record had no $b at all -- dropped entirely rather than becoming "
-    "its own split record.",
+    "its own split record. POSSIBLE DATA LOSS.",
     "doubled_proxy_url": "A URL subfield (e.g. 856 $u) has a literally "
-    "duplicated proxy prefix (e.g. an ezproxy wrapper repeated twice).",
+    "duplicated proxy prefix (e.g. an ezproxy wrapper repeated twice). "
+    "NO DATA LOSS.",
+    "suspect_marc8_escape": "A MARC-8 script-switching escape "
+    "(Hebrew/Arabic/Cyrillic/Greek/CJK) produces only a single "
+    "character, welded directly between two ASCII letters with no word "
+    "boundary -- almost certainly a miskeyed accented letter, not real "
+    "embedded foreign-script text; never auto-fixed, since there's no "
+    "safe way to guess the intended character. NO DATA LOSS.",
     "holdings_852_b_suspect_content": "An 852 $b (Sublocation) looks "
     "like data that migrated into the wrong subfield -- purely "
-    "numeric, or containing flattened subfield-delimiter markers.",
+    "numeric, or containing flattened subfield-delimiter markers. "
+    "NO DATA LOSS.",
     "holdings_853_missing_8": "An 853 (Captions and Pattern) field has "
     "no $8 (Field link and sequence number) -- the 863/864/865 "
-    "enumeration fields that should reference it can't be linked.",
+    "enumeration fields that should reference it can't be linked. "
+    "POSSIBLE DATA LOSS.",
     "holdings_856_missing_u": "An 856 (Electronic Location and Access) "
-    "field has no $u (URI) -- the field exists but has no actual link.",
+    "field has no $u (URI) -- the field exists but has no actual link. "
+    "NO DATA LOSS.",
     "missing_008": "Record has no 008 control field at all, mandatory "
     "in every MARC21 record -- not auto-filled since the correct "
-    "default is material-type-specific.",
+    "default is material-type-specific. NO DATA LOSS.",
     "split_holdings_multiple_852": "A holdings record had more than "
     "one usable 852 (Location) -- split into one record per 852, with "
-    "\"-2\", \"-3\", etc. appended to each additional copy's 001.",
+    "\"-2\", \"-3\", etc. appended to each additional copy's 001. "
+    "NO DATA LOSS.",
     "non_numeric_tag": "A field's tag isn't 3 numeric digits -- "
     "normally auto-renamed to an unused 9XX slot; this fires only when "
-    "that's disabled or every 9XX slot is already taken.",
-    "invalid_subfield_code": "A subfield code that isn't a lowercase "
-    "letter or digit was found but --no-strip-invalid-subfield-codes "
-    "left it in place instead of removing it.",
+    "that's disabled (field left untouched, no loss) or every 9XX slot "
+    "is already taken (the whole field is removed instead -- FOLIO "
+    "can't load a non-numeric tag either way). POSSIBLE DATA LOSS.",
     "dangling_880_link": "An 880 (Alternate Graphic Representation) "
     "field's $6 linkage doesn't match any other field's own $6 "
-    "back-reference.",
+    "back-reference. NO DATA LOSS.",
     "invalid_isbn_issn_checksum": "An 020/022 $a's check digit doesn't "
-    "match the rest of the number.",
+    "match the rest of the number. NO DATA LOSS.",
     "holdings_escape_sequence": "A holdings record contains a raw ESC "
     "(0x1B) byte -- likely an un-transcoded MARC-8 escape sequence "
-    "(MARC-8-to-UTF-8 conversion is currently skipped for holdings).",
+    "(MARC-8-to-UTF-8 conversion is currently skipped for holdings). "
+    "NO DATA LOSS.",
     "transcode_marc8_failed": "MARC-8-to-UTF-8 transcoding failed for "
-    "this record's content -- left as MARC-8, error recorded.",
+    "this record's content -- left as MARC-8, error recorded. "
+    "POSSIBLE DATA LOSS.",
     "added_default_008": "Record had no 008 -- a fixed generic "
-    "placeholder was inserted.",
+    "placeholder was inserted. NO DATA LOSS.",
     "added_default_holdings_008": "Holdings record had no 008 -- a "
-    "fixed generic 32-byte placeholder was inserted.",
+    "fixed generic 32-byte placeholder was inserted. NO DATA LOSS.",
     "added_default_245": "Record had no 245 -- a placeholder "
-    "($a \"No title\") was inserted.",
+    "($a \"No title\") was inserted. NO DATA LOSS.",
     "added_missing_852c": "852 (Location) had no $c (Shelving "
-    "location) -- a placeholder was inserted (only with "
-    "--fix-missing-852c).",
+    "location) -- a placeholder was inserted (disable with "
+    "--no-fix-missing-852c). NO DATA LOSS.",
     "normalized_subfield_9_to_0": "A $9 subfield was rewritten to $0 "
-    "(MARC21's standard authority-control-number code).",
+    "(MARC21's standard authority-control-number code). NO DATA LOSS.",
     "normalized_smart_characters": "Typographic (\"smart\") quotes/"
-    "dashes were flattened to their plain-ASCII equivalents.",
+    "dashes were flattened to their plain-ASCII equivalents. "
+    "NO DATA LOSS.",
     "transcoded_marc8": "A MARC-8/ANSEL-encoded record was converted "
-    "to UTF-8 and the leader's encoding byte flipped to match.",
+    "to UTF-8 and the leader's encoding byte flipped to match. "
+    "NO DATA LOSS.",
     "fixed_misplaced_subfield_code": "A run of text that looked like a "
-    "missed subfield delimiter was corrected.",
+    "missed subfield delimiter was corrected. NO DATA LOSS.",
     "removed_null_identifier": "A subfield with no data at all (e.g. a "
     "bare $8, or an empty $a immediately followed by another subfield) "
-    "was removed.",
+    "was removed. NO DATA LOSS.",
     "missing_call_number": "An 852 (Location) had no $h (call number) "
     "at all -- left untouched; a call number can legitimately be "
-    "absent.",
+    "absent. NO DATA LOSS.",
     "leader_byte_defaulted": "A leader byte (record status/type/bib "
     "level/encoding level) held a value outside MARC21's defined set "
-    "-- reset to a safe default.",
+    "-- reset to a safe default. NO DATA LOSS.",
     "holdings_leader_byte_defaulted": "Same as leader_byte_defaulted, "
-    "using holdings' own valid-value set.",
+    "using holdings' own valid-value set. NO DATA LOSS.",
     "leader_entry_map_fixed": "Leader bytes 20-23 (the entry map) "
-    "weren't the MARC21-fixed constant \"4500\" -- corrected.",
+    "weren't the MARC21-fixed constant \"4500\" -- corrected. "
+    "NO DATA LOSS.",
     "invalid_tag": "A non-numeric tag was renamed to an unused 9XX "
-    "slot (see non_numeric_tag for when this isn't possible).",
+    "slot (see non_numeric_tag for when this isn't possible). "
+    "NO DATA LOSS.",
     "invalid_indicator_value": "An indicator held a value outside "
-    "MARC21's defined set for that field.",
+    "MARC21's defined set for that field. NO DATA LOSS.",
     "invalid_bibliographic_level": "Leader byte 7 (bibliographic "
-    "level) held a value outside MARC21's defined set.",
+    "level) held a value outside MARC21's defined set. NO DATA LOSS.",
     "fixed_mojibake": "Double-encoded UTF-8 (\"mojibake\") was "
-    "corrected.",
+    "corrected. NO DATA LOSS.",
     "remapped_999_to_945": "A 999 field was retagged to 945 "
-    "(indicators forced to \"ff\") -- only with --remap-999-to-945.",
+    "(indicators forced to \"ff\") -- only with --remap-999-to-945. "
+    "NO DATA LOSS.",
     "oversized_sentinel_fixed": "A record's true length exceeds ISO "
     "2709's 5-digit field -- leader declares the documented 99999 "
     "sentinel instead (nothing lost; the real end is still found from "
-    "the record terminator).",
+    "the record terminator). NO DATA LOSS.",
     "padded_indicators": "A data field had 0 or 1 indicator characters "
-    "instead of 2 -- padded with spaces.",
+    "instead of 2 -- padded with spaces. NO DATA LOSS.",
     "holdings_missing_004": "Holdings record has no 004 (link to its "
-    "bib record) at all.",
+    "bib record) at all. POSSIBLE DATA LOSS.",
     "holdings_multiple_004": "Holdings record has more than one 004 "
     "-- not necessarily wrong (can legitimately link to more than one "
-    "bib record), surfaced for awareness.",
+    "bib record), surfaced for awareness. NO DATA LOSS.",
     "holdings_852_duplicate_nr_subfield": "852 (Location) had a "
-    "non-repeatable subfield (e.g. $b) more than once.",
+    "Not-Repeatable subfield (e.g. $h) more than once -- every "
+    "occurrence after the first removed. POSSIBLE DATA LOSS.",
     "fixed_008_length": "008 wasn't exactly 40 characters -- padded or "
-    "truncated to fit.",
+    "truncated to fit. NO DATA LOSS.",
     "fixed_holdings_008_length": "Holdings 008 wasn't exactly 32 "
-    "characters -- padded or truncated to fit.",
+    "characters -- padded or truncated to fit. NO DATA LOSS.",
     "added_field": "A field required via --ensure-field was missing "
-    "entirely -- inserted with the given content.",
+    "entirely -- inserted with the given content. NO DATA LOSS.",
     "added_missing_852_location": "852 (Location) had none of $a/$b/"
-    "$c -- a placeholder was inserted so the field means something.",
+    "$c -- a placeholder was inserted so the field means something. "
+    "NO DATA LOSS.",
     "reattached_orphaned_field": "A field that had drifted outside its "
     "record's own boundaries was reattached to the record it actually "
-    "belongs to.",
+    "belongs to. NO DATA LOSS.",
     "removed_empty_852_subfield": "An 852 (Location) subfield (other "
-    "than $h) was present but held no data -- removed.",
+    "than $h) was present but held no data -- removed. NO DATA LOSS.",
     "recoded_852_b_to_i": "852 had a second $b positioned after $h -- "
     "recoded to $i (it's the cutter/copy number that goes with $h, "
-    "just miscoded).",
+    "just miscoded). NO DATA LOSS.",
+}
+
+#: A short plain-language parenthetical appended to a category's own
+#: name in `write_log`'s "=== SECTION: category ===" header line (only,
+#: not the description or per-record lines below it) -- for the rare
+#: category whose bare machine-readable name (e.g. "fixed_mojibake")
+#: doesn't mean much to a reader without cataloging/MARC-internals
+#: background, even with the description line right below it.
+_CATEGORY_DISPLAY_NOTE: dict[str, str] = {
+    "fixed_mojibake": "character encoding issue",
 }
 
 
@@ -4028,14 +4161,12 @@ _CHECK_DESCRIPTIONS: dict[str, str] = {
 #: than accept in bulk. Everything else defaults to header+count only
 #: -- get the full list for any of those via --log-full (repeatable)
 #: or --log-informational (every currently-INFORMATIONAL category).
-#: Deliberately excludes a few categories that are both individually
-#: real and can be very high-volume across a file, unlikely to ever be
-#: individually fixed (dangling_880_link, invalid_isbn_issn_checksum,
-#: non_numeric_tag, invalid_subfield_code) -- on request.
+#: Deliberately excludes a couple of categories that are both
+#: individually real and can be very high-volume across a file,
+#: unlikely to ever be individually fixed (dangling_880_link,
+#: invalid_isbn_issn_checksum) -- on request.
 _ALWAYS_FULL_CATEGORIES = {
     "unfixable",
-    "unresolved_record",
-    "oversized_unfixable",
     "duplicate_identifier",
     "removed_non_repeatable_duplicate",
     "field_removed_because_missing_a",
@@ -4044,6 +4175,7 @@ _ALWAYS_FULL_CATEGORIES = {
     "removed_extra_852_b",
     "incomplete_852",
     "doubled_proxy_url",
+    "suspect_marc8_escape",
     "holdings_852_b_suspect_content",
     "holdings_853_missing_8",
     "holdings_856_missing_u",
@@ -4059,7 +4191,9 @@ _ALWAYS_FULL_CATEGORIES = {
     "added_missing_852c",
     "added_missing_852_location",
     "added_default_245",
+    "added_default_008",
     "padded_indicators",
+    "non_numeric_tag",
 }
 
 
@@ -4120,7 +4254,9 @@ def write_log(
             group = groups[(order, label, category)]
             if section_num > 0:
                 fh.write("\n")
-            fh.write(f"=== {label}: {category} ===\n")
+            note = _CATEGORY_DISPLAY_NOTE.get(category)
+            display_category = f"{category} ({note})" if note else category
+            fh.write(f"=== {label}: {display_category} ===\n")
             description = _CHECK_DESCRIPTIONS.get(category, "(no description available)")
             fh.write(f"=== {description} ===\n")
             fh.write(f"=== {len(group)} record(s) ===\n")
@@ -4233,7 +4369,7 @@ class ProgressReporter:
 #: "added_missing_852c" is the one holdings category NOT here, since it
 #: only runs at all when `fix_missing_852c` is set).
 _HOLDINGS_ALWAYS_ACTIVE_CATEGORIES = {
-    "unresolved_record",
+    "unfixable",
     "padded_indicators",
     "holdings_escape_sequence",
     "fixed_mojibake",
@@ -4260,7 +4396,6 @@ _HOLDINGS_ALWAYS_ACTIVE_CATEGORIES = {
     "holdings_856_missing_u",
     "incomplete_852",
     "split_holdings_multiple_852",
-    "oversized_unfixable",
     "oversized_sentinel_fixed",
 }
 
@@ -4269,7 +4404,7 @@ def repair_holdings_records(
     input_path: str,
     output_path: str,
     log_path: str,
-    fix_missing_852c: bool = False,
+    fix_missing_852c: bool = True,
     full_categories: set[str] | None = None,
     log_informational: bool = False,
     on_progress: Callable[[int], None] | None = None,
@@ -4341,10 +4476,10 @@ def repair_holdings_records(
         see `_852_NON_REPEATABLE_CODES` for the full list, and note $b/
         $c are deliberately excluded: both are officially Repeatable,
         unlike the pattern `fix_852_multiple_b` above actually corrects)
-        is flagged INFORMATIONAL (category
-        "holdings_852_duplicate_nr_subfield") -- detect-only, never
-        trimmed, same treatment as `holdings_multiple_004`; see
-        `find_852_duplicate_non_repeatable_subfields`
+        has every occurrence after the first removed (category
+        "holdings_852_duplicate_nr_subfield", FIXED/REQUIRES ATTENTION:
+        real data discarded, the kept copy isn't necessarily the
+        "right" one); see `strip_852_duplicate_non_repeatable_subfields`
       * an 852 $b (Sublocation) that's purely numeric or contains
         multiple literal "#" characters (a sign of subfields flattened
         into plain text by whatever exported the record) is flagged
@@ -4416,8 +4551,8 @@ def repair_holdings_records(
         `_is_wms_holdings_record`), $b otherwise (the subfield most
         other systems treat as location-bearing); unlike $c below this
         isn't opt-in
-      * if `fix_missing_852c` is set (off by default -- see
-        --fix-missing-852c), an 852 (Location) field missing $c
+      * if `fix_missing_852c` is set (on by default -- see
+        --no-fix-missing-852c), an 852 (Location) field missing $c
         (shelving location) gets a placeholder $c appended (see
         `add_missing_852c`)
       * any remaining subfield within an 852 that has no data at all
@@ -4457,12 +4592,16 @@ def repair_holdings_records(
     identifier (subfield present but empty) IS fixed, though -- see
     `strip_null_identifiers` above.
 
-    A record that can't be structurally parsed at all is passed through
-    unchanged, exactly like the main bib pipeline (category
-    "unresolved_record", NOT FIXED) -- one output record either way.
-    The only case where output record count differs from input record
-    count is `split_holdings_multiple_852` above: one input record
-    with multiple usable 852s becomes multiple output records.
+    A record that can't be structurally parsed at all, or whose split
+    copy assembles too large for ISO 2709 to represent, is diverted --
+    byte-for-byte unchanged -- to a separate "_error" file next to the
+    main output (see `_error_output_path`), exactly like the main bib
+    pipeline treats its own unfixable records (category "unfixable",
+    UNFIXABLE section, DATA LOSS: it's excluded from the main output
+    entirely). The only case where output record count differs from
+    input record count in the *other* direction is
+    `split_holdings_multiple_852` above: one input record with
+    multiple usable 852s becomes multiple output records.
 
     `on_progress`/`on_record` mirror `split_bib_holdings`'s parameters
     of the same name -- liveness only, no effect on the repair.
@@ -4473,26 +4612,29 @@ def repair_holdings_records(
     cheap no-op every other call, the same way `main`'s own bib loop
     uses it.
 
-    Returns {"total": n, "written": n, "unresolved": n, "log_lines": n,
+    Returns {"total": n, "written": n, "unfixable": n, "log_lines": n,
     "not_fixed": n} -- "total" is input records read, "written" is
-    output records written (equal unless a split happened).
+    output records actually written to `output_path` (excludes
+    anything diverted to the "_error" file; equal to "total" -
+    "unfixable" unless a split also happened).
     """
     encoding_used = detect_encoding(input_path)
     holdings_required_a_tags = load_tag_list(DEFAULT_HOLDINGS_REQUIRED_A_TAGS_FILE)
+    error_path = _error_output_path(output_path)
     log_entries: list[LogEntry] = []
     used_tags: set[str] = set()
     pending_tag_fixes: list[tuple[int, int, int, str]] = []
     id_records: list[tuple[int, str, str]] = []
     n_total = 0
     n_written = 0
-    n_unresolved = 0
+    n_unfixable = 0
     bytes_consumed_for_estimate = 0
 
     def log(category: str, fixed: bool, record_idx: int, rec_id: str, detail: str) -> None:
         ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         log_entries.append(LogEntry(category, fixed, ts, record_idx, rec_id, detail))
 
-    with open(output_path, "wb") as out_fh:
+    with open(output_path, "wb") as out_fh, _LazyBinaryWriter(error_path) as error_fh:
         record_stream = iter_repair_stream(
             input_path, on_progress=on_progress, fix_bad_indicators=True,
         )
@@ -4505,7 +4647,8 @@ def repair_holdings_records(
             # surrogate-escaped byte from a source-file corruption that
             # wasn't valid UTF-8 (see iter_repair_stream) -- round-tripping
             # it back to that same original byte, rather than raising, is
-            # exactly what "passed through unchanged" already means here.
+            # exactly what "written unchanged to the error file" already
+            # means here.
             if on_estimate is not None:
                 bytes_consumed_for_estimate += len(
                     rec_text.encode(encoding_used, errors="surrogateescape")
@@ -4514,10 +4657,13 @@ def repair_holdings_records(
 
             if parsed.unresolved:
                 reason = parsed.unresolved[0][3]
-                log("unresolved_record", False, i, "", f"passed through unchanged: {reason}")
-                out_fh.write(rec_text.encode(encoding_used, errors="surrogateescape"))
-                n_unresolved += 1
-                n_written += 1
+                print(
+                    f"record {i}: UNFIXABLE ({reason}) -- writing to {error_path} instead",
+                    file=sys.stderr,
+                )
+                log("unfixable", False, i, "", f"written to {error_path} unchanged: {reason}")
+                error_fh.write(rec_text.encode(encoding_used, errors="surrogateescape"))
+                n_unfixable += 1
                 continue
 
             for tag, spaces_added in parsed.indicator_fixes:
@@ -4586,8 +4732,8 @@ def repair_holdings_records(
             n_004 = sum(1 for f in parsed.fields if f.tag == "004")
             for category, detail in _find_004_issues(n_004):
                 log(category, False, i, rec_id, detail)
-            for detail in find_852_duplicate_non_repeatable_subfields(parsed):
-                log("holdings_852_duplicate_nr_subfield", False, i, rec_id, detail)
+            for detail in strip_852_duplicate_non_repeatable_subfields(parsed):
+                log("holdings_852_duplicate_nr_subfield", True, i, rec_id, detail)
             for detail in find_852_b_suspect_content(parsed):
                 log("holdings_852_b_suspect_content", False, i, rec_id, detail)
             for detail in find_853_missing_8(parsed):
@@ -4609,10 +4755,13 @@ def repair_holdings_records(
             try:
                 assembled_records = [assemble_marc(rec) for rec in records_to_write]
             except RepairError as exc:
-                log("oversized_unfixable", False, i, rec_id, f"passed through unchanged: {exc}")
-                out_fh.write(rec_text.encode(encoding_used, errors="surrogateescape"))
-                n_unresolved += 1
-                n_written += 1
+                print(
+                    f"record {i}: {exc} -- writing to {error_path} instead",
+                    file=sys.stderr,
+                )
+                log("unfixable", False, i, rec_id, f"written to {error_path} unchanged: {exc}")
+                error_fh.write(rec_text.encode(encoding_used, errors="surrogateescape"))
+                n_unfixable += 1
                 if rec_id:
                     id_records.append((i, rec_id, rec_text[:5]))
                 continue
@@ -4646,32 +4795,27 @@ def repair_holdings_records(
     if pending_tag_fixes:
         replacement_tag = pick_unused_9xx_tag(used_tags)
         fix_ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        with open(output_path, "r+b") as fixup_fh:
-            for record_idx, offset, length, rec_encoding in pending_tag_fixes:
-                fixup_fh.seek(offset)
-                raw = fixup_fh.read(length)
-                rec = read_intact_record(raw.decode(rec_encoding))
-                rec_id = record_identifier(rec)
-                if replacement_tag is None:
-                    for f in rec.fields:
-                        if not f.tag.isdigit():
-                            log_entries.append(LogEntry(
-                                "non_numeric_tag", False, fix_ts, record_idx, rec_id,
-                                f"tag {f.tag!r} is not 3 numeric digits (could not "
-                                "fix: every 900-999 tag is already used elsewhere "
-                                "in this file)",
-                            ))
-                    continue
-                for detail in fix_invalid_tags(rec, replacement_tag):
-                    log_entries.append(
-                        LogEntry("invalid_tag", True, fix_ts, record_idx, rec_id, detail)
+        if replacement_tag is None:
+            _rewrite_stripping_invalid_tags(
+                output_path, pending_tag_fixes, log_entries, fix_ts,
+            )
+        else:
+            with open(output_path, "r+b") as fixup_fh:
+                for record_idx, offset, length, rec_encoding in pending_tag_fixes:
+                    fixup_fh.seek(offset)
+                    raw = fixup_fh.read(length)
+                    rec = read_intact_record(raw.decode(rec_encoding))
+                    rec_id = record_identifier(rec)
+                    for detail in fix_invalid_tags(rec, replacement_tag):
+                        log_entries.append(
+                            LogEntry("invalid_tag", True, fix_ts, record_idx, rec_id, detail)
+                        )
+                    fixed_bytes = assemble_marc(rec)
+                    assert len(fixed_bytes) == length, (
+                        "tag rename must not change a record's total byte length"
                     )
-                fixed_bytes = assemble_marc(rec)
-                assert len(fixed_bytes) == length, (
-                    "tag rename must not change a record's total byte length"
-                )
-                fixup_fh.seek(offset)
-                fixup_fh.write(fixed_bytes)
+                    fixup_fh.seek(offset)
+                    fixup_fh.write(fixed_bytes)
 
     dup_ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     log_entries.extend(find_duplicate_identifiers(id_records, dup_ts))
@@ -4692,7 +4836,7 @@ def repair_holdings_records(
     return {
         "total": n_total,
         "written": n_written,
-        "unresolved": n_unresolved,
+        "unfixable": n_unfixable,
         "log_lines": len(log_entries),
         "not_fixed": n_not_fixed,
     }
@@ -4736,16 +4880,16 @@ def main(argv: list[str] | None = None) -> int:
         "except MARC-8-to-UTF-8 transcoding (skipped for holdings for "
         "now) and the bib-specific tag-list fixes (245/required-$a/"
         "duplicate-field, which don't apply to holdings semantics; see "
-        "also --fix-missing-852c, an opt-in holdings-specific content "
-        "fix) -- output INPUT_holdings_repaired.EXT, logged to "
-        "INPUT_holdings_log_TIMESTAMP.log; bib records via this same "
-        "default pipeline, as if separately run as "
+        "also --no-fix-missing-852c to disable the one holdings-"
+        "specific content fix) -- output INPUT_holdings_repaired.EXT, "
+        "logged to INPUT_holdings_log_TIMESTAMP.log; bib records via "
+        "this same default pipeline, as if separately run as "
         "`marc_repair.py INPUT_bib.EXT` (only -o is forwarded, not "
         "this invocation's other flags) -- output "
         "INPUT_bib_repaired.EXT, logged to "
         "INPUT_bib_repaired_log_TIMESTAMP.log. Either side's own "
-        "unfixable records are passed through unchanged, same as the "
-        "main bib pipeline",
+        "unfixable records are diverted, byte-for-byte unchanged, to a "
+        "separate _error file, same as the main bib pipeline",
     )
     parser.add_argument(
         "--repair-holdings",
@@ -4759,21 +4903,23 @@ def main(argv: list[str] | None = None) -> int:
         "already done in an earlier run (or by some other tool) and only "
         "the holdings side needs (re-)repairing. Output: INPUT_repaired.EXT "
         "next to the input (or -o/--out); log: INPUT_log_TIMESTAMP.log (or "
-        "--log). See --fix-missing-852c for the one opt-in "
+        "--log). See --no-fix-missing-852c to disable the one "
         "holdings-specific content fix",
     )
     parser.add_argument(
-        "--fix-missing-852c",
+        "--no-fix-missing-852c",
         dest="fix_missing_852c",
-        action="store_true",
-        default=False,
+        action="store_false",
+        default=True,
         help="(holdings records only, used by --split-bib-holdings and "
-        "--repair-holdings) add a "
+        "--repair-holdings) do NOT add a "
         f"placeholder $c (shelving location) subfield -- content "
         f"{DEFAULT_852_C_CONTENT!r} -- to any 852 (Location) field missing "
-        "one. Off by default since 852 $c is real location data this tool "
-        "has no way to know; each insertion is logged (see --log) as a "
-        "placeholder, not a real value",
+        "one. By default one is inserted, same as the 008/245 "
+        "placeholders elsewhere -- 852 $c is real location data this tool "
+        "has no way to know, but leaving it out entirely is worse than a "
+        "clearly-flagged placeholder; each insertion is logged (see "
+        "--log) as a placeholder, not a real value",
     )
     parser.add_argument(
         "--mrk",
@@ -4902,17 +5048,6 @@ def main(argv: list[str] | None = None) -> int:
         "to remove instead. Header + count always logged (see --log); "
         "not listed per-record by default (see --log-full) since this "
         "can be a large fraction of a file with this defect",
-    )
-    parser.add_argument(
-        "--no-strip-invalid-subfield-codes",
-        dest="strip_invalid_subfield_codes",
-        action="store_false",
-        default=True,
-        help="do NOT remove subfields whose code isn't a lowercase letter "
-        "or digit -- unusable data with no safe way to guess what it "
-        "should have been. By default such subfields ARE removed, each "
-        "removal timestamp-logged (see --log); a field left with no "
-        "valid subfields is then dropped entirely",
     )
     parser.add_argument(
         "--no-strip-empty-fields",
@@ -5143,8 +5278,9 @@ def main(argv: list[str] | None = None) -> int:
                 f"{result['written']} holdings record(s) repaired from "
                 f"{result['total']} input record(s) and written to "
                 f"{holdings_repaired_path} "
-                f"({result['total'] - result['unresolved']} corrected/passed clean, "
-                f"{result['unresolved']} passed through unchanged)"
+                f"({result['total'] - result['unfixable']} corrected/passed clean, "
+                f"{result['unfixable']} diverted to "
+                f"{_error_output_path(holdings_repaired_path)})"
             )
             print(
                 f"holdings log (every check run, one header per category) written to "
@@ -5194,8 +5330,9 @@ def main(argv: list[str] | None = None) -> int:
         print(
             f"Wrote {result['written']} holdings record(s) from "
             f"{result['total']} input record(s) to {out_path} "
-            f"({result['total'] - result['unresolved']} corrected/passed clean, "
-            f"{result['unresolved']} passed through unchanged) in {elapsed:.2f}s"
+            f"({result['total'] - result['unfixable']} corrected/passed clean, "
+            f"{result['unfixable']} diverted to {_error_output_path(out_path)}) "
+            f"in {elapsed:.2f}s"
         )
         print(
             f"log (every check run, one header per category) written to {log_path} "
@@ -5203,10 +5340,11 @@ def main(argv: list[str] | None = None) -> int:
             f"fixed, {result['log_lines'] - result['not_fixed']} fixed)",
             file=sys.stderr,
         )
-        if result["unresolved"]:
+        if result["unfixable"]:
             print(
-                f"{result['unresolved']} record(s) could not be auto-repaired "
-                "and were kept unchanged in the output.",
+                f"{result['unfixable']} record(s) could not be auto-repaired at all -- "
+                f"written, byte-for-byte unchanged, to {_error_output_path(out_path)} "
+                "instead.",
                 file=sys.stderr,
             )
             return 1
@@ -5430,11 +5568,9 @@ def main(argv: list[str] | None = None) -> int:
                     rec_id = record_identifier(parsed)
                     for detail in fix_misplaced_subfield_codes(parsed):
                         log("fixed_misplaced_subfield_code", True, i, rec_id, detail)
-                if args.strip_invalid_subfield_codes:
-                    rec_id = record_identifier(parsed)
-                    for detail in strip_invalid_subfield_codes(parsed):
-                        log("removed_invalid_subfield", True, i, rec_id, detail)
                 rec_id = record_identifier(parsed)
+                for detail in strip_invalid_subfield_codes(parsed):
+                    log("removed_invalid_subfield", True, i, rec_id, detail)
                 for detail in strip_null_identifiers(parsed):
                     log("removed_null_identifier", True, i, rec_id, detail)
                 if args.strip_missing_required_a:
@@ -5550,37 +5686,35 @@ def main(argv: list[str] | None = None) -> int:
 
     if pending_tag_fixes:
         # Now that the whole file's been read, we finally know every tag
-        # actually in use -- pick the replacement and go fix (or, if
-        # every 9XX slot is somehow already taken, flag) just these few
-        # records, by seeking directly to their known byte offsets
-        # rather than re-reading the whole output file.
+        # actually in use -- pick the replacement and go fix just these
+        # few records, by seeking directly to their known byte offsets
+        # rather than re-reading the whole output file. If every 9XX
+        # slot is somehow already taken, there's nowhere left to rename
+        # to -- strip the invalid-tag field(s) out entirely instead
+        # (see `strip_invalid_tags`), which needs a full second pass
+        # over the file rather than an in-place patch, since removing a
+        # field changes the record's byte length.
         replacement_tag = pick_unused_9xx_tag(used_tags)
         fix_ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        with open(out_path, "r+b") as fixup_fh:
-            for record_idx, offset, length, rec_encoding in pending_tag_fixes:
-                fixup_fh.seek(offset)
-                raw = fixup_fh.read(length)
-                rec = read_intact_record(raw.decode(rec_encoding))
-                rec_id = record_identifier(rec)
-                if replacement_tag is None:
-                    for f in rec.fields:
-                        if not f.tag.isdigit():
-                            log_entries.append(LogEntry(
-                                "non_numeric_tag", False, fix_ts, record_idx, rec_id,
-                                f"tag {f.tag!r} is not 3 numeric digits (could not fix: "
-                                "every 900-999 tag is already used elsewhere in this file)",
-                            ))
-                    continue
-                for detail in fix_invalid_tags(rec, replacement_tag):
-                    log_entries.append(
-                        LogEntry("invalid_tag", True, fix_ts, record_idx, rec_id, detail)
+        if replacement_tag is None:
+            _rewrite_stripping_invalid_tags(out_path, pending_tag_fixes, log_entries, fix_ts)
+        else:
+            with open(out_path, "r+b") as fixup_fh:
+                for record_idx, offset, length, rec_encoding in pending_tag_fixes:
+                    fixup_fh.seek(offset)
+                    raw = fixup_fh.read(length)
+                    rec = read_intact_record(raw.decode(rec_encoding))
+                    rec_id = record_identifier(rec)
+                    for detail in fix_invalid_tags(rec, replacement_tag):
+                        log_entries.append(
+                            LogEntry("invalid_tag", True, fix_ts, record_idx, rec_id, detail)
+                        )
+                    fixed_bytes = assemble_marc(rec)
+                    assert len(fixed_bytes) == length, (
+                        "tag rename must not change a record's total byte length"
                     )
-                fixed_bytes = assemble_marc(rec)
-                assert len(fixed_bytes) == length, (
-                    "tag rename must not change a record's total byte length"
-                )
-                fixup_fh.seek(offset)
-                fixup_fh.write(fixed_bytes)
+                    fixup_fh.seek(offset)
+                    fixup_fh.write(fixed_bytes)
 
     dup_ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     log_entries.extend(find_duplicate_identifiers(id_records, dup_ts))
@@ -5591,10 +5725,10 @@ def main(argv: list[str] | None = None) -> int:
     # category left out here because its flag is off must genuinely
     # never be logged this run (see each `log(...)` call site above).
     active_categories = {
-        "unfixable", "missing_008", "doubled_proxy_url", "invalid_subfield_code",
+        "unfixable", "missing_008", "doubled_proxy_url", "removed_invalid_subfield",
         "non_numeric_tag", "invalid_indicator_value", "invalid_bibliographic_level",
         "leader_entry_map_fixed", "oversized_sentinel_fixed", "duplicate_identifier",
-        "removed_null_identifier",
+        "removed_null_identifier", "suspect_marc8_escape",
     }
     if args.fix_bad_indicators:
         active_categories.add("padded_indicators")
@@ -5614,8 +5748,6 @@ def main(argv: list[str] | None = None) -> int:
         active_categories.add("normalized_smart_characters")
     if args.fix_misplaced_subfield_codes:
         active_categories.add("fixed_misplaced_subfield_code")
-    if args.strip_invalid_subfield_codes:
-        active_categories.add("removed_invalid_subfield")
     if args.strip_missing_required_a:
         active_categories.add("field_removed_because_missing_a")
     if args.strip_duplicate_non_repeatable_fields:

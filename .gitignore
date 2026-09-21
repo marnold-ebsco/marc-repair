@@ -25,6 +25,8 @@ venv2/
 !tests/fixtures/kitchen_sink_holdings_repaired.mrc
 !tests/fixtures/kitchen_sink_holdings.log
 !tests/fixtures/kitchen_sink_bib_entrymap_invalid_utf8_witness.mrc
+!tests/fixtures/kitchen_sink_bib_non_numeric_tag_exhausted_witness.mrc
+!tests/fixtures/kitchen_sink_holdings_non_numeric_tag_exhausted_witness.mrc
 !docs/kitchen_sink_bib.log
 !docs/kitchen_sink_holdings.log
 archive/

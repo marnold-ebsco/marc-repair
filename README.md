@@ -117,7 +117,12 @@ before the run's output is usable at all — with the underlying reason
 included in full, e.g. "no consistent directory found for this record
 at all" or "field is 10005 bytes, but the directory's length field is
 only 4 digits". The CLI exits with status 1 whenever this happens, the
-same as it always has for a record needing manual attention.
+same as it always has for a record needing manual attention. The
+holdings-only pipeline (`--repair-holdings`/`--split-bib-holdings`)
+treats its own equivalent cases the exact same way — a structurally
+unparseable holdings record, or a split copy too large to represent —
+also lands under `unfixable`/UNFIXABLE in its own `_error` file, not
+left in the main holdings output.
 
 ### What gets fixed automatically vs. flagged
 
@@ -126,20 +131,21 @@ same as it always has for a record needing manual attention.
 | Corrupted leader/directory (Mode 1) | Fixed automatically — no flag needed |
 | Record too large for the leader's 5-digit length field | Fixed automatically, using MARC21's own documented sentinel (`99999`); nothing is lost since the real end is always found from the terminator; logged as `oversized_sentinel_fixed` (INFORMATIONAL) |
 | Single field or base address too large to represent at all | Not fixable — no sentinel exists for these; diverted to a separate `_error` file unchanged, logged as `unfixable` (UNFIXABLE, see above) |
-| Missing 245, or a 245 present but missing $a | Placeholder `$aNo title` added by default — many real-world imports reject a record with no title at all — either as a new field or, if a 245 already exists (e.g. one with only `$h[electronic resource]`), patched into the existing field alongside its other subfields, not stripped and rebuilt; `--ensure-field "245:..."` takes priority per-record if supplied; `--no-add-default-245` to leave such records untouched instead; logged as `added_default_245` (INFORMATIONAL) |
+| Missing 245, or a 245 present but missing $a | Placeholder `$aNo title` added by default — many real-world imports reject a record with no title at all — either as a new field or, if a 245 already exists (e.g. one with only `$h[electronic resource]`), patched into the existing field alongside its other subfields, not stripped and rebuilt; `--ensure-field "245:..."` takes priority per-record if supplied; `--no-add-default-245` to leave such records untouched instead; logged in full as `added_default_245` under **FIXED/REQUIRES ATTENTION**, since a placeholder title is worth a second look even though it's not discarded real data |
 | Missing any other field | `--ensure-field` (opt-in; you supply the content); logged as `added_field` under **FIXED/REQUIRES ATTENTION** since a human-supplied value is worth double-checking |
-| Missing 008 | Placeholder inserted by default (a fixed, material-type-agnostic default — real content still needs `--ensure-field "008:..."`, which takes priority per-record); `--no-add-default-008` to leave such records with no 008 instead; logged as `added_default_008` (INFORMATIONAL) |
+| Missing 008 | Placeholder inserted by default (a fixed, material-type-agnostic default — real content still needs `--ensure-field "008:..."`, which takes priority per-record); `--no-add-default-008` to leave such records with no 008 instead (logged as `missing_008`); logged in full as `added_default_008` under **FIXED/REQUIRES ATTENTION** for the same reason as `added_default_245` above |
 | Fields missing a required `$a` | Removed by default (see `required_a_tags.txt`, editable); `--no-strip-missing-required-a` to leave them instead; the exact removed content is logged in full as `field_removed_because_missing_a` under **FIXED/REQUIRES ATTENTION** since real data was discarded |
 | Subfield code is a stray space immediately followed by its real, still-present code (e.g. raw `\x1f c2000.` really meaning `$c` "c2000." — a common AACR2-era copyright-date convention, corrupted by one extra inserted space; seen at real scale in production data) | Corrected by default, before invalid-code removal below gets a chance to discard it — nothing is guessed or lost, the real code is simply the very next character; `--no-fix-misplaced-subfield-codes` to leave it for invalid-code removal to strip instead. Not logged per-record by default (this can be a large fraction of a file with this defect) — pass `--log-fixed-misplaced-subfield-code` to log each one as `fixed_misplaced_subfield_code` (INFORMATIONAL) |
-| Invalid subfield codes (not `[a-z0-9]`) | Removed by default; `--no-strip-invalid-subfield-codes` to leave them instead; the exact removed content is logged in full as `removed_invalid_subfield` under **FIXED/REQUIRES ATTENTION** since real data was discarded |
+| Invalid subfield codes (not `[a-z0-9]`) | Removed unconditionally — no flag leaves these in place, since there's no safe way to guess what an unusable code should have been; the exact removed content is logged in full as `removed_invalid_subfield` under **FIXED/REQUIRES ATTENTION** since real data was discarded |
 | A field where every subfield's data is empty (any tag) | Removed by default (not logged since nothing is discarded); `--no-strip-empty-fields` to leave them instead |
-| Data field with 0 or 1 indicator characters instead of 2 | Padded with spaces by default; `--no-fix-bad-indicators` to leave it instead (such a field then fails Mode 1 and falls back to Mode 2/UNRESOLVED); logged as `padded_indicators` (INFORMATIONAL) |
+| Data field with 0 or 1 indicator characters instead of 2 | Padded with spaces by default; `--no-fix-bad-indicators` to leave it instead (such a field then fails Mode 1 and falls back to Mode 2/UNRESOLVED); logged as `padded_indicators` under **FIXED/REQUIRES ATTENTION** |
 | `999` fields (Sierra's internal item-linking field, not part of MARC21) | Left as-is by default (not every source is Sierra-originated, and it's not a structural defect); pass `--remap-999-to-945` to retag every one to `945` with indicators `ff` (a locally-defined field other systems will actually accept) instead. Not logged by default even when enabled (a record can carry many 999s) — also pass `--log-999-to-945` to log each one as `remapped_999_to_945` (INFORMATIONAL) |
 | `$9` subfields (legacy/local stand-in for `$0`) | Rewritten to `$0` by default; `--no-normalize-subfield-9` to leave as-is. Not logged per-record by default (this can be nearly every record in a file that uses `$9`) — pass `--log-normalized-subfield-9-to-0` to log each one as `normalized_subfield_9_to_0` (INFORMATIONAL) |
 | Typographic "smart" Unicode punctuation (curly quotes, em/en dashes, ellipsis — see table below) | Normalized to plain ASCII by default; `--no-normalize-smart-characters` to leave as-is. Not logged per-record by default (this can be nearly every record in a file with typographic punctuation) — pass `--log-normalized-smart-characters` to log each one as `normalized_smart_characters` (INFORMATIONAL) |
 | Legacy MARC-8/ANSEL encoding | Converted to UTF-8 by default (requires `pymarc`; the run fails loudly if it's missing, rather than silently leaving non-UTF-8 output — install it, or pass `--no-transcode-marc8` if you explicitly want non-UTF-8 records left as-is). Not logged per-record by default (this can be nearly every record in a legacy file) — pass `--log-transcoded-marc8` to log each one as `transcoded_marc8` (INFORMATIONAL) |
-| A tag that isn't 3 numeric digits (e.g. `24A` from directory corruption) | Renamed to an unused tag in the 900-999 locally-defined range by default, picked from tags seen during the normal single pass (no extra full pass — only the rare record needing this gets a second, targeted look afterward); `--no-fix-invalid-tags` to leave it as-is instead; logged as `invalid_tag` (INFORMATIONAL) |
-| Doubled proxy URLs, duplicate record identifiers | Always detected and logged (NOT FIXED / DUPLICATE RECORDS), never auto-fixed — no safe correction to guess |
+| A tag that isn't 3 numeric digits (e.g. `24A` from directory corruption) | Renamed to an unused tag in the 900-999 locally-defined range by default, picked from tags seen during the normal single pass (no extra full pass — only the rare record needing this gets a second, targeted look afterward); logged as `invalid_tag` (INFORMATIONAL). If every 900-999 tag is already taken elsewhere in the file, there's nowhere left to rename to — the whole field is removed instead (FOLIO can't load a non-numeric tag either way), via a full second pass over the output file since removal changes the record's byte length; logged in full as `non_numeric_tag` under **FIXED/REQUIRES ATTENTION**, since real field content is discarded. `--no-fix-invalid-tags` skips the rename attempt entirely, leaving the tag untouched instead of removed (also logged as `non_numeric_tag`) |
+| A URL subfield with a literally duplicated proxy prefix (e.g. an ezproxy wrapper repeated twice) | Always detected and logged as `doubled_proxy_url` (INFORMATIONAL), never auto-fixed — no safe correction to guess |
+| Duplicate record identifiers (same `001`, or `907$a` if it looks like a Sierra bib number, on more than one record) | Always detected and logged (DUPLICATE RECORDS), never auto-fixed — no safe correction to guess |
 | A single Hebrew/Arabic/Cyrillic/Greek/CJK character welded directly between two ASCII letters with no word boundary (e.g. real data found: "Schr" + one CJK character + "inger", almost certainly a miskeyed "ö") | Always detected and logged as `suspect_marc8_escape` (NOT FIXED), never auto-fixed — there's no safe way to guess the intended character; flag this to the source system/cataloger to correct |
 | Leader bytes 05/06/08/17 (record status, type of record, type of control, encoding level) outside their valid MARC21 code set | Defaulted (05→`c`, 06→`a`, 08/17→blank) by default; `--no-fix-invalid-leader-bytes` to leave as-is; logged as `leader_byte_defaulted` (INFORMATIONAL) |
 | Double-encoded UTF-8 ("mojibake" — see table below) in a record already declaring UTF-8 | Fixed by default (only when re-decoding as UTF-8 actually succeeds, which is effectively impossible by coincidence for text that wasn't really double-encoded); `--no-fix-mojibake` to leave as-is; logged as `fixed_mojibake` (INFORMATIONAL) |
@@ -193,8 +199,11 @@ There is no plain "FIXED" section — every successful fix lands in one
 of the two sections below (or DUPLICATE RECORDS), so it's always clear
 which bucket a given fix fell into:
 
-1. **NOT FIXED** — still needs your attention (warnings, unresolved
-   passthroughs, unfixable oversized records)
+1. **NOT FIXED** — still needs your attention: detect-only findings
+   this tool never touches (a failed MARC-8 transcode, a holdings 852
+   subfield that looks like data flattened into the wrong place, a
+   holdings 853 with no `$8`, etc.) — no auto-fix exists, so there's
+   nothing to promote out of this section
 2. **FIXED/REQUIRES ATTENTION** — the record is now loadable, but real
    data was discarded or altered (or added from outside the record) to
    get there, so it's worth a second look even though nothing is
@@ -204,23 +213,27 @@ which bucket a given fix fell into:
    (`fixed_008_length`, with the original content), a field with an
    invalid subfield code removed (`removed_invalid_subfield`), a
    heading field missing its required `$a` removed (`field_removed_because_missing_a`),
-   or a missing field added from a human-supplied `--ensure-field` value
-   (`added_field`). The goal throughout this tool is a MARC file that's
-   always loadable, even when that requires discarding something — but
-   that loss is always surfaced here, never silent.
+   a missing field added from a human-supplied `--ensure-field` value
+   (`added_field`), a placeholder 008/245 inserted
+   (`added_default_008`/`added_default_245`), or a non-numeric tag with
+   nowhere left to rename to, removed entirely (`non_numeric_tag`, when
+   every 900-999 slot is already taken). The goal throughout this tool
+   is a MARC file that's always loadable, even when that requires
+   discarding something — but that loss is always surfaced here, never
+   silent.
 3. **DUPLICATE RECORDS** — the same identifier (`001`, or `907$a` if it
    looks like a Sierra bib number) used on more than one record
 4. **INFORMATIONAL** — either fixed via a fixed default/constant rather
-   than recovered from the record itself (a placeholder 008/245, a
-   leader byte reset to a default code, the leader's entry-map constant
-   restored, `$9` promoted to `$0`, typographic punctuation flattened,
-   double-encoded UTF-8 corrected, a record transcoded MARC-8 → UTF-8,
-   an unparseable tag renamed to an unused 9XX slot, `999` remapped to
-   `945`, an oversized record's leader sentinel applied, short
-   indicators padded with spaces), or a detect-only finding not urgent
-   enough for NOT FIXED (an indicator value outside `[0-9 ]`, leader
-   byte 07 outside its valid code set, a dangling 880 `$6` link, an
-   ISBN/ISSN with a bad check digit). **Off by default** — pass
+   than recovered from the record itself (a leader byte reset to a
+   default code, the leader's entry-map constant restored, `$9`
+   promoted to `$0`, typographic punctuation flattened, double-encoded
+   UTF-8 corrected, a record transcoded MARC-8 → UTF-8, a non-numeric
+   tag renamed to an unused 9XX slot, `999` remapped to `945`, an
+   oversized record's leader sentinel applied), or a detect-only
+   finding not urgent enough for NOT FIXED (a doubled proxy URL prefix,
+   an indicator value outside `[0-9 ]`, leader byte 07 outside its
+   valid code set, a dangling 880 `$6` link, an ISBN/ISSN with a bad
+   check digit). **Off by default** — pass
    `--log-informational` to include this section, since it's typically
    the highest-volume one (e.g. every MARC-8 record transcoded)
 

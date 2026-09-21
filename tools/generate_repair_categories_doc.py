@@ -160,9 +160,10 @@ BIB_ROWS = [
     ),
     CategoryRow(
         "Invalid subfield code removal", "Removed subfield",
-        "Yes (`--no-strip-invalid-subfield-codes`)",
+        "Yes, always",
         "`removed_invalid_subfield`", "FIXED/REQUIRES ATTENTION", "**Yes**",
-        "`--no-strip-invalid-subfield-codes`",
+        "-- (no switch -- unusable data with no safe way to guess what "
+        "it should have been, always removed)",
     ),
     CategoryRow(
         "Null identifier (a subfield with no data at all, e.g. a bare $8, "
@@ -210,10 +211,8 @@ BIB_ROWS = [
     CategoryRow(
         "Placeholder 008 added", "Added default field",
         "Yes (`--no-add-default-008`)", "`added_default_008`",
-        "INFORMATIONAL", "No (header + count always shown; full per-record list via --log-full "
-                         "added_default_008 or --log-informational)",
-        "`--no-add-default-008`; `--ensure-field` (takes priority per-record); "
-        "`--log-informational`",
+        "FIXED/REQUIRES ATTENTION", "**Yes**",
+        "`--no-add-default-008`; `--ensure-field` (takes priority per-record)",
     ),
     CategoryRow(
         "008 length pad/truncate (40 bytes)", "Padded/truncated field",
@@ -237,13 +236,13 @@ BIB_ROWS = [
         "--log-informational)", "`--no-fix-invalid-tags`; `--log-informational`",
     ),
     CategoryRow(
-        "Invalid tag, no 9XX slot free", "Left tag unchanged",
-        "(fallback of above)", "`non_numeric_tag`", "NOT FIXED", "No (header + count always shown; "
-                                                                 "full per-record list via "
-                                                                 "--log-full non_numeric_tag)",
-        "`--no-fix-invalid-tags` (skips the attempt entirely); "
-        "`--remap-999-to-945` (frees up a 9XX slot, so can turn this fallback "
-        "into a successful rename)",
+        "Invalid tag, no 9XX slot free", "Field removed entirely "
+        "(full-file rewrite -- see strip_invalid_tags)",
+        "(fallback of above)", "`non_numeric_tag`", "FIXED/REQUIRES ATTENTION", "**Yes**",
+        "`--no-fix-invalid-tags` (skips the attempt entirely -- field "
+        "left untouched instead of removed); `--remap-999-to-945` "
+        "(frees up a 9XX slot, so can turn this fallback into a "
+        "successful rename)",
     ),
     CategoryRow(
         "Leader entry-map (bytes 20-23) correction", "Corrected leader bytes",
@@ -278,19 +277,18 @@ BIB_ROWS = [
     CategoryRow(
         "Suspect MARC-8 escape (miskeyed diacritic)",
         "Flagged only, no change", "detect-only", "`suspect_marc8_escape`",
-        "NOT FIXED", "No (header + count always shown; full per-record list via --log-full "
-                     "suspect_marc8_escape)", "-- (detect-only, no switch)",
+        "NOT FIXED", "**Yes**", "-- (detect-only, no switch)",
     ),
     CategoryRow(
         "Missing 008", "Flagged only, no change",
         "detect-only (superseded by add_default_008 fixing it)",
-        "`missing_008`", "NOT FIXED", "**Yes**",
+        "`missing_008`", "FIXED/REQUIRES ATTENTION", "**Yes**",
         "`--no-add-default-008` (only way to see this instead of "
         "`added_default_008`)",
     ),
     CategoryRow(
         "Doubled proxy URL prefix", "Flagged only, no change",
-        "detect-only", "`doubled_proxy_url`", "NOT FIXED", "**Yes**",
+        "detect-only", "`doubled_proxy_url`", "INFORMATIONAL", "**Yes**",
         "-- (detect-only, no switch)",
     ),
     CategoryRow(
@@ -454,10 +452,10 @@ HOLDINGS_ROWS = [
         "the MARC 21 spec defines as Not Repeatable there (e.g. two "
         "$h -- see `_852_NON_REPEATABLE_CODES`; deliberately excludes "
         "$b/$c, both officially Repeatable, unlike the row above)",
-        "Flagged only, no change", "detect-only",
-        "`holdings_852_duplicate_nr_subfield`", "INFORMATIONAL",
+        "Every occurrence after the first removed", "Yes, always",
+        "`holdings_852_duplicate_nr_subfield`", "FIXED/REQUIRES ATTENTION",
         "**Yes**",
-        "-- (detect-only, no switch)",
+        "-- (no switch -- always runs and always logged)",
     ),
     CategoryRow(
         "852 (Location) $b (Sublocation) that's purely numeric (e.g. "
@@ -514,8 +512,8 @@ HOLDINGS_ROWS = [
     ),
     CategoryRow(
         '852 $c placeholder ("Migration") added', "Added subfield",
-        "**No** (`--fix-missing-852c` to enable)", "`added_missing_852c`",
-        "INFORMATIONAL", "**Yes**", "`--fix-missing-852c`",
+        "**Yes** (`--no-fix-missing-852c` to disable)", "`added_missing_852c`",
+        "INFORMATIONAL", "**Yes**", "`--no-fix-missing-852c`",
     ),
     CategoryRow(
         "852 subfield present but with no data at all (e.g. a bare "
@@ -533,9 +531,9 @@ HOLDINGS_ROWS = [
         "-- (no switch -- always runs and always logged)",
     ),
     CategoryRow(
-        "Invalid tag, no 9XX slot free", "Left tag unchanged", "(fallback)",
-        "`non_numeric_tag`", "NOT FIXED", "No (header + count always shown; full per-record list "
-                                          "via --log-full non_numeric_tag)",
+        "Invalid tag, no 9XX slot free", "Field removed entirely "
+        "(full-file rewrite)", "(fallback)",
+        "`non_numeric_tag`", "FIXED/REQUIRES ATTENTION", "**Yes**",
         "-- (no switch -- depends only on whether every 900-999 tag is "
         "already taken elsewhere in the file)",
     ),
@@ -582,19 +580,21 @@ HOLDINGS_ROWS = [
         "record that has more than one 852",
         "Dropped entirely -- not duplicated into any split copy, "
         "since there is no location to split out",
-        "Yes, always", "`incomplete_852`", "NOT FIXED", "**Yes**",
+        "Yes, always", "`incomplete_852`", "FIXED/REQUIRES ATTENTION", "**Yes**",
         "-- (no switch -- always runs and always logged)",
     ),
     CategoryRow(
-        "Unresolvable record (passed through unchanged)",
-        "Passed through unchanged", "n/a (only if it occurs)",
-        "`unresolved_record`", "NOT FIXED", "**Yes**",
+        "Unresolvable record (no consistent directory found)",
+        "Diverted to `<output>_error.mrc`, unchanged",
+        "n/a (only if it occurs)",
+        "`unfixable`", "UNFIXABLE", "**Yes**",
         "`--overrides` (Mode 2 only -- supplies the split the automatic "
         "solver couldn't determine)",
     ),
     CategoryRow(
-        "Unfixable oversized field/base address", "Left record unchanged",
-        "n/a (only if it occurs)", "`oversized_unfixable`", "NOT FIXED",
+        "Unfixable oversized field/base address (split copy)",
+        "Diverted to `<output>_error.mrc`, unchanged",
+        "n/a (only if it occurs)", "`unfixable`", "UNFIXABLE",
         "**Yes**", "-- (no switch -- genuinely unfixable)",
     ),
     CategoryRow(

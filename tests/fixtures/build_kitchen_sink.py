@@ -32,6 +32,19 @@ worked around there for MARC-8 records) -- silently corrupting every
 in the process. It gets its own single-record output file instead:
     kitchen_sink_bib_entrymap_invalid_utf8_witness.mrc
 
+A fourth and fifth record (one per pipeline) can't coexist with their
+own file's other invalid_tag example either, for a different reason:
+`used_tags` (which tag(s) in 900-999 are already spoken for) is
+gathered file-wide, not per-record, so a record that deliberately
+fills every 900-999 slot to exercise the "no free 9XX slot" fallback
+(category non_numeric_tag -- the field gets stripped out entirely
+instead of renamed) would ALSO block the *other* invalid-tag record's
+own normal, successful rename (category invalid_tag) elsewhere in the
+same file, turning it into another non_numeric_tag hit instead of the
+example it's meant to be. Each gets its own single-record witness file:
+    kitchen_sink_bib_non_numeric_tag_exhausted_witness.mrc
+    kitchen_sink_holdings_non_numeric_tag_exhausted_witness.mrc
+
 Run: python tests/fixtures/build_kitchen_sink.py
 """
 
@@ -51,6 +64,12 @@ BIB_OUT = os.path.join(FIXTURES, "kitchen_sink_bib.mrc")
 HOLDINGS_OUT = os.path.join(FIXTURES, "kitchen_sink_holdings.mrc")
 BIB_INVALID_UTF8_ENTRYMAP_OUT = os.path.join(
     FIXTURES, "kitchen_sink_bib_entrymap_invalid_utf8_witness.mrc"
+)
+BIB_NON_NUMERIC_TAG_EXHAUSTED_OUT = os.path.join(
+    FIXTURES, "kitchen_sink_bib_non_numeric_tag_exhausted_witness.mrc"
+)
+HOLDINGS_NON_NUMERIC_TAG_EXHAUSTED_OUT = os.path.join(
+    FIXTURES, "kitchen_sink_holdings_non_numeric_tag_exhausted_witness.mrc"
 )
 
 BIB_PADDING_SOURCE = os.path.join(
@@ -303,6 +322,32 @@ def build_bib_records() -> list[bytes]:
         m.Field_("008", None, None, content="x" * 40),
     ]))
 
+    # added_default_245, blank $a variant: a 245 field IS present, with
+    # a $a subfield, but it's empty -- add_default_245 treats this the
+    # same as no $a at all (see its own "drop any $a that's present but
+    # empty" comment) and patches in the placeholder.
+    records.append(_record(_BIB_LEADER, [
+        m.Field_("001", None, None, content="ks-245blanka"),
+        m.Field_("008", None, None, content="x" * 40),
+        m.Field_("245", "00", [("a", "")]),
+    ]))
+
+    # add_default_245, punctuation-only $a variant: a 245 $a with
+    # nothing but a period -- NOTE this is a known gap, not a category
+    # this tool currently fixes: add_default_245 only checks `data`
+    # truthiness (`if any(code == "a" and data ...)`), unlike
+    # strip_missing_required_a/fix_852_call_number's own
+    # _is_punctuation_only checks elsewhere, so a punctuation-only $a is
+    # treated as if it were a real title and left completely untouched
+    # -- no placeholder, no log entry at all. Included here specifically
+    # to document and regression-test the CURRENT (arguably
+    # inconsistent) behavior, not to exercise added_default_245.
+    records.append(_record(_BIB_LEADER, [
+        m.Field_("001", None, None, content="ks-245punctonlya"),
+        m.Field_("008", None, None, content="x" * 40),
+        m.Field_("245", "00", [("a", ".")]),
+    ]))
+
     # added_default_008: no 008 at all -- also doubles, in a *separate*
     # CLI run with --no-add-default-008, as the "missing_008" witness (see
     # module docstring) -- included here once for the default-flags run.
@@ -319,27 +364,20 @@ def build_bib_records() -> list[bytes]:
     ]))
 
     # invalid_tag: a non-numeric tag, renamed to a free 9XX slot (default
-    # --fix-invalid-tags).
+    # --fix-invalid-tags). Note: the "every 900-999 slot taken" fallback
+    # (category non_numeric_tag) can't be demonstrated alongside this in
+    # the same file -- `used_tags` is gathered file-wide, so a filler
+    # record elsewhere using up all of 900-999 would ALSO block this
+    # record's own rename, silently turning it into another
+    # non_numeric_tag hit instead of the successful invalid_tag rename
+    # it's meant to show. See build_bib_non_numeric_tag_exhausted_witness
+    # for that scenario's own separate file.
     records.append(_record(_BIB_LEADER, [
         m.Field_("001", None, None, content="ks-invalidtag"),
         m.Field_("008", None, None, content="x" * 40),
         m.Field_("245", "00", [("a", "Title.")]),
-        m.Field_("24A", "00", [("a", "Odd tag")]),
+        m.Field_("FMT", "00", [("a", "Odd tag")]),
     ]))
-
-    # non_numeric_tag: same defect, but every 900-999 slot is already
-    # used *within this one record* -- fix_invalid_tags' fallback then
-    # leaves it flagged instead of silently renaming it, even with
-    # --fix-invalid-tags on (the default).
-    fields_9xx_full = [
-        m.Field_("001", None, None, content="ks-nonnumerictag"),
-        m.Field_("008", None, None, content="x" * 40),
-        m.Field_("245", "00", [("a", "Title.")]),
-        m.Field_("24B", "00", [("a", "Odd tag, no free 9XX slot")]),
-    ]
-    for n in range(900, 1000):
-        fields_9xx_full.append(m.Field_(str(n), "  ", [("a", "filler")]))
-    records.append(_record(_BIB_LEADER, fields_9xx_full))
 
     # leader_entry_map_fixed: leader bytes 20-23 corrupted from the fixed
     # "4500" constant -- always corrected, logged only with
@@ -466,6 +504,31 @@ def build_bib_records() -> list[bytes]:
         m.Field_("245", "00", [("a", "Second copy, a longer title.")]),
     ]))
 
+    # reattached_orphaned_field: a trailing =700 field physically present
+    # in the file but missing its own directory entry, so excluded from
+    # the preceding record's own declared length -- real shape (down to
+    # the exact subfields) pulled from a production run against
+    # ub_bib_records.mrc: "record 58611 (73065)" logged
+    #   1 $aQuinn, Frances,$d1963-
+    # reattached as a new =700. iter_repair_stream sees this trailing
+    # chunk as UNRESOLVED (no leader/directory of its own to parse);
+    # reattach_orphaned_trailing_fields recognizes its personal-name
+    # shape and merges it into the record immediately before it, which
+    # must have parsed cleanly -- built here as one raw byte blob (home
+    # record immediately followed by the orphan chunk's own field text
+    # + RECTERM, no leader) rather than two separate list entries, so
+    # nothing else can end up between them once padding records are
+    # appended afterward.
+    orphan_home = _record(_BIB_LEADER, [
+        m.Field_("001", None, None, content="ks-orphanhome"),
+        m.Field_("008", None, None, content="x" * 40),
+        m.Field_("245", "00", [("a", "Title.")]),
+    ])
+    orphan_chunk = (
+        "1 " + m.SUBFIELD + "a" + "Quinn, Frances," + m.SUBFIELD + "d" + "1963-" + m.FIELDTERM
+    ).encode("utf-8") + b"\x1d"
+    records.append(orphan_home + orphan_chunk)
+
     return records
 
 
@@ -491,6 +554,27 @@ def build_bib_missing_008_witness() -> bytes:
         m.Field_("001", None, None, content="ks-missing008-witness"),
         m.Field_("245", "00", [("a", "Title with no 008 at all.")]),
     ])
+
+
+def build_bib_non_numeric_tag_exhausted_witness() -> bytes:
+    """non_numeric_tag (bib): a non-numeric tag with every 900-999 slot
+    already taken (within this one record), so fix_invalid_tags has
+    nowhere to rename it to and the field is stripped out entirely
+    instead (see strip_invalid_tags) -- kept out of kitchen_sink_bib.mrc
+    itself (see module docstring): `used_tags` is gathered file-wide,
+    so this record's own filler fields would ALSO block the unrelated
+    "ks-invalidtag"/FMT record above from getting its normal successful
+    rename, turning that into a non_numeric_tag hit too instead of the
+    invalid_tag example it's meant to show."""
+    fields = [
+        m.Field_("001", None, None, content="ks-nonnumerictag-witness"),
+        m.Field_("008", None, None, content="x" * 40),
+        m.Field_("245", "00", [("a", "Title.")]),
+        m.Field_("FMU", "00", [("a", "Odd tag, no free 9XX slot")]),
+    ]
+    for n in range(900, 1000):
+        fields.append(m.Field_(str(n), "  ", [("a", "filler")]))
+    return _record(_BIB_LEADER, fields)
 
 
 def build_bib_invalid_utf8_entrymap_witness() -> bytes:
@@ -577,32 +661,24 @@ def build_holdings_records() -> list[bytes]:
     ]))
 
     # added_missing_852c: 852 with no $c -- a placeholder "Migration" is
-    # appended, only when --fix-missing-852c is given.
+    # appended by default (--no-fix-missing-852c to disable).
     records.append(_record(_HOLDINGS_LEADER, [
         m.Field_("004", None, None, content="ks-hol-missing852c"),
         m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
         m.Field_("852", "  ", [("a", "Main Library")]),
     ]))
 
-    # invalid_tag: a non-numeric tag, renamed to a free 9XX slot.
+    # invalid_tag: a non-numeric tag, renamed to a free 9XX slot. Note:
+    # the "every 900-999 slot taken" fallback (non_numeric_tag) can't be
+    # demonstrated alongside this in the same file -- see
+    # build_holdings_non_numeric_tag_exhausted_witness for why, same
+    # reasoning as the bib pipeline's own build_bib_records.
     records.append(_record(_HOLDINGS_LEADER, [
         m.Field_("004", None, None, content="ks-hol-invalidtag"),
         m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
         m.Field_("852", "  ", [("a", "Main Library")]),
-        m.Field_("85Z", "  ", [("a", "bad tag")]),
+        m.Field_("FMT", "  ", [("a", "bad tag")]),
     ]))
-
-    # non_numeric_tag: same defect, but every 900-999 slot is already
-    # used within this one record -- left flagged instead of renamed.
-    fields_9xx_full = [
-        m.Field_("004", None, None, content="ks-hol-nonnumerictag"),
-        m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
-        m.Field_("852", "  ", [("a", "Main Library")]),
-        m.Field_("85Y", "  ", [("a", "bad tag, no free 9XX slot")]),
-    ]
-    for n in range(900, 1000):
-        fields_9xx_full.append(m.Field_(str(n), "  ", [("a", "filler")]))
-    records.append(_record(_HOLDINGS_LEADER, fields_9xx_full))
 
     # holdings_escape_sequence: an ESC byte present -- flagged, not
     # transcoded (holdings MARC-8 transcoding is out of scope for now).
@@ -670,7 +746,10 @@ def build_holdings_records() -> list[bytes]:
         m.Field_("852", "  ", [("a", "Main Library")]),
     ]))
 
-    # oversized_unfixable: a single field over the 9999-byte cap.
+    # unfixable: a single field over the 9999-byte cap -- diverted to
+    # the "_error" output instead of the main one (same treatment as
+    # the bib pipeline's own unfixable records; formerly its own
+    # "oversized_unfixable" category, now merged into "unfixable").
     records.append(_oversized_field_record(
         _HOLDINGS_LEADER,
         [
@@ -684,9 +763,31 @@ def build_holdings_records() -> list[bytes]:
 
 
 def build_holdings_unresolved_tail() -> bytes:
-    """unresolved_record: trailing garbage with no MARC leader at all,
-    appended after at least one real holdings record."""
+    """unfixable (holdings): trailing garbage with no MARC leader at
+    all, appended after at least one real holdings record -- diverted
+    to the "_error" output, same treatment as the bib pipeline
+    (formerly its own "unresolved_record" category, now merged into
+    "unfixable")."""
     return b"not a marc record at all, no leader here whatsoever\x1d"
+
+
+def build_holdings_non_numeric_tag_exhausted_witness() -> bytes:
+    """non_numeric_tag (holdings): same fallback as
+    build_bib_non_numeric_tag_exhausted_witness, on the holdings side --
+    every 900-999 slot already taken within this one record, so the
+    non-numeric tag gets stripped out entirely instead of renamed. Kept
+    out of kitchen_sink_holdings.mrc itself for the identical reason:
+    `used_tags` is gathered file-wide, so this would also swallow the
+    "ks-hol-invalidtag"/FMT record's own successful rename."""
+    fields = [
+        m.Field_("004", None, None, content="ks-hol-nonnumerictag-witness"),
+        m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
+        m.Field_("852", "  ", [("a", "Main Library")]),
+        m.Field_("FMU", "  ", [("a", "bad tag, no free 9XX slot")]),
+    ]
+    for n in range(900, 1000):
+        fields.append(m.Field_(str(n), "  ", [("a", "filler")]))
+    return _record(_HOLDINGS_LEADER, fields)
 
 
 # ---------------------------------------------------------------------------
@@ -731,6 +832,14 @@ def main() -> None:
     with open(BIB_INVALID_UTF8_ENTRYMAP_OUT, "wb") as fh:
         fh.write(build_bib_invalid_utf8_entrymap_witness())
     print(f"wrote 1 record to {BIB_INVALID_UTF8_ENTRYMAP_OUT}")
+
+    with open(BIB_NON_NUMERIC_TAG_EXHAUSTED_OUT, "wb") as fh:
+        fh.write(build_bib_non_numeric_tag_exhausted_witness())
+    print(f"wrote 1 record to {BIB_NON_NUMERIC_TAG_EXHAUSTED_OUT}")
+
+    with open(HOLDINGS_NON_NUMERIC_TAG_EXHAUSTED_OUT, "wb") as fh:
+        fh.write(build_holdings_non_numeric_tag_exhausted_witness())
+    print(f"wrote 1 record to {HOLDINGS_NON_NUMERIC_TAG_EXHAUSTED_OUT}")
 
 
 if __name__ == "__main__":

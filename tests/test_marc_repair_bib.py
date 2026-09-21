@@ -256,28 +256,39 @@ class TestFixBadIndicators:
         fixed, _end = result
         assert fixed.indicator_fixes == []
 
-    def test_main_end_to_end_logs_as_fixed_at_bottom(self, tmp_path):
+    def test_main_end_to_end_logs_as_fixed_at_bottom(self, tmp_path, monkeypatch):
+        # transcode_marc8_failed is one of the few categories still left
+        # genuinely NOT FIXED by default -- everything else easy to
+        # trigger (missing_008, non_numeric_tag, invalid_subfield_code,
+        # incomplete_852) is now FIXED/REQUIRES ATTENTION. Forcing a real
+        # transcode failure (rather than just disabling a flag) needs
+        # pymarc's marc8_to_unicode to actually raise, same technique as
+        # test_main_falls_back_gracefully_on_transcode_failure above.
+        pytest.importorskip("pymarc")
+        import pymarc.marc8
+
+        def failing_marc8_to_unicode(data, hide_utf8_warnings=False):
+            raise UnicodeDecodeError("marc8_to_unicode", data, 0, len(data), "boom")
+
+        monkeypatch.setattr(pymarc.marc8, "marc8_to_unicode", failing_marc8_to_unicode)
+
+        leader = list(_SYNTHETIC_LEADER)
+        leader[9] = " "
         fields = [
             m.Field_("001", None, None, content="abc123"),
             m.Field_("008", None, None, content="x" * 40),
-            m.Field_("245", "00", [("a", "Title.")]),
-            # invalid subfield code -- fixed by default, so this test
-            # passes --no-strip-invalid-subfield-codes to keep it flagged
-            # instead, giving this test a genuine NOT FIXED entry to
-            # check ordering against
-            m.Field_("500", "  ", [("Z", "bad code")]),
+            # non-ASCII so this hits the MARC-8 transcode path, which the
+            # monkeypatch above forces to fail
+            m.Field_("245", "00", [("a", "Titl\xe5.")]),
         ]
-        parsed = m.ParsedRecord(leader=_SYNTHETIC_LEADER, entries=[], fields=fields)
-        raw = m.assemble_marc(parsed).decode("utf-8")
+        parsed = m.ParsedRecord(leader="".join(leader), entries=[], fields=fields)
+        raw = m.assemble_marc(parsed).decode("utf-8", errors="surrogateescape")
         corrupted = _drop_indicator_chars(raw, 1)
         src = tmp_path / "bad_indicators.mrc"
-        src.write_bytes(corrupted.encode("utf-8"))
+        src.write_bytes(corrupted.encode("utf-8", errors="surrogateescape"))
         out = tmp_path / "out.mrc"
         log = tmp_path / "run.log"
-        rc = m.main([
-            str(src), "-o", str(out), "--no-strip-invalid-subfield-codes",
-            "--log-full", "invalid_subfield_code", "--log", str(log),
-        ])
+        rc = m.main([str(src), "-o", str(out), "--log", str(log)])
         assert rc == 0
         lines = _resolve_log(log).read_text(encoding="utf-8").splitlines()
         not_fixed_idx = next(i for i, ln in enumerate(lines) if ln.startswith("=== NOT FIXED"))
@@ -855,18 +866,6 @@ class TestFindSuspiciousFields:
         )
         warnings = m.find_suspicious_fields(parsed)
         assert any(cat == "non_numeric_tag" and "24A" in detail for cat, detail in warnings)
-
-    def test_flags_invalid_subfield_code(self):
-        parsed = m.ParsedRecord(
-            leader="0" * 24,
-            entries=[],
-            fields=[
-                m.Field_("008", None, None, content="x" * 40),
-                m.Field_("245", "00", [("A", "Uppercase code")]),
-            ],
-        )
-        warnings = m.find_suspicious_fields(parsed)
-        assert any(cat == "invalid_subfield_code" and "'A'" in detail for cat, detail in warnings)
 
     def test_flags_missing_008(self):
         parsed = m.ParsedRecord(
@@ -1557,10 +1556,9 @@ class TestUnfixableErrorFile:
 
     def test_unfixable_section_appears_before_every_other_section(self, tmp_path):
         # A file with one of everything: unresolvable garbage (UNFIXABLE),
-        # a record missing both 008 and 245 -- 008 (added_default_008)
-        # still lands in INFORMATIONAL -- and a clean record. UNFIXABLE
-        # must render first regardless of write_log's usual NOT
-        # FIXED-first ordering.
+        # a record missing both 008 and 245 -- both land in FIXED/
+        # REQUIRES ATTENTION -- and a clean record. UNFIXABLE must render
+        # first regardless of write_log's usual NOT FIXED-first ordering.
         missing_245 = m.assemble_marc(m.ParsedRecord(
             leader=_SYNTHETIC_LEADER, entries=[],
             fields=[m.Field_("001", None, None, content="no245")],
@@ -1719,7 +1717,7 @@ class TestAddDefault008:
         rc = m.main([str(src), "-o", str(out), "--no-add-default-008", "--log", str(log)])
         assert rc == 0
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert "=== NOT FIXED: missing_008 ===" in content
+        assert "=== FIXED/REQUIRES ATTENTION: missing_008 ===" in content
         assert "\tmissing_008\t" in content
         results = m.repair_text(m._read_text(str(out)))
         assert not any(f.tag == "008" for f in results[0].fields)
@@ -1821,7 +1819,7 @@ class TestFixInvalidTags:
         ])
         assert rc == 0
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert "=== NOT FIXED: non_numeric_tag ===" in content
+        assert "=== FIXED/REQUIRES ATTENTION: non_numeric_tag ===" in content
         assert "\tnon_numeric_tag\t" in content
         results = m.repair_text(m._read_text(str(out)))
         tags = [f.tag for f in results[0].fields]
@@ -1862,7 +1860,7 @@ class TestFixInvalidTags:
         field900 = next(f for f in results[1].fields if f.tag == "900")
         assert field900.subfields == [("a", "Local data")]
 
-    def test_falls_back_to_flagging_when_every_9xx_slot_is_taken(self, tmp_path):
+    def test_falls_back_to_stripping_when_every_9xx_slot_is_taken(self, tmp_path):
         fields = [m.Field_("008", None, None, content="x" * 40),
                   m.Field_("245", "00", [("a", "Title.")])]
         for n in range(900, 1000):
@@ -1891,10 +1889,13 @@ class TestFixInvalidTags:
         ])
         assert rc == 0
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert "=== NOT FIXED: non_numeric_tag ===" in content
-        assert "could not fix" in content
+        assert "=== FIXED/REQUIRES ATTENTION: non_numeric_tag ===" in content
+        assert "content discarded" in content
         results = m.repair_text(m._read_text(str(out)))
-        assert any(f.tag == "24A" for f in results[1].fields)
+        assert not any(f.tag == "24A" for f in results[1].fields)
+        # rec1's own 100 filler 9XX fields are untouched -- only the
+        # genuinely invalid tag on rec2 gets stripped
+        assert sum(1 for f in results[0].fields if f.tag.isdigit() and f.tag[0] == "9") == 100
 
 
 # ---------------------------------------------------------------------------
@@ -2667,24 +2668,6 @@ _INFORMATIONAL_BY_DEFAULT_CASES = [
         verify=lambda results: results[0].leader[5] == "c",
     ),
     _CliDefaultCase(
-        id="added_default_008",
-        build=lambda: m.assemble_marc(m.ParsedRecord(
-            leader=_SYNTHETIC_LEADER,
-            entries=[],
-            fields=[m.Field_("245", "00", [("a", "Title.")])],
-        )),
-        extra_cli_args=["--log-informational"],
-        required_log_substrings=[
-            "=== INFORMATIONAL: added_default_008 ===",
-            _detail_line_marker("added_default_008"),
-        ],
-        forbidden_log_substrings=[_detail_line_marker("missing_008")],
-        verify=lambda results: (
-            next(f for f in results[0].fields if f.tag == "008").content
-            == m.DEFAULT_008_CONTENT
-        ),
-    ),
-    _CliDefaultCase(
         id="fixed_mojibake",
         build=lambda: m.assemble_marc(m.ParsedRecord(
             leader=_SYNTHETIC_LEADER,
@@ -2696,7 +2679,7 @@ _INFORMATIONAL_BY_DEFAULT_CASES = [
         )),
         extra_cli_args=["--log-informational"],
         required_log_substrings=[
-            "=== INFORMATIONAL: fixed_mojibake ===",
+            "=== INFORMATIONAL: fixed_mojibake (character encoding issue) ===",
             _detail_line_marker("fixed_mojibake"),
         ],
         verify=lambda results: (
@@ -2821,6 +2804,23 @@ _FIXED_REQUIRES_ATTENTION_CASES = [
         verify=lambda results: (
             next(f for f in results[0].fields if f.tag == "245").subfields
             == [("a", "No title")]
+        ),
+    ),
+    _CliDefaultCase(
+        id="added_default_008",
+        build=lambda: m.assemble_marc(m.ParsedRecord(
+            leader=_SYNTHETIC_LEADER,
+            entries=[],
+            fields=[m.Field_("245", "00", [("a", "Title.")])],
+        )),
+        required_log_substrings=[
+            "=== FIXED/REQUIRES ATTENTION: added_default_008 ===",
+            _detail_line_marker("added_default_008"),
+        ],
+        forbidden_log_substrings=[_detail_line_marker("missing_008")],
+        verify=lambda results: (
+            next(f for f in results[0].fields if f.tag == "008").content
+            == m.DEFAULT_008_CONTENT
         ),
     ),
 ]

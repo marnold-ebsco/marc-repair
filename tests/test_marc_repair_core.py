@@ -485,32 +485,31 @@ def _category_header_line(lines: list[str], category: str) -> int:
 class TestWriteLog:
     def test_groups_by_fixed_then_category_with_headers(self, tmp_path):
         entries = [
-            m.LogEntry("missing_008", False, "t1", 0, "u1", "no 008"),
+            m.LogEntry("some_not_fixed_thing", False, "t1", 0, "u1", "no 008"),
             # synthetic, never-specially-categorized names -- generic
-            # so this test doesn't break if some real fixed category
-            # later moves into a dedicated section like FIXED/REQUIRES
+            # so this test doesn't break if some real category later
+            # moves into a dedicated section like FIXED/REQUIRES
             # ATTENTION or INFORMATIONAL (both currently fall back to
-            # INFORMATIONAL, not a plain "FIXED" section -- see
-            # `_section_for`)
+            # NOT FIXED/INFORMATIONAL respectively -- see `_section_for`)
             m.LogEntry("some_fixed_thing", True, "t2", 0, "u1", "added 245"),
-            m.LogEntry("missing_008", False, "t3", 1, "u2", "no 008 either"),
+            m.LogEntry("some_not_fixed_thing", False, "t3", 1, "u2", "no 008 either"),
             m.LogEntry("some_other_fixed_thing", True, "t4", 1, "u2", "removed 650"),
         ]
         log_path = tmp_path / "run.log"
-        m.write_log(str(log_path), entries, full_categories={"missing_008"})
+        m.write_log(str(log_path), entries, full_categories={"some_not_fixed_thing"})
         lines = log_path.read_text(encoding="utf-8").splitlines()
 
-        not_fixed_header = _category_header_line(lines, "missing_008")
+        not_fixed_header = _category_header_line(lines, "some_not_fixed_thing")
         fixed_added_header = _category_header_line(lines, "some_fixed_thing")
         fixed_removed_header = _category_header_line(lines, "some_other_fixed_thing")
         assert lines[not_fixed_header].startswith("=== NOT FIXED")
         assert "2 record(s)" in lines[not_fixed_header + 2]
         assert not_fixed_header < fixed_added_header
         assert not_fixed_header < fixed_removed_header
-        # the two missing_008 entries are adjacent, not interleaved with
-        # the unrelated fixed entries
-        missing_008_lines = [ln for ln in lines if ln.startswith("[") and "no 008" in ln]
-        assert len(missing_008_lines) == 2
+        # the two entries are adjacent, not interleaved with the
+        # unrelated fixed entries
+        not_fixed_lines = [ln for ln in lines if ln.startswith("[") and "no 008" in ln]
+        assert len(not_fixed_lines) == 2
 
     def test_appends_rather_than_overwrites(self, tmp_path):
         log_path = tmp_path / "run.log"
@@ -528,7 +527,7 @@ class TestWriteLog:
     def test_duplicate_records_section_sits_after_fixed(self, tmp_path):
         entries = [
             m.LogEntry("added_field", True, "t1", 0, "u1", "added 245"),
-            m.LogEntry("missing_008", False, "t2", 1, "u2", "no 008"),
+            m.LogEntry("some_not_fixed_thing", False, "t2", 1, "u2", "no 008"),
             m.LogEntry("duplicate_identifier", False, "t3", 2, "u3", "dup"),
         ]
         log_path = tmp_path / "run.log"
@@ -546,17 +545,19 @@ class TestWriteLog:
 
     def test_informational_section_sits_after_fixed(self, tmp_path):
         entries = [
-            m.LogEntry("missing_008", False, "t1", 0, "u1", "no 008"),
+            m.LogEntry("some_not_fixed_thing", False, "t1", 0, "u1", "no 008"),
             m.LogEntry("added_field", True, "t2", 0, "u1", "added 245"),
             m.LogEntry("duplicate_identifier", False, "t3", 1, "u2", "dup"),
-            m.LogEntry("added_default_008", True, "t4", 2, "u3", "added placeholder 008"),
+            m.LogEntry(
+                "added_default_holdings_008", True, "t4", 2, "u3", "added placeholder 008",
+            ),
             m.LogEntry("leader_byte_defaulted", True, "t5", 2, "u3", "byte 05 defaulted"),
             m.LogEntry("leader_entry_map_fixed", True, "t6", 2, "u3", "entry map fixed"),
             m.LogEntry("normalized_subfield_9_to_0", True, "t7", 2, "u3", "9 -> 0"),
         ]
         log_path = tmp_path / "run.log"
         informational_categories = {
-            "added_default_008", "leader_byte_defaulted", "leader_entry_map_fixed",
+            "added_default_holdings_008", "leader_byte_defaulted", "leader_entry_map_fixed",
             "normalized_subfield_9_to_0",
         }
         m.write_log(str(log_path), entries, full_categories=informational_categories)
@@ -574,7 +575,7 @@ class TestWriteLog:
 
     def test_blank_line_before_each_header_except_the_first(self, tmp_path):
         entries = [
-            m.LogEntry("missing_008", False, "t1", 0, "u1", "no 008"),
+            m.LogEntry("some_not_fixed_thing", False, "t1", 0, "u1", "no 008"),
             m.LogEntry("added_field", True, "t2", 0, "u1", "added 245"),
         ]
         log_path = tmp_path / "run.log"
@@ -583,7 +584,7 @@ class TestWriteLog:
         # 2 categories * 3 header lines each (SECTION: category /
         # description / count)
         header_block_starts = [
-            _category_header_line(lines, "missing_008"),
+            _category_header_line(lines, "some_not_fixed_thing"),
             _category_header_line(lines, "added_field"),
         ]
         assert header_block_starts[0] == 0
@@ -691,16 +692,14 @@ class TestCLIHelpers:
         title_fields = [f for f in results[0].fields if f.tag == "245"]
         assert len(title_fields) == 1
         assert title_fields[0].subfields == [("a", "No title"), ("h", "[electronic resource]")]
-        # the patched 245 is logged as added_default_245
-        # (FIXED/REQUIRES ATTENTION, listed in full by default); the
-        # missing-008 default is added_default_008 (INFORMATIONAL --
-        # header + count always shown, but not listed in full by
-        # default)
+        # both the patched 245 (added_default_245) and the missing-008
+        # default (added_default_008) are FIXED/REQUIRES ATTENTION,
+        # listed in full by default
         content = _resolve_log(log).read_text(encoding="utf-8")
         assert "FIXED/REQUIRES ATTENTION: added_default_245" in content
-        assert "INFORMATIONAL: added_default_008" in content
+        assert "FIXED/REQUIRES ATTENTION: added_default_008" in content
         assert "[FIXED/REQUIRES ATTENTION]\tadded_default_245" in content
-        assert "[INFORMATIONAL]\tadded_default_008" not in content
+        assert "[FIXED/REQUIRES ATTENTION]\tadded_default_008" in content
 
 
 # ---------------------------------------------------------------------------

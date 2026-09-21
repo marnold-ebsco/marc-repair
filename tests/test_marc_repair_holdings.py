@@ -176,7 +176,13 @@ class TestRepairHoldingsRecords:
             fields = [
                 m.Field_("004", None, None, content="ocm123"),
                 m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
-                m.Field_("852", "  ", [("a", "Main Library"), ("h", "ABC123")]),
+                # $c present -- fix_missing_852c is on by default now, so
+                # a record meant to be genuinely "nothing to fix" needs
+                # one already, unlike tests specifically about that fix
+                # (which build their own fields without it)
+                m.Field_(
+                    "852", "  ", [("a", "Main Library"), ("c", "Stacks"), ("h", "ABC123")],
+                ),
             ]
         return m.assemble_marc(m.ParsedRecord(leader=leader, entries=[], fields=fields))
 
@@ -199,7 +205,7 @@ class TestRepairHoldingsRecords:
         clean_leader = _HOLDINGS_LEADER[:17] + "u" + _HOLDINGS_LEADER[18:]
         result, out, log = self._run(tmp_path, [self._holdings_record(leader=clean_leader)])
         assert result == {
-            "total": 1, "written": 1, "unresolved": 0, "log_lines": 0, "not_fixed": 0,
+            "total": 1, "written": 1, "unfixable": 0, "log_lines": 0, "not_fixed": 0,
         }
         assert m.count_records(str(out)) == 1
         # the log file always exists now (a header + count for every
@@ -211,7 +217,7 @@ class TestRepairHoldingsRecords:
     def test_missing_008_gets_blank_holdings_placeholder(self, tmp_path):
         fields = [
             m.Field_("004", None, None, content="ocm123"),
-            m.Field_("852", "  ", [("a", "Main Library"), ("h", "ABC123")]),
+            m.Field_("852", "  ", [("a", "Main Library"), ("c", "Stacks"), ("h", "ABC123")]),
         ]
         result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
         # +1 for byte 17 (encoding level) always being defaulted for this
@@ -359,19 +365,24 @@ class TestRepairHoldingsRecords:
         parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
         assert parsed.leader[17] == "u"
 
-    def test_unresolvable_record_passed_through_unchanged(self, tmp_path):
+    def test_unresolvable_record_diverted_to_error_file(self, tmp_path):
         # A whole file with literally no MARC leader anywhere is a fatal
         # RepairError for iter_repair_stream (nowhere to even start) --
         # per-record UNRESOLVED handling instead kicks in for a *trailing*
         # chunk after at least one real leader was found, which is what
         # this exercises: one clean record, then trailing garbage with
-        # no leader of its own.
+        # no leader of its own. Treated the same as the bib pipeline's
+        # own unfixable records: diverted, byte-for-byte, to the "_error"
+        # file rather than left in the main output.
         garbage = b"not a marc record at all, no leader here whatsoever" + b"\x1d"
         result, out, log = self._run(tmp_path, [self._holdings_record(), garbage])
         assert result["total"] == 2
-        assert result["unresolved"] == 1
+        assert result["written"] == 1
+        assert result["unfixable"] == 1
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert "unresolved_record" in content
+        assert "=== UNFIXABLE: unfixable ===" in content
+        error_path = m._error_output_path(str(out))
+        assert os.path.exists(error_path)
 
     def test_invalid_tag_renamed_to_unused_9xx(self, tmp_path):
         parsed = m.ParsedRecord(
@@ -387,6 +398,37 @@ class TestRepairHoldingsRecords:
         assert "invalid_tag" in content
         parsed_out = m.read_intact_record(out.read_bytes().decode("utf-8"))
         assert all(f.tag.isdigit() for f in parsed_out.fields)
+
+    def test_invalid_tag_stripped_when_every_9xx_slot_is_taken(self, tmp_path):
+        # Same fallback as the bib pipeline's own test of this
+        # (TestFixInvalidTags::test_falls_back_to_stripping_when_every_
+        # 9xx_slot_is_taken): with every 900-999 tag already used
+        # elsewhere in the file, there's nowhere to rename an invalid
+        # tag to, so the field is stripped out entirely instead --
+        # which needs a full second-pass rewrite of the output file
+        # (removal changes record length, unlike a rename).
+        filler_fields = [
+            m.Field_("004", None, None, content="ocm-filler"),
+            m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
+        ]
+        for n in range(900, 1000):
+            filler_fields.append(m.Field_(str(n), "  ", [("a", "filler")]))
+        filler_record = self._holdings_record(fields=filler_fields)
+        bad_tag_record = self._holdings_record(fields=[
+            m.Field_("004", None, None, content="ocm-badtag"),
+            m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
+            m.Field_("852", "  ", [("a", "Main Library"), ("c", "Stacks")]),
+            m.Field_("85Z", "00", [("a", "bad tag")]),
+        ])
+        result, out, log = self._run(tmp_path, [filler_record, bad_tag_record])
+        assert result["total"] == 2
+        assert result["written"] == 2
+        content = _resolve_log(log).read_text(encoding="utf-8")
+        assert "non_numeric_tag" in content
+        assert "content discarded" in content
+        results = m.repair_text(m._read_text(str(out)))
+        assert not any(f.tag == "85Z" for f in results[1].fields)
+        assert sum(1 for f in results[0].fields if f.tag.startswith("9")) == 100
 
     def test_missing_004_flagged_not_fixed(self, tmp_path):
         fields = [
@@ -487,7 +529,7 @@ class TestRepairHoldingsRecords:
         assert result["total"] == 1
         assert result["written"] == 1
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert "[NOT FIXED]\tincomplete_852" in content
+        assert "[FIXED/REQUIRES ATTENTION]\tincomplete_852" in content
         assert "no $b" in content
         assert _detail_line_marker("split_holdings_multiple_852") not in content
         parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
@@ -524,13 +566,30 @@ class TestRepairHoldingsRecords:
         content = _resolve_log(log).read_text(encoding="utf-8")
         assert _detail_line_marker("split_holdings_multiple_852") not in content
 
-    def test_fix_missing_852c_off_by_default(self, tmp_path):
+    def test_fix_missing_852c_on_by_default(self, tmp_path):
         fields = [
             m.Field_("004", None, None, content="ocm123"),
             m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
             m.Field_("852", "  ", [("a", "Main Library"), ("h", "ABC123")]),
         ]
         result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
+        content = _resolve_log(log).read_text(encoding="utf-8")
+        assert "added_missing_852c" in content
+        assert result["log_lines"] == 2  # byte-17 leader default + this
+        parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
+        field852 = next(f for f in parsed.fields if f.tag == "852")
+        assert ("c", "Migration") in field852.subfields
+
+    def test_fix_missing_852c_disabled_via_flag(self, tmp_path):
+        fields = [
+            m.Field_("004", None, None, content="ocm123"),
+            m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
+            m.Field_("852", "  ", [("a", "Main Library"), ("h", "ABC123")]),
+        ]
+        src = self._write_holdings_file(tmp_path, [self._holdings_record(fields=fields)])
+        out = tmp_path / "out.mrc"
+        log = tmp_path / "out.log"
+        result = m.repair_holdings_records(str(src), str(out), str(log), fix_missing_852c=False)
         assert result["log_lines"] == 1  # only the byte-17 leader default
         parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
         field852 = next(f for f in parsed.fields if f.tag == "852")
@@ -568,14 +627,14 @@ class TestRepairHoldingsRecords:
         assert field852.subfields.count(("c", "Stacks")) == 1
         assert not any(code == "c" and data == "Migration" for code, data in field852.subfields)
 
-    def test_cli_fix_missing_852c_flag(self, tmp_path):
+    def test_cli_fix_missing_852c_on_by_default(self, tmp_path):
         fields = [
             m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
             m.Field_("852", "  ", [("a", "Main Library"), ("h", "ABC123")]),
         ]
         src = tmp_path / "mixed.mrc"
         src.write_bytes(self._holdings_record(fields=fields))
-        rc = m.main([str(src), "--split-bib-holdings", "--fix-missing-852c"])
+        rc = m.main([str(src), "--split-bib-holdings"])
         assert rc == 0
         out = tmp_path / "mixed_holdings_repaired.mrc"
         parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
@@ -608,9 +667,7 @@ class TestRepairHoldingsRecords:
         src = tmp_path / "holdings_only.mrc"
         src.write_bytes(self._holdings_record(fields=fields))
         out_path = tmp_path / "custom_out.mrc"
-        rc = m.main(
-            [str(src), "--repair-holdings", "--fix-missing-852c", "-o", str(out_path)]
-        )
+        rc = m.main([str(src), "--repair-holdings", "-o", str(out_path)])
         assert rc == 0
         assert out_path.exists()
         parsed = m.read_intact_record(out_path.read_bytes().decode("utf-8"))
@@ -1028,12 +1085,12 @@ class TestRepairHoldingsRecords:
         assert _detail_line_marker("recoded_852_b_to_i") not in content
         assert _detail_line_marker("removed_extra_852_b") not in content
 
-    def test_duplicate_h_flagged_informational_and_left_alone(self, tmp_path):
+    def test_duplicate_h_removed_and_flagged_fixed(self, tmp_path):
         # $h (Classification part) is Not Repeatable per the MARC 21
         # 852 spec -- unlike $b/$c, which ARE officially repeatable
         # there (see fix_852_multiple_b's own docstring), so a second
-        # $h is a genuine structural violation. Detect-only: flagged,
-        # never touched.
+        # $h is a genuine structural violation: removed, keeping the
+        # first occurrence.
         fields = [
             m.Field_("004", None, None, content="ocm123"),
             m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
@@ -1044,15 +1101,15 @@ class TestRepairHoldingsRecords:
         result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
         content = _resolve_log(log).read_text(encoding="utf-8")
         assert "holdings_852_duplicate_nr_subfield" in content
-        assert "$h is Not Repeatable" in content
-        assert "[INFORMATIONAL]" in content
+        assert "Not-Repeatable subfield" in content
+        assert "[FIXED/REQUIRES ATTENTION]" in content
         parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
         f852 = next(f for f in parsed.fields if f.tag == "852")
         assert ("h", "Z678.9") in f852.subfields
-        assert ("h", "A2 1983") in f852.subfields
-        assert sum(1 for code, _ in f852.subfields if code == "h") == 2
+        assert ("h", "A2 1983") not in f852.subfields
+        assert sum(1 for code, _ in f852.subfields if code == "h") == 1
 
-    def test_duplicate_t_flagged_informational(self, tmp_path):
+    def test_duplicate_t_removed_and_flagged_fixed(self, tmp_path):
         # A second non-repeatable code besides $h, to confirm the check
         # isn't hardcoded to $h specifically.
         fields = [
@@ -1065,7 +1122,11 @@ class TestRepairHoldingsRecords:
         result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
         content = _resolve_log(log).read_text(encoding="utf-8")
         assert "holdings_852_duplicate_nr_subfield" in content
-        assert "$t is Not Repeatable" in content
+        assert "Not-Repeatable subfield" in content
+        parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
+        f852 = next(f for f in parsed.fields if f.tag == "852")
+        assert ("t", "1") in f852.subfields
+        assert ("t", "2") not in f852.subfields
 
     def test_duplicate_b_or_c_not_flagged_as_non_repeatable(self, tmp_path):
         # $b and $c are officially Repeatable per the spec -- this
@@ -1217,5 +1278,5 @@ class TestRepairHoldingsRecords:
             log = os.path.join(tmpdir, "out.log")
             result = m.repair_holdings_records(base, out, log)
             assert result["total"] == n_input == 528
-            assert result["unresolved"] == 0
+            assert result["unfixable"] == 0
             assert m.count_records(out) == n_input
