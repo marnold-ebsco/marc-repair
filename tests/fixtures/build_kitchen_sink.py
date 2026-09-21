@@ -11,17 +11,7 @@ Outputs (next to this script, i.e. tests/fixtures/):
     kitchen_sink_bib.mrc
     kitchen_sink_holdings.mrc
 
-Two records intentionally can't be exercised in the single default-flag
-bib run (missing_008 is only ever logged when --no-add-default-008
-disables the very fix that otherwise supersedes it) -- see
-docs/REPAIR_CATEGORIES.md's note that add_default_008 supersedes
-missing_008. That record is still included here, in kitchen_sink_bib.mrc,
-so it's documented and present; a separate CLI invocation with
---no-add-default-008 is required to see its "missing_008" log line (see
-the runbook in the task instructions / README for the two-invocation
-bib run shape).
-
-A third record can't be exercised in kitchen_sink_bib.mrc at all, not even
+One record can't be exercised in kitchen_sink_bib.mrc at all, not even
 via a second invocation: a leader entry-map byte corrupted to something
 that isn't valid UTF-8 anywhere in the byte sequence (as opposed to the
 ASCII "45x0" the "ks-entrymap" record above already covers). Merging that
@@ -32,16 +22,17 @@ worked around there for MARC-8 records) -- silently corrupting every
 in the process. It gets its own single-record output file instead:
     kitchen_sink_bib_entrymap_invalid_utf8_witness.mrc
 
-A fourth and fifth record (one per pipeline) can't coexist with their
+A second and third record (one per pipeline) can't coexist with their
 own file's other invalid_tag example either, for a different reason:
 `used_tags` (which tag(s) in 900-999 are already spoken for) is
 gathered file-wide, not per-record, so a record that deliberately
 fills every 900-999 slot to exercise the "no free 9XX slot" fallback
-(category non_numeric_tag -- the field gets stripped out entirely
-instead of renamed) would ALSO block the *other* invalid-tag record's
-own normal, successful rename (category invalid_tag) elsewhere in the
-same file, turning it into another non_numeric_tag hit instead of the
-example it's meant to be. Each gets its own single-record witness file:
+(category unfixed_non_numeric_tag -- the field gets stripped out
+entirely instead of renamed) would ALSO block the *other* invalid-tag
+record's own normal, successful rename (category invalid_tag)
+elsewhere in the same file, turning it into another
+unfixed_non_numeric_tag hit instead of the example it's meant to be.
+Each gets its own single-record witness file:
     kitchen_sink_bib_non_numeric_tag_exhausted_witness.mrc
     kitchen_sink_holdings_non_numeric_tag_exhausted_witness.mrc
 
@@ -71,6 +62,7 @@ BIB_NON_NUMERIC_TAG_EXHAUSTED_OUT = os.path.join(
 HOLDINGS_NON_NUMERIC_TAG_EXHAUSTED_OUT = os.path.join(
     FIXTURES, "kitchen_sink_holdings_non_numeric_tag_exhausted_witness.mrc"
 )
+MIXED_OUT = os.path.join(FIXTURES, "kitchen_sink_mixed.mrc")
 
 BIB_PADDING_SOURCE = os.path.join(
     FIXTURES, "bad_bib_mandatoryfieldsnashvillestate_bibs_202693_me.mrc"
@@ -348,9 +340,8 @@ def build_bib_records() -> list[bytes]:
         m.Field_("245", "00", [("a", ".")]),
     ]))
 
-    # added_default_008: no 008 at all -- also doubles, in a *separate*
-    # CLI run with --no-add-default-008, as the "missing_008" witness (see
-    # module docstring) -- included here once for the default-flags run.
+    # added_default_008: no 008 at all -- always fixed, no flag to
+    # disable it.
     records.append(_record(_BIB_LEADER, [
         m.Field_("001", None, None, content="ks-no008"),
         m.Field_("245", "00", [("a", "Title.")]),
@@ -365,13 +356,14 @@ def build_bib_records() -> list[bytes]:
 
     # invalid_tag: a non-numeric tag, renamed to a free 9XX slot (default
     # --fix-invalid-tags). Note: the "every 900-999 slot taken" fallback
-    # (category non_numeric_tag) can't be demonstrated alongside this in
-    # the same file -- `used_tags` is gathered file-wide, so a filler
-    # record elsewhere using up all of 900-999 would ALSO block this
-    # record's own rename, silently turning it into another
-    # non_numeric_tag hit instead of the successful invalid_tag rename
-    # it's meant to show. See build_bib_non_numeric_tag_exhausted_witness
-    # for that scenario's own separate file.
+    # (category unfixed_non_numeric_tag) can't be demonstrated alongside
+    # this in the same file -- `used_tags` is gathered file-wide, so a
+    # filler record elsewhere using up all of 900-999 would ALSO block
+    # this record's own rename, silently turning it into another
+    # unfixed_non_numeric_tag hit instead of the successful invalid_tag
+    # rename it's meant to show. See
+    # build_bib_non_numeric_tag_exhausted_witness for that scenario's
+    # own separate file.
     records.append(_record(_BIB_LEADER, [
         m.Field_("001", None, None, content="ks-invalidtag"),
         m.Field_("008", None, None, content="x" * 40),
@@ -542,30 +534,17 @@ def build_bib_unresolved_tail() -> bytes:
     return b"not a marc record at all, no leader here whatsoever\x1d"
 
 
-def build_bib_missing_008_witness() -> bytes:
-    """missing_008 (bib): a record with no 008 at all. In the main
-    kitchen-sink run (--add-default-008 on by default) this record's
-    008 gets a placeholder instead (category added_default_008, already
-    covered by the "ks-no008" record above) -- add_default_008 always
-    supersedes missing_008 (see docs/REPAIR_CATEGORIES.md). To actually
-    see "missing_008" logged, run this same record through the CLI a
-    second time with --no-add-default-008 (see the task runbook)."""
-    return _record(_BIB_LEADER, [
-        m.Field_("001", None, None, content="ks-missing008-witness"),
-        m.Field_("245", "00", [("a", "Title with no 008 at all.")]),
-    ])
-
-
 def build_bib_non_numeric_tag_exhausted_witness() -> bytes:
-    """non_numeric_tag (bib): a non-numeric tag with every 900-999 slot
-    already taken (within this one record), so fix_invalid_tags has
-    nowhere to rename it to and the field is stripped out entirely
-    instead (see strip_invalid_tags) -- kept out of kitchen_sink_bib.mrc
-    itself (see module docstring): `used_tags` is gathered file-wide,
-    so this record's own filler fields would ALSO block the unrelated
-    "ks-invalidtag"/FMT record above from getting its normal successful
-    rename, turning that into a non_numeric_tag hit too instead of the
-    invalid_tag example it's meant to show."""
+    """unfixed_non_numeric_tag (bib): a non-numeric tag with every
+    900-999 slot already taken (within this one record), so
+    fix_invalid_tags has nowhere to rename it to and the field is
+    stripped out entirely instead (see strip_invalid_tags) -- kept out
+    of kitchen_sink_bib.mrc itself (see module docstring): `used_tags`
+    is gathered file-wide, so this record's own filler fields would
+    ALSO block the unrelated "ks-invalidtag"/FMT record above from
+    getting its normal successful rename, turning that into an
+    unfixed_non_numeric_tag hit too instead of the invalid_tag example
+    it's meant to show."""
     fields = [
         m.Field_("001", None, None, content="ks-nonnumerictag-witness"),
         m.Field_("008", None, None, content="x" * 40),
@@ -669,8 +648,8 @@ def build_holdings_records() -> list[bytes]:
     ]))
 
     # invalid_tag: a non-numeric tag, renamed to a free 9XX slot. Note:
-    # the "every 900-999 slot taken" fallback (non_numeric_tag) can't be
-    # demonstrated alongside this in the same file -- see
+    # the "every 900-999 slot taken" fallback (unfixed_non_numeric_tag)
+    # can't be demonstrated alongside this in the same file -- see
     # build_holdings_non_numeric_tag_exhausted_witness for why, same
     # reasoning as the bib pipeline's own build_bib_records.
     records.append(_record(_HOLDINGS_LEADER, [
@@ -759,6 +738,126 @@ def build_holdings_records() -> list[bytes]:
         [],
     ))
 
+    # holdings_852_b_suspect_content: $b is purely numeric -- looks like
+    # data (a piece/copy number) that migrated into the wrong subfield.
+    records.append(_record(_HOLDINGS_LEADER, [
+        m.Field_("004", None, None, content="ks-hol-852bsuspect"),
+        m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
+        m.Field_("852", "  ", [("b", "0"), ("c", "Stacks"), ("h", "ABC123")]),
+    ]))
+
+    # holdings_853_missing_8: an 853 (Captions and Pattern) with no $8 --
+    # the 863/864/865 enumeration fields that should reference it can't
+    # be linked.
+    records.append(_record(_HOLDINGS_LEADER, [
+        m.Field_("004", None, None, content="ks-hol-853missing8"),
+        m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
+        m.Field_("852", "  ", [("a", "Main Library"), ("c", "Stacks")]),
+        m.Field_("853", "  ", [("a", "v.")]),
+    ]))
+
+    # holdings_856_missing_u: an 856 (Electronic Location and Access)
+    # with no $u -- the field exists but has no actual link.
+    records.append(_record(_HOLDINGS_LEADER, [
+        m.Field_("004", None, None, content="ks-hol-856missingu"),
+        m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
+        m.Field_("852", "  ", [("a", "Main Library"), ("c", "Stacks")]),
+        m.Field_("856", "4 ", [("z", "Available online")]),
+    ]))
+
+    # added_missing_852_location: an 852 with none of $a/$b/$c at all --
+    # a placeholder is inserted so the field means something (target
+    # subfield is $b here, since this record's 004 isn't WMS/OCLC-
+    # prefixed -- see _is_wms_holdings_record).
+    records.append(_record(_HOLDINGS_LEADER, [
+        m.Field_("004", None, None, content="ks-hol-852nolocation"),
+        m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
+        m.Field_("852", "  ", [("h", "ABC123")]),
+    ]))
+
+    # field_removed_because_missing_a: 866 (Textual Holdings, in
+    # holdings_required_a_tags.txt) with real content but no $a --
+    # removed and logged since it has other, non-empty content.
+    records.append(_record(_HOLDINGS_LEADER, [
+        m.Field_("004", None, None, content="ks-hol-866missinga"),
+        m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
+        m.Field_("852", "  ", [("a", "Main Library"), ("c", "Stacks")]),
+        m.Field_("866", "  ", [("z", "Note only, no statement")]),
+    ]))
+
+    # holdings_852_duplicate_nr_subfield: a second $h (Classification
+    # part -- Not Repeatable per the MARC 21 852 spec) -- removed,
+    # keeping the first occurrence.
+    records.append(_record(_HOLDINGS_LEADER, [
+        m.Field_("004", None, None, content="ks-hol-852duph"),
+        m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
+        m.Field_("852", "  ", [
+            ("a", "Main Library"), ("h", "Z678.9"), ("h", "A2 1983"), ("c", "Stacks"),
+        ]),
+    ]))
+
+    # incomplete_852 + split_holdings_multiple_852: three 852s -- two
+    # usable ($b present) become two split holdings records; the third
+    # has no $b at all but DOES have a usable $a (so fix_missing_852_
+    # location's own placeholder-fill -- which only fires when NONE of
+    # $a/$b/$c has usable content -- doesn't add a $b first and turn
+    # this into a third split copy instead), so there's still no
+    # location to split out: it's just dropped (incomplete_852) rather
+    # than becoming its own copy.
+    records.append(_record(_HOLDINGS_LEADER, [
+        m.Field_("004", None, None, content="ks-hol-multi852"),
+        m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
+        m.Field_("852", "  ", [("b", "Main Library"), ("c", "Stacks"), ("h", "ABC123")]),
+        m.Field_("852", "  ", [("b", "Annex"), ("c", "Storage"), ("h", "DEF456")]),
+        m.Field_("852", "  ", [("a", "No sublocation on this one"), ("h", "GHI789")]),
+    ]))
+
+    # removed_bad_call_number: $h is punctuation-only -- unusable,
+    # removed; rest of the field left as-is.
+    records.append(_record(_HOLDINGS_LEADER, [
+        m.Field_("004", None, None, content="ks-hol-852badh"),
+        m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
+        m.Field_("852", "  ", [("a", "Main Library"), ("c", "Stacks"), ("h", ".")]),
+    ]))
+
+    # duplicate_identifier: two holdings records sharing the same 001
+    # (uncommon for real holdings data, but record_identifier/
+    # find_duplicate_identifiers are the same shared check as the bib
+    # pipeline's -- both flagged).
+    records.append(_record(_HOLDINGS_LEADER, [
+        m.Field_("001", None, None, content="ks-hol-dupe-id"),
+        m.Field_("004", None, None, content="ks-hol-dupe1"),
+        m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
+        m.Field_("852", "  ", [("a", "Main Library"), ("c", "Stacks")]),
+    ]))
+    records.append(_record(_HOLDINGS_LEADER, [
+        m.Field_("001", None, None, content="ks-hol-dupe-id"),
+        m.Field_("004", None, None, content="ks-hol-dupe2"),
+        m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
+        m.Field_("852", "  ", [("a", "Annex"), ("c", "Storage")]),
+    ]))
+
+    # fixed_misplaced_subfield_code: a stray space right after the
+    # delimiter, immediately followed by the real code -- raw "\x1f
+    # z1985-1995" means $z "1985-1995", recovered instead of discarded
+    # (same defect shape as the bib pipeline's own example).
+    records.append(_record(_HOLDINGS_LEADER, [
+        m.Field_("004", None, None, content="ks-hol-misplacedcode"),
+        m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
+        m.Field_("852", "  ", [("a", "Main Library"), ("c", "Stacks")]),
+        m.Field_("866", "  ", [("a", "v.1-10"), (" ", "z1985-1995")]),
+    ]))
+
+    # oversized_sentinel_fixed: many fields (each well under the
+    # 9999-byte single-field cap) pushing the total record past 99999
+    # bytes -- the MARC21 sentinel length "99999" is written instead,
+    # nothing lost (same shape as the bib pipeline's own example).
+    records.append(_record(_HOLDINGS_LEADER, [
+        m.Field_("004", None, None, content="ks-hol-oversized-ok"),
+        m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
+        m.Field_("852", "  ", [("a", "Main Library"), ("c", "Stacks")]),
+    ] + [m.Field_(f"5{i:02d}", "  ", [("a", "x" * 9000)]) for i in range(12)]))
+
     return records
 
 
@@ -772,7 +871,7 @@ def build_holdings_unresolved_tail() -> bytes:
 
 
 def build_holdings_non_numeric_tag_exhausted_witness() -> bytes:
-    """non_numeric_tag (holdings): same fallback as
+    """unfixed_non_numeric_tag (holdings): same fallback as
     build_bib_non_numeric_tag_exhausted_witness, on the holdings side --
     every 900-999 slot already taken within this one record, so the
     non-numeric tag gets stripped out entirely instead of renamed. Kept
@@ -813,7 +912,6 @@ def _pad_to_minimum(records: list[bytes], padding_source: str, minimum: int) -> 
 
 def main() -> None:
     bib_records = build_bib_records()
-    bib_records.append(build_bib_missing_008_witness())
     bib_records = _pad_to_minimum(bib_records, BIB_PADDING_SOURCE, MIN_RECORDS)
     with open(BIB_OUT, "wb") as fh:
         for rec in bib_records:
@@ -840,6 +938,23 @@ def main() -> None:
     with open(HOLDINGS_NON_NUMERIC_TAG_EXHAUSTED_OUT, "wb") as fh:
         fh.write(build_holdings_non_numeric_tag_exhausted_witness())
     print(f"wrote 1 record to {HOLDINGS_NON_NUMERIC_TAG_EXHAUSTED_OUT}")
+
+    # kitchen_sink_mixed.mrc: kitchen_sink_bib.mrc and kitchen_sink_
+    # holdings.mrc concatenated, byte-for-byte, into one file -- a
+    # permanent fixture for --split-bib-holdings, which classifies each
+    # record purely by its own leader byte 6, so record order/origin
+    # doesn't matter. Includes each source file's own trailing
+    # unresolved-tail garbage too (see build_bib_unresolved_tail/
+    # build_holdings_unresolved_tail), which also exercises
+    # split_bib_holdings' own "unclassified" bucket (that garbage's
+    # byte 6 doesn't match any known bib or holdings leader code).
+    with open(BIB_OUT, "rb") as bib_fh, open(HOLDINGS_OUT, "rb") as holdings_fh:
+        bib_bytes = bib_fh.read()
+        holdings_bytes = holdings_fh.read()
+    with open(MIXED_OUT, "wb") as fh:
+        fh.write(bib_bytes)
+        fh.write(holdings_bytes)
+    print(f"wrote {BIB_OUT} + {HOLDINGS_OUT} concatenated to {MIXED_OUT}")
 
 
 if __name__ == "__main__":

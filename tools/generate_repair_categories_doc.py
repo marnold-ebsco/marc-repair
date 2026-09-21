@@ -210,9 +210,10 @@ BIB_ROWS = [
     ),
     CategoryRow(
         "Placeholder 008 added", "Added default field",
-        "Yes (`--no-add-default-008`)", "`added_default_008`",
+        "Yes, always", "`added_default_008`",
         "FIXED/REQUIRES ATTENTION", "**Yes**",
-        "`--no-add-default-008`; `--ensure-field` (takes priority per-record)",
+        "-- (no switch -- every MARC21 record must have an 008); "
+        "`--ensure-field` (takes priority per-record)",
     ),
     CategoryRow(
         "008 length pad/truncate (40 bytes)", "Padded/truncated field",
@@ -238,7 +239,8 @@ BIB_ROWS = [
     CategoryRow(
         "Invalid tag, no 9XX slot free", "Field removed entirely "
         "(full-file rewrite -- see strip_invalid_tags)",
-        "(fallback of above)", "`non_numeric_tag`", "FIXED/REQUIRES ATTENTION", "**Yes**",
+        "(fallback of above)", "`unfixed_non_numeric_tag`", "FIXED/REQUIRES ATTENTION",
+        "**Yes**",
         "`--no-fix-invalid-tags` (skips the attempt entirely -- field "
         "left untouched instead of removed); `--remap-999-to-945` "
         "(frees up a 9XX slot, so can turn this fallback into a "
@@ -278,13 +280,6 @@ BIB_ROWS = [
         "Suspect MARC-8 escape (miskeyed diacritic)",
         "Flagged only, no change", "detect-only", "`suspect_marc8_escape`",
         "NOT FIXED", "**Yes**", "-- (detect-only, no switch)",
-    ),
-    CategoryRow(
-        "Missing 008", "Flagged only, no change",
-        "detect-only (superseded by add_default_008 fixing it)",
-        "`missing_008`", "FIXED/REQUIRES ATTENTION", "**Yes**",
-        "`--no-add-default-008` (only way to see this instead of "
-        "`added_default_008`)",
     ),
     CategoryRow(
         "Doubled proxy URL prefix", "Flagged only, no change",
@@ -533,7 +528,7 @@ HOLDINGS_ROWS = [
     CategoryRow(
         "Invalid tag, no 9XX slot free", "Field removed entirely "
         "(full-file rewrite)", "(fallback)",
-        "`non_numeric_tag`", "FIXED/REQUIRES ATTENTION", "**Yes**",
+        "`unfixed_non_numeric_tag`", "FIXED/REQUIRES ATTENTION", "**Yes**",
         "-- (no switch -- depends only on whether every 900-999 tag is "
         "already taken elsewhere in the file)",
     ),

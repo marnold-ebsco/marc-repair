@@ -259,10 +259,12 @@ class TestFixBadIndicators:
     def test_main_end_to_end_logs_as_fixed_at_bottom(self, tmp_path, monkeypatch):
         # transcode_marc8_failed is one of the few categories still left
         # genuinely NOT FIXED by default -- everything else easy to
-        # trigger (missing_008, non_numeric_tag, invalid_subfield_code,
-        # incomplete_852) is now FIXED/REQUIRES ATTENTION. Forcing a real
-        # transcode failure (rather than just disabling a flag) needs
-        # pymarc's marc8_to_unicode to actually raise, same technique as
+        # trigger (unfixed_non_numeric_tag, incomplete_852) is now
+        # FIXED/REQUIRES ATTENTION, and missing_008/invalid_subfield_code have
+        # been retired entirely (008/invalid subfield codes are now
+        # always fixed unconditionally). Forcing a real transcode
+        # failure (rather than just disabling a flag) needs pymarc's
+        # marc8_to_unicode to actually raise, same technique as
         # test_main_falls_back_gracefully_on_transcode_failure above.
         pytest.importorskip("pymarc")
         import pymarc.marc8
@@ -515,7 +517,7 @@ class TestTranscodeMarc8:
                 m.Field_("245", "00", [("a", "S\xe5cond")]),
             ],
         )
-        with pytest.raises(UnicodeDecodeError):
+        with pytest.raises(RuntimeError, match=r"tag 245 \$a"):
             m.transcode_marc8_to_utf8(parsed)
         # nothing changed -- not even the first field, which would have
         # "succeeded" if fields were converted one at a time
@@ -855,7 +857,7 @@ class TestFindSuspiciousFields:
         )
         assert m.find_suspicious_fields(parsed) == []
 
-    def test_flags_non_numeric_tag(self):
+    def test_flags_unfixed_non_numeric_tag(self):
         parsed = m.ParsedRecord(
             leader="0" * 24,
             entries=[],
@@ -865,16 +867,9 @@ class TestFindSuspiciousFields:
             ],
         )
         warnings = m.find_suspicious_fields(parsed)
-        assert any(cat == "non_numeric_tag" and "24A" in detail for cat, detail in warnings)
-
-    def test_flags_missing_008(self):
-        parsed = m.ParsedRecord(
-            leader="0" * 24,
-            entries=[],
-            fields=[m.Field_("245", "00", [("a", "Title.")])],
+        assert any(
+            cat == "unfixed_non_numeric_tag" and "24A" in detail for cat, detail in warnings
         )
-        warnings = m.find_suspicious_fields(parsed)
-        assert any(cat == "missing_008" for cat, detail in warnings)
 
 
 class TestFixInvalidLeaderBytes:
@@ -1704,24 +1699,6 @@ class TestAddDefault008:
         assert details == []
         assert parsed.fields[0].content == "x" * 40
 
-    def test_no_add_default_008_flag_leaves_it_missing_and_flagged(self, tmp_path):
-        parsed = m.ParsedRecord(
-            leader=_SYNTHETIC_LEADER,
-            entries=[],
-            fields=[m.Field_("245", "00", [("a", "Title.")])],
-        )
-        src = tmp_path / "no008.mrc"
-        src.write_bytes(m.assemble_marc(parsed))
-        out = tmp_path / "out.mrc"
-        log = tmp_path / "run.log"
-        rc = m.main([str(src), "-o", str(out), "--no-add-default-008", "--log", str(log)])
-        assert rc == 0
-        content = _resolve_log(log).read_text(encoding="utf-8")
-        assert "=== FIXED/REQUIRES ATTENTION: missing_008 ===" in content
-        assert "\tmissing_008\t" in content
-        results = m.repair_text(m._read_text(str(out)))
-        assert not any(f.tag == "008" for f in results[0].fields)
-
     def test_explicit_ensure_field_008_takes_priority(self, tmp_path):
         parsed = m.ParsedRecord(
             leader=_SYNTHETIC_LEADER,
@@ -1794,7 +1771,7 @@ class TestFixInvalidTags:
         content = _resolve_log(log).read_text(encoding="utf-8")
         assert "=== INFORMATIONAL: invalid_tag ===" in content
         assert "\tinvalid_tag\t" in content
-        assert "\tnon_numeric_tag\t" not in content
+        assert "\tunfixed_non_numeric_tag\t" not in content
         results = m.repair_text(m._read_text(str(out)))
         tags = [f.tag for f in results[0].fields]
         assert "24A" not in tags
@@ -1815,12 +1792,12 @@ class TestFixInvalidTags:
         log = tmp_path / "run.log"
         rc = m.main([
             str(src), "-o", str(out), "--no-fix-invalid-tags",
-            "--log-full", "non_numeric_tag", "--log", str(log),
+            "--log-full", "unfixed_non_numeric_tag", "--log", str(log),
         ])
         assert rc == 0
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert "=== FIXED/REQUIRES ATTENTION: non_numeric_tag ===" in content
-        assert "\tnon_numeric_tag\t" in content
+        assert "=== FIXED/REQUIRES ATTENTION: unfixed_non_numeric_tag ===" in content
+        assert "\tunfixed_non_numeric_tag\t" in content
         results = m.repair_text(m._read_text(str(out)))
         tags = [f.tag for f in results[0].fields]
         assert "24A" in tags
@@ -1885,11 +1862,11 @@ class TestFixInvalidTags:
         # needing any extra flag, satisfying this test's "every 9XX
         # slot taken" setup.
         rc = m.main([
-            str(src), "-o", str(out), "--log-full", "non_numeric_tag", "--log", str(log),
+            str(src), "-o", str(out), "--log-full", "unfixed_non_numeric_tag", "--log", str(log),
         ])
         assert rc == 0
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert "=== FIXED/REQUIRES ATTENTION: non_numeric_tag ===" in content
+        assert "=== FIXED/REQUIRES ATTENTION: unfixed_non_numeric_tag ===" in content
         assert "content discarded" in content
         results = m.repair_text(m._read_text(str(out)))
         assert not any(f.tag == "24A" for f in results[1].fields)
@@ -2817,7 +2794,6 @@ _FIXED_REQUIRES_ATTENTION_CASES = [
             "=== FIXED/REQUIRES ATTENTION: added_default_008 ===",
             _detail_line_marker("added_default_008"),
         ],
-        forbidden_log_substrings=[_detail_line_marker("missing_008")],
         verify=lambda results: (
             next(f for f in results[0].fields if f.tag == "008").content
             == m.DEFAULT_008_CONTENT

@@ -424,7 +424,7 @@ class TestRepairHoldingsRecords:
         assert result["total"] == 2
         assert result["written"] == 2
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert "non_numeric_tag" in content
+        assert "unfixed_non_numeric_tag" in content
         assert "content discarded" in content
         results = m.repair_text(m._read_text(str(out)))
         assert not any(f.tag == "85Z" for f in results[1].fields)

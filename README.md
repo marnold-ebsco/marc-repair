@@ -133,7 +133,7 @@ left in the main holdings output.
 | Single field or base address too large to represent at all | Not fixable — no sentinel exists for these; diverted to a separate `_error` file unchanged, logged as `unfixable` (UNFIXABLE, see above) |
 | Missing 245, or a 245 present but missing $a | Placeholder `$aNo title` added by default — many real-world imports reject a record with no title at all — either as a new field or, if a 245 already exists (e.g. one with only `$h[electronic resource]`), patched into the existing field alongside its other subfields, not stripped and rebuilt; `--ensure-field "245:..."` takes priority per-record if supplied; `--no-add-default-245` to leave such records untouched instead; logged in full as `added_default_245` under **FIXED/REQUIRES ATTENTION**, since a placeholder title is worth a second look even though it's not discarded real data |
 | Missing any other field | `--ensure-field` (opt-in; you supply the content); logged as `added_field` under **FIXED/REQUIRES ATTENTION** since a human-supplied value is worth double-checking |
-| Missing 008 | Placeholder inserted by default (a fixed, material-type-agnostic default — real content still needs `--ensure-field "008:..."`, which takes priority per-record); `--no-add-default-008` to leave such records with no 008 instead (logged as `missing_008`); logged in full as `added_default_008` under **FIXED/REQUIRES ATTENTION** for the same reason as `added_default_245` above |
+| Missing 008 | Placeholder inserted unconditionally (a fixed, material-type-agnostic default — real content still needs `--ensure-field "008:..."`, which takes priority per-record); every MARC21 record must have an 008, so there's no flag to leave one out; logged in full as `added_default_008` under **FIXED/REQUIRES ATTENTION** for the same reason as `added_default_245` above |
 | Fields missing a required `$a` | Removed by default (see `required_a_tags.txt`, editable); `--no-strip-missing-required-a` to leave them instead; the exact removed content is logged in full as `field_removed_because_missing_a` under **FIXED/REQUIRES ATTENTION** since real data was discarded |
 | Subfield code is a stray space immediately followed by its real, still-present code (e.g. raw `\x1f c2000.` really meaning `$c` "c2000." — a common AACR2-era copyright-date convention, corrupted by one extra inserted space; seen at real scale in production data) | Corrected by default, before invalid-code removal below gets a chance to discard it — nothing is guessed or lost, the real code is simply the very next character; `--no-fix-misplaced-subfield-codes` to leave it for invalid-code removal to strip instead. Not logged per-record by default (this can be a large fraction of a file with this defect) — pass `--log-fixed-misplaced-subfield-code` to log each one as `fixed_misplaced_subfield_code` (INFORMATIONAL) |
 | Invalid subfield codes (not `[a-z0-9]`) | Removed unconditionally — no flag leaves these in place, since there's no safe way to guess what an unusable code should have been; the exact removed content is logged in full as `removed_invalid_subfield` under **FIXED/REQUIRES ATTENTION** since real data was discarded |
@@ -143,7 +143,7 @@ left in the main holdings output.
 | `$9` subfields (legacy/local stand-in for `$0`) | Rewritten to `$0` by default; `--no-normalize-subfield-9` to leave as-is. Not logged per-record by default (this can be nearly every record in a file that uses `$9`) — pass `--log-normalized-subfield-9-to-0` to log each one as `normalized_subfield_9_to_0` (INFORMATIONAL) |
 | Typographic "smart" Unicode punctuation (curly quotes, em/en dashes, ellipsis — see table below) | Normalized to plain ASCII by default; `--no-normalize-smart-characters` to leave as-is. Not logged per-record by default (this can be nearly every record in a file with typographic punctuation) — pass `--log-normalized-smart-characters` to log each one as `normalized_smart_characters` (INFORMATIONAL) |
 | Legacy MARC-8/ANSEL encoding | Converted to UTF-8 by default (requires `pymarc`; the run fails loudly if it's missing, rather than silently leaving non-UTF-8 output — install it, or pass `--no-transcode-marc8` if you explicitly want non-UTF-8 records left as-is). Not logged per-record by default (this can be nearly every record in a legacy file) — pass `--log-transcoded-marc8` to log each one as `transcoded_marc8` (INFORMATIONAL) |
-| A tag that isn't 3 numeric digits (e.g. `24A` from directory corruption) | Renamed to an unused tag in the 900-999 locally-defined range by default, picked from tags seen during the normal single pass (no extra full pass — only the rare record needing this gets a second, targeted look afterward); logged as `invalid_tag` (INFORMATIONAL). If every 900-999 tag is already taken elsewhere in the file, there's nowhere left to rename to — the whole field is removed instead (FOLIO can't load a non-numeric tag either way), via a full second pass over the output file since removal changes the record's byte length; logged in full as `non_numeric_tag` under **FIXED/REQUIRES ATTENTION**, since real field content is discarded. `--no-fix-invalid-tags` skips the rename attempt entirely, leaving the tag untouched instead of removed (also logged as `non_numeric_tag`) |
+| A tag that isn't 3 numeric digits (e.g. `24A` from directory corruption) | Renamed to an unused tag in the 900-999 locally-defined range by default, picked from tags seen during the normal single pass (no extra full pass — only the rare record needing this gets a second, targeted look afterward); logged as `invalid_tag` (INFORMATIONAL). If every 900-999 tag is already taken elsewhere in the file, there's nowhere left to rename to — the whole field is removed instead (FOLIO can't load a non-numeric tag either way), via a full second pass over the output file since removal changes the record's byte length; logged in full as `unfixed_non_numeric_tag` under **FIXED/REQUIRES ATTENTION**, since real field content is discarded. `--no-fix-invalid-tags` skips the rename attempt entirely, leaving the tag untouched instead of removed (also logged as `unfixed_non_numeric_tag`) — named "unfixed" because neither path actually gives the tag a valid replacement |
 | A URL subfield with a literally duplicated proxy prefix (e.g. an ezproxy wrapper repeated twice) | Always detected and logged as `doubled_proxy_url` (INFORMATIONAL), never auto-fixed — no safe correction to guess |
 | Duplicate record identifiers (same `001`, or `907$a` if it looks like a Sierra bib number, on more than one record) | Always detected and logged (DUPLICATE RECORDS), never auto-fixed — no safe correction to guess |
 | A single Hebrew/Arabic/Cyrillic/Greek/CJK character welded directly between two ASCII letters with no word boundary (e.g. real data found: "Schr" + one CJK character + "inger", almost certainly a miskeyed "ö") | Always detected and logged as `suspect_marc8_escape` (NOT FIXED), never auto-fixed — there's no safe way to guess the intended character; flag this to the source system/cataloger to correct |
@@ -216,8 +216,9 @@ which bucket a given fix fell into:
    a missing field added from a human-supplied `--ensure-field` value
    (`added_field`), a placeholder 008/245 inserted
    (`added_default_008`/`added_default_245`), or a non-numeric tag with
-   nowhere left to rename to, removed entirely (`non_numeric_tag`, when
-   every 900-999 slot is already taken). The goal throughout this tool
+   nowhere left to rename to, removed entirely
+   (`unfixed_non_numeric_tag`, when every 900-999 slot is already
+   taken). The goal throughout this tool
    is a MARC file that's always loadable, even when that requires
    discarding something — but that loss is always surfaced here, never
    silent.
@@ -441,17 +442,19 @@ python3 marc_repair.py bad_bib.mrc \
 # is just a bare subject subdivision, not a subject) -- by default such
 # fields are removed and logged (see required_a_tags.txt, editable --
 # see its header comment for exceptions like 505). A subfield code that
-# isn't a lowercase letter or digit, a data field with 0 or 1 indicator
-# characters instead of 2, and a field with no non-empty subfields at all
-# are also fixed by default. All of the above run automatically --
-# nothing extra to pass:
+# isn't a lowercase letter or digit (unconditional -- no way to leave one
+# in place, see below), a data field with 0 or 1 indicator characters
+# instead of 2, and a field with no non-empty subfields at all are also
+# fixed by default. All of the above run automatically -- nothing extra
+# to pass:
 python3 marc_repair.py bad_bib_mandatoryfields.mrc
 
-# Turn any of the above off if you'd rather see them flagged (or left
-# alone) instead of fixed:
+# Turn most of the above off if you'd rather see them flagged (or left
+# alone) instead of fixed -- invalid subfield codes have no --no- switch,
+# since there's no safe way to guess what an unusable code should have
+# been:
 python3 marc_repair.py bad_bib.mrc \
     --no-strip-missing-required-a \
-    --no-strip-invalid-subfield-codes \
     --no-fix-bad-indicators \
     --no-strip-empty-fields
 

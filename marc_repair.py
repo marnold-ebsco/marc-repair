@@ -1863,20 +1863,14 @@ def find_suspicious_fields(parsed: ParsedRecord) -> list[tuple[str, str]]:
         numeric. Auto-fixed by default (renamed to an unused 9XX tag --
         see `fix_invalid_tags`), so this only fires when that's disabled
         (--no-fix-invalid-tags) or every 9XX slot is already taken.
-        category: "non_numeric_tag"
-      * A record with no 008 control field, mandatory in every MARC21
-        bibliographic/authority/holdings record. Not auto-fixed: the
-        correct default content is material-type-specific and genuinely a
-        guess, so this is reported for a human to supply via --ensure-field
-        rather than silently invented.
-        category: "missing_008"
+        category: "unfixed_non_numeric_tag"
     """
     warnings: list[tuple[str, str]] = []
-    if not any(f.tag == "008" for f in parsed.fields):
-        warnings.append(("missing_008", "record has no 008 control field (mandatory in MARC21)"))
     for f in parsed.fields:
         if not f.tag.isdigit():
-            warnings.append(("non_numeric_tag", f"tag {f.tag!r} is not 3 numeric digits"))
+            warnings.append(
+                ("unfixed_non_numeric_tag", f"tag {f.tag!r} is not 3 numeric digits")
+            )
         if f.is_control():
             continue
         for code, data in f.subfields:
@@ -2190,7 +2184,12 @@ def transcode_marc8_to_utf8(parsed: ParsedRecord) -> bool:
     already declares Unicode encoding.
 
     Raises RuntimeError if pymarc isn't installed -- run `pip install -r
-    requirements.txt` first.
+    requirements.txt` first -- or if any field's MARC-8 content fails to
+    transcode (genuinely malformed bytes, e.g. a truncated escape
+    sequence); that message names the specific tag/subfield and shows
+    ~10 characters of context on each side of the actual error position,
+    so a human reviewing the log has enough to actually find and judge
+    the defect, not just a bare byte offset.
     """
     if parsed.leader[9:10] == UNICODE_ENCODING_BYTE:
         return False
@@ -2230,6 +2229,23 @@ def transcode_marc8_to_utf8(parsed: ParsedRecord) -> bool:
         # here recovers those exact original bytes losslessly.
         return marc8_to_unicode(text.encode("latin-1"), hide_utf8_warnings=True)
 
+    def convert_labeled(text: str, label: str) -> str:
+        # Wraps `convert` to re-raise with `label` (e.g. "tag 500 $a")
+        # and ~10 characters of context on each side of the actual
+        # error position -- a bare UnicodeDecodeError only names a byte
+        # offset, giving a human nothing to go on to find the field
+        # that actually failed or judge whether the surrounding text
+        # gives away what was intended.
+        try:
+            return convert(text)
+        except UnicodeDecodeError as exc:
+            before = text[max(0, exc.start - 10):exc.start]
+            bad = text[exc.start:exc.end]
+            after = text[exc.end:exc.end + 10]
+            raise RuntimeError(
+                f"{label} ({exc.reason}); context: {before!r} >>> {bad!r} <<< {after!r}"
+            ) from exc
+
     # Compute every field's converted value BEFORE mutating `parsed` at
     # all. Without this, a field partway through this record that fails
     # to convert (e.g. genuinely truncated/malformed multi-byte MARC-8
@@ -2246,9 +2262,12 @@ def transcode_marc8_to_utf8(parsed: ParsedRecord) -> bool:
     for idx, f in enumerate(parsed.fields):
         if f.is_control():
             if f.content:
-                new_control_content[idx] = convert(f.content)
+                new_control_content[idx] = convert_labeled(f.content, f"tag {f.tag}")
         else:
-            new_subfields[idx] = [(code, convert(data)) for code, data in f.subfields]
+            new_subfields[idx] = [
+                (code, convert_labeled(data, f"tag {f.tag} ${code}"))
+                for code, data in f.subfields
+            ]
 
     for idx, f in enumerate(parsed.fields):
         if idx in new_control_content:
@@ -2376,10 +2395,10 @@ def add_default_008(parsed: ParsedRecord) -> list[str]:
     No-op if 008 is already present (e.g. supplied correctly via
     --ensure-field, which runs before this). Logged (category
     "added_default_008") since the inserted value is a placeholder, not a
-    real one -- --no-add-default-008 leaves such records with no 008,
-    matching this tool's default posture on ambiguous data everywhere
-    else, if you'd rather supply correct values yourself via
-    --ensure-field."""
+    real one. Unconditional -- every MARC21 record must have an 008, so
+    unlike most of this tool's other placeholder insertions there's no
+    --no- flag to leave one out; supply a real value per-record instead
+    via --ensure-field, which always takes priority over this default."""
     if ensure_field(parsed, "008", None, DEFAULT_008_CONTENT):
         return [f"added default 008 (was missing): {DEFAULT_008_CONTENT!r}"]
     return []
@@ -3498,7 +3517,7 @@ def strip_invalid_tags(parsed: ParsedRecord) -> list[str]:
     `pick_unused_9xx_tag`). FOLIO (like any strict MARC21 importer)
     can't load a non-numeric tag at all, so leaving it in place isn't
     actually safer than discarding it -- this is real content loss
-    (category "non_numeric_tag", still FIXED/REQUIRES ATTENTION,
+    (category "unfixed_non_numeric_tag", still FIXED/REQUIRES ATTENTION,
     POSSIBLE DATA LOSS: this is the one path where the field's own
     content, not just its tag, is gone for good; logged with the full
     removed field so a human can decide whether it needed to go
@@ -3573,7 +3592,9 @@ def _rewrite_stripping_invalid_tags(
                 rec_id = record_identifier(rec)
                 for detail in strip_invalid_tags(rec):
                     log_entries.append(
-                        LogEntry("non_numeric_tag", True, fix_ts, record_idx, rec_id, detail)
+                        LogEntry(
+                            "unfixed_non_numeric_tag", True, fix_ts, record_idx, rec_id, detail,
+                        )
                     )
                 dst.write(assemble_marc(rec))
     os.replace(tmp_path, out_path)
@@ -3846,7 +3867,7 @@ def _format_duration(seconds: float) -> str:
 @dataclass
 class LogEntry:
     """One line destined for the run's combined log. `category` is a
-    stable machine-readable label (e.g. "missing_008", "field_removed_because_missing_a")
+    stable machine-readable label (e.g. "added_default_008", "field_removed_because_missing_a")
     used to group same-type entries together within their fixed/not-fixed
     block (see `write_log`); `fixed` says which block."""
 
@@ -3895,9 +3916,8 @@ _FIXED_REQUIRES_ATTENTION = {
     "added_default_245",
     "added_default_008",
     "padded_indicators",
-    "non_numeric_tag",
+    "unfixed_non_numeric_tag",
     "incomplete_852",
-    "missing_008",
 }
 
 #: INFORMATIONAL, at the very bottom: a fix applied via a fixed
@@ -4039,18 +4059,21 @@ _CHECK_DESCRIPTIONS: dict[str, str] = {
     "holdings_856_missing_u": "An 856 (Electronic Location and Access) "
     "field has no $u (URI) -- the field exists but has no actual link. "
     "NO DATA LOSS.",
-    "missing_008": "Record has no 008 control field at all, mandatory "
-    "in every MARC21 record -- not auto-filled since the correct "
-    "default is material-type-specific. NO DATA LOSS.",
     "split_holdings_multiple_852": "A holdings record had more than "
     "one usable 852 (Location) -- split into one record per 852, with "
     "\"-2\", \"-3\", etc. appended to each additional copy's 001. "
     "NO DATA LOSS.",
-    "non_numeric_tag": "A field's tag isn't 3 numeric digits -- "
-    "normally auto-renamed to an unused 9XX slot; this fires only when "
-    "that's disabled (field left untouched, no loss) or every 9XX slot "
-    "is already taken (the whole field is removed instead -- FOLIO "
-    "can't load a non-numeric tag either way). POSSIBLE DATA LOSS.",
+    "unfixed_non_numeric_tag": "A field's tag isn't 3 numeric digits -- "
+    "normally auto-renamed to an unused 9XX slot (see invalid_tag); "
+    "this fires only when that never happens. Named 'unfixed' because "
+    "neither path that lands here actually gives the tag a valid "
+    "replacement: --no-fix-invalid-tags skips the rename attempt "
+    "entirely, so the invalid tag is left exactly as it was (no loss, "
+    "but still won't load in FOLIO); every 9XX slot already taken "
+    "means there's nowhere left to rename to, so the whole field is "
+    "discarded instead of repaired. This count is 0 unless one of "
+    "those two conditions actually occurs in this file. POSSIBLE "
+    "DATA LOSS.",
     "dangling_880_link": "An 880 (Alternate Graphic Representation) "
     "field's $6 linkage doesn't match any other field's own $6 "
     "back-reference. NO DATA LOSS.",
@@ -4097,7 +4120,7 @@ _CHECK_DESCRIPTIONS: dict[str, str] = {
     "weren't the MARC21-fixed constant \"4500\" -- corrected. "
     "NO DATA LOSS.",
     "invalid_tag": "A non-numeric tag was renamed to an unused 9XX "
-    "slot (see non_numeric_tag for when this isn't possible). "
+    "slot (see unfixed_non_numeric_tag for when this isn't possible). "
     "NO DATA LOSS.",
     "invalid_indicator_value": "An indicator held a value outside "
     "MARC21's defined set for that field. NO DATA LOSS.",
@@ -4179,7 +4202,6 @@ _ALWAYS_FULL_CATEGORIES = {
     "holdings_852_b_suspect_content",
     "holdings_853_missing_8",
     "holdings_856_missing_u",
-    "missing_008",
     "split_holdings_multiple_852",
     "holdings_escape_sequence",
     "transcode_marc8_failed",
@@ -4193,7 +4215,7 @@ _ALWAYS_FULL_CATEGORIES = {
     "added_default_245",
     "added_default_008",
     "padded_indicators",
-    "non_numeric_tag",
+    "unfixed_non_numeric_tag",
 }
 
 
@@ -5115,19 +5137,6 @@ def main(argv: list[str] | None = None) -> int:
         "records untouched instead",
     )
     parser.add_argument(
-        "--no-add-default-008",
-        dest="add_default_008",
-        action="store_false",
-        default=True,
-        help="do NOT insert a placeholder 008 for a record with no 008 at "
-        f"all. By default a fixed placeholder ({DEFAULT_008_CONTENT!r}, "
-        "matching a widely-used site cleanup script's own blanket "
-        "default) is inserted and logged (see --log) rather than leaving "
-        "such records with no 008; --ensure-field \"008:...\" for a "
-        "specific record takes priority over this default. Pass this "
-        "flag to leave 008-less records untouched instead",
-    )
-    parser.add_argument(
         "--no-fix-invalid-tags",
         dest="fix_invalid_tags",
         action="store_false",
@@ -5593,10 +5602,9 @@ def main(argv: list[str] | None = None) -> int:
                     rec_id = record_identifier(parsed)
                     for detail in add_default_245(parsed):
                         log("added_default_245", True, i, rec_id, detail)
-                if args.add_default_008:
-                    rec_id = record_identifier(parsed)
-                    for detail in add_default_008(parsed):
-                        log("added_default_008", True, i, rec_id, detail)
+                rec_id = record_identifier(parsed)
+                for detail in add_default_008(parsed):
+                    log("added_default_008", True, i, rec_id, detail)
                 if args.fix_008_length:
                     rec_id = record_identifier(parsed)
                     for detail in fix_008_length(parsed):
@@ -5614,12 +5622,12 @@ def main(argv: list[str] | None = None) -> int:
                     rec_id = record_identifier(parsed)
                     log(category, False, i, rec_id, detail)
                 for category, detail in find_suspicious_fields(parsed):
-                    # non_numeric_tag is suppressed here when
+                    # unfixed_non_numeric_tag is suppressed here when
                     # --fix-invalid-tags is on (the default): it's
                     # deferred and fixed (or, in the rare case no 9XX
                     # slot is free, flagged for real) after the main
                     # pass -- see pending_tag_fixes below.
-                    if category == "non_numeric_tag" and args.fix_invalid_tags:
+                    if category == "unfixed_non_numeric_tag" and args.fix_invalid_tags:
                         continue
                     rec_id = record_identifier(parsed)
                     log(category, False, i, rec_id, detail)
@@ -5725,8 +5733,8 @@ def main(argv: list[str] | None = None) -> int:
     # category left out here because its flag is off must genuinely
     # never be logged this run (see each `log(...)` call site above).
     active_categories = {
-        "unfixable", "missing_008", "doubled_proxy_url", "removed_invalid_subfield",
-        "non_numeric_tag", "invalid_indicator_value", "invalid_bibliographic_level",
+        "unfixable", "added_default_008", "doubled_proxy_url", "removed_invalid_subfield",
+        "unfixed_non_numeric_tag", "invalid_indicator_value", "invalid_bibliographic_level",
         "leader_entry_map_fixed", "oversized_sentinel_fixed", "duplicate_identifier",
         "removed_null_identifier", "suspect_marc8_escape",
     }
@@ -5756,8 +5764,6 @@ def main(argv: list[str] | None = None) -> int:
         active_categories.add("added_field")
     if args.add_default_245:
         active_categories.add("added_default_245")
-    if args.add_default_008:
-        active_categories.add("added_default_008")
     if args.fix_008_length:
         active_categories.add("fixed_008_length")
     if args.check_dangling_880_links:
