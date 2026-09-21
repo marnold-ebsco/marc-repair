@@ -52,13 +52,13 @@ def _detail_line_marker(category: str) -> re.Pattern:
     row, since it's already stated once in the category's own header
     right above; see LogEntry.render's own comment). Matches the
     category's 3-line header followed immediately by a row starting
-    with "[" -- the only thing that can immediately follow the count
-    line when at least one record was actually listed."""
+    with a tab -- the only thing that can immediately follow the
+    count line when at least one record was actually listed."""
     return re.compile(
         rf"=== [^\n]*: {re.escape(category)}(?: \([^)\n]*\))? ===\n"
         rf"=== [^\n]* ===\n"
         rf"=== \d+ record\(s\) ===\n"
-        rf"\["
+        rf"\t"
     )
 
 
@@ -333,7 +333,7 @@ class TestRepairHoldingsRecords:
         )
         content = _resolve_log(log).read_text(encoding="utf-8")
         assert _detail_line_marker("removed_null_identifier").search(content)
-        assert "[INFORMATIONAL]" in content
+        assert "=== INFORMATIONAL:" in content
 
     def test_escape_sequence_flagged_not_transcoded(self, tmp_path):
         fields = [
@@ -353,7 +353,7 @@ class TestRepairHoldingsRecords:
         result, out, log = self._run(tmp_path, [self._holdings_record(leader=bad_leader)])
         content = _resolve_log(log).read_text(encoding="utf-8")
         assert "holdings_leader_byte_defaulted" in content
-        assert "[FIXED/REQUIRES ATTENTION]" in content
+        assert "=== FIXED/REQUIRES ATTENTION:" in content
         parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
         assert parsed.leader[6] == "u"
 
@@ -369,7 +369,7 @@ class TestRepairHoldingsRecords:
         )
         content = _resolve_log(log).read_text(encoding="utf-8")
         assert "holdings_leader_byte_defaulted" in content
-        assert "[FIXED/REQUIRES ATTENTION]" in content
+        assert "=== FIXED/REQUIRES ATTENTION:" in content
         assert "encoding level" in content
         parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
         assert parsed.leader[17] == "u"
@@ -448,7 +448,7 @@ class TestRepairHoldingsRecords:
         assert result["not_fixed"] == 1
         content = _resolve_log(log).read_text(encoding="utf-8")
         assert "holdings_missing_004" in content
-        assert "[NOT FIXED]" in content
+        assert "=== NOT FIXED:" in content
 
     def test_single_004_not_flagged(self, tmp_path):
         fields = [
@@ -474,7 +474,7 @@ class TestRepairHoldingsRecords:
         assert result["not_fixed"] == 0  # informational, not NOT FIXED
         content = _resolve_log(log).read_text(encoding="utf-8")
         assert "holdings_multiple_004" in content
-        assert "[INFORMATIONAL]" in content
+        assert "=== INFORMATIONAL:" in content
 
     def test_multiple_852_split_into_separate_records(self, tmp_path):
         fields = [
@@ -722,7 +722,7 @@ class TestRepairHoldingsRecords:
         result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
         content = _resolve_log(log).read_text(encoding="utf-8")
         assert "field_removed_because_missing_a" in content
-        assert "[FIXED/REQUIRES ATTENTION]" in content
+        assert "=== FIXED/REQUIRES ATTENTION:" in content
         parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
         assert not any(f.tag == "863" for f in parsed.fields)
 
@@ -801,7 +801,7 @@ class TestRepairHoldingsRecords:
         )
         content = _resolve_log(log).read_text(encoding="utf-8")
         assert _detail_line_marker("missing_call_number").search(content)
-        assert "[INFORMATIONAL]" in content
+        assert "=== INFORMATIONAL:" in content
         assert not _detail_line_marker("removed_bad_call_number").search(content)
         parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
         f852 = next(f for f in parsed.fields if f.tag == "852")
@@ -816,7 +816,7 @@ class TestRepairHoldingsRecords:
         result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
         content = _resolve_log(log).read_text(encoding="utf-8")
         assert "removed_bad_call_number" in content
-        assert "[FIXED/REQUIRES ATTENTION]" in content
+        assert "=== FIXED/REQUIRES ATTENTION:" in content
         assert not _detail_line_marker("missing_call_number").search(content)
         parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
         f852 = next(f for f in parsed.fields if f.tag == "852")
@@ -844,7 +844,7 @@ class TestRepairHoldingsRecords:
         result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
         content = _resolve_log(log).read_text(encoding="utf-8")
         assert "added_missing_852_location" in content
-        assert "[FIXED/REQUIRES ATTENTION]" in content
+        assert "=== FIXED/REQUIRES ATTENTION:" in content
         parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
         f852 = next(f for f in parsed.fields if f.tag == "852")
         assert ("b", "Migration") in f852.subfields
@@ -986,7 +986,7 @@ class TestRepairHoldingsRecords:
         result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
         content = _resolve_log(log).read_text(encoding="utf-8")
         assert "recoded_852_b_to_i" in content
-        assert "[FIXED/REQUIRES ATTENTION]" in content
+        assert "=== FIXED/REQUIRES ATTENTION:" in content
         assert "recoded" in content
         parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
         f852 = next(f for f in parsed.fields if f.tag == "852")
@@ -1115,7 +1115,7 @@ class TestRepairHoldingsRecords:
         content = _resolve_log(log).read_text(encoding="utf-8")
         assert "holdings_852_duplicate_nr_subfield" in content
         assert "Not-Repeatable subfield" in content
-        assert "[FIXED/REQUIRES ATTENTION]" in content
+        assert "=== FIXED/REQUIRES ATTENTION:" in content
         parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
         f852 = next(f for f in parsed.fields if f.tag == "852")
         assert ("h", "Z678.9") in f852.subfields
@@ -1167,7 +1167,7 @@ class TestRepairHoldingsRecords:
         result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
         content = _resolve_log(log).read_text(encoding="utf-8")
         assert "holdings_853_missing_8" in content
-        assert "[NOT FIXED]" in content
+        assert "=== NOT FIXED:" in content
         parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
         f853 = next(f for f in parsed.fields if f.tag == "853")
         assert ("a", "2nd 1997") in f853.subfields
@@ -1182,7 +1182,7 @@ class TestRepairHoldingsRecords:
         result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
         content = _resolve_log(log).read_text(encoding="utf-8")
         assert "holdings_856_missing_u" in content
-        assert "[NOT FIXED]" in content
+        assert "=== NOT FIXED:" in content
         parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
         f856 = next(f for f in parsed.fields if f.tag == "856")
         assert ("a", "Fulltext Ebsco OA database 1911-2013") in f856.subfields
@@ -1196,7 +1196,7 @@ class TestRepairHoldingsRecords:
         result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
         content = _resolve_log(log).read_text(encoding="utf-8")
         assert "holdings_852_b_suspect_content" in content
-        assert "[NOT FIXED]" in content
+        assert "=== NOT FIXED:" in content
         assert "purely numeric" in content
         parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
         f852 = next(f for f in parsed.fields if f.tag == "852")
@@ -1211,7 +1211,7 @@ class TestRepairHoldingsRecords:
         result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
         content = _resolve_log(log).read_text(encoding="utf-8")
         assert "holdings_852_b_suspect_content" in content
-        assert "[NOT FIXED]" in content
+        assert "=== NOT FIXED:" in content
         assert "flattened subfields" in content
         parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
         f852 = next(f for f in parsed.fields if f.tag == "852")
@@ -1238,7 +1238,7 @@ class TestRepairHoldingsRecords:
         result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
         content = _resolve_log(log).read_text(encoding="utf-8")
         assert "removed_empty_852_subfield" in content
-        assert "[FIXED/REQUIRES ATTENTION]" in content
+        assert "=== FIXED/REQUIRES ATTENTION:" in content
         assert "holdings_null_identifier" not in content
         parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
         f852 = next(f for f in parsed.fields if f.tag == "852")

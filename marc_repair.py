@@ -3922,17 +3922,16 @@ class LogEntry:
     detail: str
 
     def render(self) -> str:
-        # The category name is deliberately left blank (not omitted --
-        # the tab stays, as a visual indent) here: it's already stated
-        # once in this category's own "=== SECTION: category ==="
-        # header directly above every group of its rows (see
-        # `write_log`), so repeating it on every single row is pure
-        # noise for a human reading the log.
-        tag = f"[{_section_for(self)[1]}]"
+        # The section tag and category name are deliberately omitted
+        # here (leaving just the one leading tab, as a visual indent):
+        # both are already stated once in this category's own
+        # "=== SECTION: category ===" header directly above every
+        # group of its rows (see `write_log`), so repeating either on
+        # every single row is pure noise for a human reading the log.
         rec = f"record {self.record_idx}"
         if self.record_id:
             rec += f" ({self.record_id})"
-        return f"{tag}\t\t{self.ts}\t{rec}\t{self.detail}"
+        return f"\t{self.ts}\t{rec}\t{self.detail}"
 
 
 #: There is no plain "FIXED" section -- every category that's ever

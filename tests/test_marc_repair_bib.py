@@ -307,10 +307,13 @@ class TestFixBadIndicators:
             "FIXED/REQUIRES ATTENTION block must come before NEEDS REVIEW block"
         )
         assert any(
-            "[FIXED/REQUIRES ATTENTION]" in ln and "padded" in ln
+            ln.startswith("=== FIXED/REQUIRES ATTENTION: padded_indicators")
             for ln in lines[attention_idx:needs_review_idx]
         )
-        assert any("[NEEDS REVIEW]" in ln for ln in lines[needs_review_idx:])
+        assert any(
+            ln.startswith("=== NEEDS REVIEW: transcode_marc8_failed")
+            for ln in lines[needs_review_idx:]
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -814,7 +817,7 @@ class TestStripNullIdentifiersBibPipeline:
         assert rc == 0
         content = _resolve_log(log).read_text(encoding="utf-8")
         assert _detail_line_marker("removed_null_identifier").search(content)
-        assert "[INFORMATIONAL]" in content
+        assert "=== INFORMATIONAL: removed_null_identifier ===" in content
 
 
 # ---------------------------------------------------------------------------
@@ -1044,7 +1047,7 @@ class TestFixMisplacedSubfieldCodes:
         assert rc == 0
         content = _resolve_log(log).read_text(encoding="utf-8")
         assert _detail_line_marker("fixed_misplaced_subfield_code").search(content)
-        assert "[INFORMATIONAL]" in content
+        assert "=== INFORMATIONAL: fixed_misplaced_subfield_code ===" in content
         assert not _detail_line_marker("removed_invalid_subfield").search(content)
         parsed_out = m.read_intact_record(m._read_text(str(out)))
         f260 = next(f for f in parsed_out.fields if f.tag == "260")
@@ -1456,7 +1459,7 @@ class TestReattachOrphanedFieldsCLI:
         assert m.count_records(str(out)) == 1
         content = _resolve_log(log).read_text(encoding="utf-8")
         assert _detail_line_marker("reattached_orphaned_field").search(content)
-        assert "[FIXED/REQUIRES ATTENTION]" in content
+        assert "=== FIXED/REQUIRES ATTENTION: reattached_orphaned_field ===" in content
         parsed = m.read_intact_record(m._read_text(str(out)))
         assert parsed.fields[-1].tag == "700"
         assert parsed.fields[-1].subfields == [("a", "Quinn, Frances,"), ("d", "1963-")]
@@ -1475,7 +1478,7 @@ class TestReattachOrphanedFieldsCLI:
         assert m.count_records(str(tmp_path / "out_error.mrc")) == 1
         content = _resolve_log(log).read_text(encoding="utf-8")
         assert "unfixable" in content
-        assert "[UNFIXABLE]" in content
+        assert "=== UNFIXABLE: unfixable ===" in content
         assert "reattached_orphaned_field" not in content
 
 
@@ -2603,13 +2606,13 @@ def _detail_line_marker(category: str) -> re.Pattern:
     row, since it's already stated once in the category's own header
     right above; see LogEntry.render's own comment). Matches the
     category's 3-line header followed immediately by a row starting
-    with "[" -- the only thing that can immediately follow the count
-    line when at least one record was actually listed."""
+    with a tab -- the only thing that can immediately follow the
+    count line when at least one record was actually listed."""
     return re.compile(
         rf"=== [^\n]*: {re.escape(category)}(?: \([^)\n]*\))? ===\n"
         rf"=== [^\n]* ===\n"
         rf"=== \d+ record\(s\) ===\n"
-        rf"\["
+        rf"\t"
     )
 
 

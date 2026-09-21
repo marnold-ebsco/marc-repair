@@ -52,13 +52,13 @@ def _detail_line_marker(category: str) -> re.Pattern:
     row, since it's already stated once in the category's own header
     right above; see LogEntry.render's own comment). Matches the
     category's 3-line header followed immediately by a row starting
-    with "[" -- the only thing that can immediately follow the count
-    line when at least one record was actually listed."""
+    with a tab -- the only thing that can immediately follow the
+    count line when at least one record was actually listed."""
     return re.compile(
         rf"=== [^\n]*: {re.escape(category)}(?: \([^)\n]*\))? ===\n"
         rf"=== [^\n]* ===\n"
         rf"=== \d+ record\(s\) ===\n"
-        rf"\["
+        rf"\t"
     )
 
 
@@ -526,7 +526,7 @@ class TestWriteLog:
         assert not_fixed_header < fixed_removed_header
         # the two entries are adjacent, not interleaved with the
         # unrelated fixed entries
-        not_fixed_lines = [ln for ln in lines if ln.startswith("[") and "no 008" in ln]
+        not_fixed_lines = [ln for ln in lines if ln.startswith("\t") and "no 008" in ln]
         assert len(not_fixed_lines) == 2
 
     def test_appends_rather_than_overwrites(self, tmp_path):
@@ -556,10 +556,11 @@ class TestWriteLog:
         fixed_header = next(i for i, ln in enumerate(lines) if ln.startswith("=== FIXED"))
         dup_header = next(i for i, ln in enumerate(lines) if ln.startswith("=== DUPLICATE"))
         assert not_fixed_header < fixed_header < dup_header
-        # the duplicate entry's own line is tagged with its section, not
-        # generically "NOT FIXED", even though .fixed is False
-        dup_line = next(ln for ln in lines if "dup" in ln and not ln.startswith("==="))
-        assert dup_line.startswith("[DUPLICATE RECORDS]")
+        # the duplicate entry's own detail line lands under the
+        # DUPLICATE RECORDS header, not generically under NOT FIXED,
+        # even though .fixed is False
+        dup_line_idx = next(i for i, ln in enumerate(lines) if "dup" in ln and "\t" in ln)
+        assert dup_line_idx > dup_header
 
     def test_informational_section_sits_after_fixed(self, tmp_path):
         entries = [
@@ -588,7 +589,7 @@ class TestWriteLog:
             _category_header_line(lines, c) for c in informational_categories
         ]
         assert not_fixed_header < fixed_header < dup_header < min(informational_headers)
-        info_lines = [ln for ln in lines if ln.startswith("[INFORMATIONAL]")]
+        info_lines = [ln for ln in lines[min(informational_headers):] if ln.startswith("\t")]
         assert len(info_lines) == 4
 
     def test_blank_line_before_each_header_except_the_first(self, tmp_path):
