@@ -448,9 +448,10 @@ HOLDINGS_ROWS = [
         "of subfields flattened into plain text by whatever exported "
         "the record, e.g. `$b#8 0 #a 1`) -- neither looks like a real "
         "location code",
-        "Flagged only, no change", "detect-only",
-        "`holdings_852_b_suspect_content`", "NOT FIXED", "**Yes**",
-        "-- (detect-only, no switch)",
+        "Replaced wholesale with a placeholder",
+        "Yes (`--allow-single-digit-852b` exempts a single digit)",
+        "`holdings_852_b_suspect_content`", "FIXED/REQUIRES ATTENTION",
+        "**Yes**", "`--allow-single-digit-852b`",
     ),
     CategoryRow(
         "853 (Captions and Pattern -- Basic) missing $8 (Field link "

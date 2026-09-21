@@ -1191,22 +1191,24 @@ class TestRepairHoldingsRecords:
         f856 = next(f for f in parsed.fields if f.tag == "856")
         assert ("a", "Fulltext Ebsco OA database 1911-2013") in f856.subfields
 
-    def test_852_b_purely_numeric_flagged_not_fixed(self, tmp_path):
+    def test_852_b_purely_numeric_replaced_with_migration(self, tmp_path):
         fields = [
             m.Field_("004", None, None, content="ocm123"),
             m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
-            m.Field_("852", " 0", [("b", "0"), ("a", "1")]),
+            m.Field_("852", " 0", [("b", "42"), ("a", "1")]),
         ]
         result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
         content = _resolve_log(log).read_text(encoding="utf-8")
         assert "holdings_852_b_suspect_content" in content
-        assert "=== NOT FIXED:" in content
+        assert "=== FIXED/REQUIRES ATTENTION:" in content
         assert "purely numeric" in content
+        assert "$b42" in content
         parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
         f852 = next(f for f in parsed.fields if f.tag == "852")
-        assert ("b", "0") in f852.subfields
+        assert ("b", m.DEFAULT_852_LOCATION_CONTENT) in f852.subfields
+        assert not any(code == "b" and data == "42" for code, data in f852.subfields)
 
-    def test_852_b_flattened_subfield_markers_flagged_not_fixed(self, tmp_path):
+    def test_852_b_flattened_subfield_markers_replaced_with_migration(self, tmp_path):
         fields = [
             m.Field_("004", None, None, content="ocm123"),
             m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
@@ -1215,11 +1217,58 @@ class TestRepairHoldingsRecords:
         result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
         content = _resolve_log(log).read_text(encoding="utf-8")
         assert "holdings_852_b_suspect_content" in content
-        assert "=== NOT FIXED:" in content
+        assert "=== FIXED/REQUIRES ATTENTION:" in content
         assert "flattened subfields" in content
         parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
         f852 = next(f for f in parsed.fields if f.tag == "852")
-        assert ("b", "#8 0 #a 1") in f852.subfields
+        assert ("b", m.DEFAULT_852_LOCATION_CONTENT) in f852.subfields
+        assert not any(code == "b" and "#" in data for code, data in f852.subfields)
+
+    def test_852_b_single_digit_replaced_with_migration_by_default(self, tmp_path):
+        fields = [
+            m.Field_("004", None, None, content="ocm123"),
+            m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
+            m.Field_("852", " 0", [("b", "0"), ("a", "1")]),
+        ]
+        result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
+        content = _resolve_log(log).read_text(encoding="utf-8")
+        assert "=== FIXED/REQUIRES ATTENTION:" in content
+        parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
+        f852 = next(f for f in parsed.fields if f.tag == "852")
+        assert ("b", m.DEFAULT_852_LOCATION_CONTENT) in f852.subfields
+
+    def test_852_b_single_digit_left_alone_with_allow_flag(self, tmp_path):
+        fields = [
+            m.Field_("004", None, None, content="ocm123"),
+            m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
+            m.Field_("852", " 0", [("b", "0"), ("a", "1")]),
+        ]
+        result, out, log = self._run(
+            tmp_path, [self._holdings_record(fields=fields)],
+            allow_single_digit_852b=True,
+        )
+        content = _resolve_log(log).read_text(encoding="utf-8")
+        assert "=== FIXED/REQUIRES ATTENTION: holdings_852_b_suspect_content ===" in content
+        assert "=== 0 record(s) ===" in content
+        parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
+        f852 = next(f for f in parsed.fields if f.tag == "852")
+        assert ("b", "0") in f852.subfields
+
+    def test_852_b_multi_digit_still_replaced_with_allow_flag(self, tmp_path):
+        # --allow-single-digit-852b only exempts a single digit -- a
+        # multi-digit numeric $b is still suspect either way.
+        fields = [
+            m.Field_("004", None, None, content="ocm123"),
+            m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
+            m.Field_("852", " 0", [("b", "42"), ("a", "1")]),
+        ]
+        result, out, log = self._run(
+            tmp_path, [self._holdings_record(fields=fields)],
+            allow_single_digit_852b=True,
+        )
+        parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
+        f852 = next(f for f in parsed.fields if f.tag == "852")
+        assert ("b", m.DEFAULT_852_LOCATION_CONTENT) in f852.subfields
 
     def test_852_b_normal_text_not_flagged_suspect(self, tmp_path):
         fields = [

@@ -739,7 +739,8 @@ def build_holdings_records() -> list[bytes]:
     ))
 
     # holdings_852_b_suspect_content: $b is purely numeric -- looks like
-    # data (a piece/copy number) that migrated into the wrong subfield.
+    # data (a piece/copy number) that migrated into the wrong subfield --
+    # so it's replaced wholesale with the Migration placeholder.
     records.append(_record(_HOLDINGS_LEADER, [
         m.Field_("004", None, None, content="ks-hol-852bsuspect"),
         m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),

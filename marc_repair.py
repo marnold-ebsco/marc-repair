@@ -2935,16 +2935,21 @@ def strip_852_duplicate_non_repeatable_subfields(parsed: ParsedRecord) -> list[s
 #: collection abbreviation (see `_852_CUTTER_OR_CLASS_PATTERN`'s own
 #: docstring for examples); a bare number has no such meaning and is a
 #: strong sign this $b is actually a piece/copy number that landed in
-#: the wrong subfield. Used only by `find_852_b_suspect_content`.
+#: the wrong subfield. Used only by `fix_852_b_suspect_content`.
 _852_B_NUMERIC_PATTERN = re.compile(r"^\d+$")
 
 
-def find_852_b_suspect_content(parsed: ParsedRecord) -> list[str]:
-    """Detect (never fix) an 852 (Location) $b (Sublocation) whose
-    content doesn't look like a real location code at all:
+def fix_852_b_suspect_content(
+    parsed: ParsedRecord, allow_single_digit_852b: bool = False,
+) -> list[str]:
+    """Fix an 852 (Location) $b (Sublocation) whose content doesn't
+    look like a real location code at all:
 
       * purely numeric (see `_852_B_NUMERIC_PATTERN`) -- e.g. `$b0` --
-        rather than a textual department/collection abbreviation
+        rather than a textual department/collection abbreviation --
+        unless `allow_single_digit_852b` is set and this $b is exactly
+        one digit, in which case it's left untouched (some data
+        genuinely uses bare single-digit location codes)
       * contains two or more literal "#" characters -- e.g.
         `$b#8 0 #a 1` -- a strong sign that what should have been
         separate subfields (a real MARC subfield delimiter is byte
@@ -2954,25 +2959,36 @@ def find_852_b_suspect_content(parsed: ParsedRecord) -> list[str]:
     Both are real defects seen in production holdings exports, not
     hypothetical: the "#"-flattened case is confirmed data corruption
     (subfields collapsed into one), and the purely-numeric case is a
-    piece/copy number miscoded as a location. Flagged only, one detail
-    line per offending $b (category "holdings_852_b_suspect_content",
-    NOT FIXED: this tool has no way to know what the real location
-    should have been).
+    piece/copy number miscoded as a location. There's no way to
+    recover the real location code, so the suspect $b is replaced
+    wholesale with `DEFAULT_852_LOCATION_CONTENT` -- the same
+    placeholder used elsewhere for 852 content this tool must
+    guess at -- and the original content is logged as-is before
+    being overwritten (category "holdings_852_b_suspect_content",
+    FIXED/REQUIRES ATTENTION: real data discarded).
     """
     details = []
     for f in parsed.fields:
         if f.tag != "852" or f.is_control():
             continue
+        new_subfields = []
         for code, data in f.subfields:
             if code != "b":
+                new_subfields.append((code, data))
+                continue
+            if allow_single_digit_852b and _852_B_NUMERIC_PATTERN.match(data) and len(data) == 1:
+                new_subfields.append((code, data))
                 continue
             if _852_B_NUMERIC_PATTERN.match(data):
                 reason = "is purely numeric, not a location code"
             elif data.count("#") >= 2:
                 reason = "contains multiple '#' characters -- looks like flattened subfields"
             else:
+                new_subfields.append((code, data))
                 continue
             details.append(f"=852  {f.indicators}${code}{data} {reason}")
+            new_subfields.append((code, DEFAULT_852_LOCATION_CONTENT))
+        f.subfields = new_subfields
     return details
 
 
@@ -3967,6 +3983,7 @@ _FIXED_REQUIRES_ATTENTION = {
     "padded_indicators",
     "incomplete_852",
     "invalid_bibliographic_level",
+    "holdings_852_b_suspect_content",
 }
 
 #: INFORMATIONAL, at the very bottom: a fix applied via a fixed
@@ -4115,8 +4132,10 @@ _CHECK_DESCRIPTIONS: dict[str, str] = {
     "safe way to guess the intended character. NO DATA LOSS.",
     "holdings_852_b_suspect_content": "An 852 $b (Sublocation) looks "
     "like data that migrated into the wrong subfield -- purely "
-    "numeric, or containing flattened subfield-delimiter markers. "
-    "NO DATA LOSS.",
+    "numeric, or containing flattened subfield-delimiter markers -- "
+    "and is replaced wholesale with "
+    f"{DEFAULT_852_LOCATION_CONTENT!r} (the original content is logged "
+    "as-is below, not repeated per line). POSSIBLE DATA LOSS.",
     "holdings_853_missing_8": "An 853 (Captions and Pattern) field has "
     "no $8 (Field link and sequence number) -- the 863/864/865 "
     "enumeration fields that should reference it can't be linked. "
@@ -4503,6 +4522,7 @@ def repair_holdings_records(
     output_path: str,
     log_path: str,
     fix_missing_852c: bool = True,
+    allow_single_digit_852b: bool = False,
     full_categories: set[str] | None = None,
     on_progress: Callable[[int], None] | None = None,
     on_record: Callable[[int], None] | None = None,
@@ -4579,10 +4599,14 @@ def repair_holdings_records(
         "right" one); see `strip_852_duplicate_non_repeatable_subfields`
       * an 852 $b (Sublocation) that's purely numeric or contains
         multiple literal "#" characters (a sign of subfields flattened
-        into plain text by whatever exported the record) is flagged
-        NOT FIXED (category "holdings_852_b_suspect_content") --
-        detect-only, this tool has no way to know what the real
-        location should have been; see `find_852_b_suspect_content`
+        into plain text by whatever exported the record) is replaced
+        wholesale with `DEFAULT_852_LOCATION_CONTENT` (category
+        "holdings_852_b_suspect_content", FIXED/REQUIRES ATTENTION:
+        real data discarded, this tool has no way to know what the
+        real location should have been) -- unless
+        --allow-single-digit-852b is given, in which case a
+        single-digit $b is left untouched instead; see
+        `fix_852_b_suspect_content`
       * an 853 (Captions and Pattern -- Basic) field with no $8 (Field
         link and sequence number) -- the subfield an 863 needs to find
         its caption/pattern -- is flagged NOT FIXED (category
@@ -4832,8 +4856,8 @@ def repair_holdings_records(
                 log(category, False, i, rec_id, detail)
             for detail in strip_852_duplicate_non_repeatable_subfields(parsed):
                 log("holdings_852_duplicate_nr_subfield", True, i, rec_id, detail)
-            for detail in find_852_b_suspect_content(parsed):
-                log("holdings_852_b_suspect_content", False, i, rec_id, detail)
+            for detail in fix_852_b_suspect_content(parsed, allow_single_digit_852b):
+                log("holdings_852_b_suspect_content", True, i, rec_id, detail)
             for detail in find_853_missing_8(parsed):
                 log("holdings_853_missing_8", False, i, rec_id, detail)
             for detail in find_856_missing_u(parsed):
@@ -5016,6 +5040,20 @@ def main(argv: list[str] | None = None) -> int:
         "has no way to know, but leaving it out entirely is worse than a "
         "clearly-flagged placeholder; each insertion is logged (see "
         "--log) as a placeholder, not a real value",
+    )
+    parser.add_argument(
+        "--allow-single-digit-852b",
+        action="store_true",
+        default=False,
+        help="(holdings records only) do NOT treat a single-digit 852 $b "
+        "(Sublocation) -- e.g. $b0 -- as suspect content; leave it "
+        "untouched instead of replacing it with "
+        f"{DEFAULT_852_LOCATION_CONTENT!r}. By default a single digit is "
+        "treated the same as any other purely-numeric $b (see "
+        "holdings_852_b_suspect_content): almost always a piece/copy "
+        "number miscoded into the wrong subfield, not a real location "
+        "code, but pass this flag if your data genuinely uses bare "
+        "single-digit location codes",
     )
     parser.add_argument(
         "--mrk",
@@ -5350,6 +5388,7 @@ def main(argv: list[str] | None = None) -> int:
                 holdings_repaired_path,
                 holdings_log_path,
                 fix_missing_852c=args.fix_missing_852c,
+                allow_single_digit_852b=args.allow_single_digit_852b,
                 full_categories=set(args.log_full),
                 on_progress=holdings_progress.on_progress,
                 on_record=holdings_progress.maybe_print,
@@ -5401,6 +5440,7 @@ def main(argv: list[str] | None = None) -> int:
             out_path,
             log_path,
             fix_missing_852c=args.fix_missing_852c,
+            allow_single_digit_852b=args.allow_single_digit_852b,
             full_categories=set(args.log_full),
             on_progress=progress.on_progress,
             on_record=progress.maybe_print,
