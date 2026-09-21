@@ -2605,9 +2605,11 @@ def fix_852_call_number(parsed: ParsedRecord) -> tuple[list[str], list[str]]:
             continue
         f.subfields = [(code, data) for code, data in f.subfields if code != "h"]
         removed = "".join(f"${code}{data}" for code, data in h_subfields)
+        preview = h_subfields[0][1][:10]
         removed_details.append(
-            f"removed unusable $h subfield(s) {removed!r} from ={f.tag} "
-            "(empty or punctuation-only; rest of the field left as-is)"
+            f"={f.tag} $h{preview} -- removed unusable $h subfield(s) "
+            f"{removed!r} (empty or punctuation-only; rest of the field "
+            "left as-is)"
         )
     return removed_details, missing_details
 
