@@ -34,10 +34,14 @@ passed) gets no header at all; there's nothing to report.
 "Logged by default" below means *listed in full* (every matching record,
 not just the header + count): a small curated set of categories -- real
 data loss, or content problems (e.g. a broken URL) worth a cataloger's
-individual attention -- are **Yes** here unconditionally. Everything else
-needs `--log-full <category>` (repeatable) or, for an INFORMATIONAL
-category specifically, `--log-informational` (every currently-active
-INFORMATIONAL category at once).
+individual attention -- are **Yes** here unconditionally. Everything
+else needs `--log-full <category>` (repeatable) -- **except** a category
+currently in the INFORMATIONAL section, which is *never* listed in full
+(not even via `--log-full`): these are the highest-volume, least
+actionable findings (typographic normalization, MARC-8 transcoding, and
+the like), so a header + count is genuinely all there is to say about
+them. If a category there needs the full per-record list, that's a sign
+it belongs in FIXED/REQUIRES ATTENTION or NEEDS REVIEW instead.
 
 In the bib pipeline, a record that's genuinely `unfixable` (see below) is
 never written into the main output at all -- it's diverted, byte-for-byte
@@ -96,9 +100,9 @@ BIB_ROWS = [
     CategoryRow(
         "MARC-8 -> UTF-8 transcoding", "Transcoded field data",
         "Yes (`--no-transcode-marc8`)", "`transcoded_marc8`", "INFORMATIONAL",
-        "No (header + count always shown; full per-record list via --log-full transcoded_marc8 or "
-        "--log-informational)",
-        "`--no-transcode-marc8`; `--log-full transcoded_marc8`; `--log-informational`",
+        "No -- INFORMATIONAL categories are never listed in full, "
+        "not even via --log-full",
+        '`--no-transcode-marc8`',
     ),
     CategoryRow(
         "Transcode failure", "Left field untranscoded",
@@ -108,41 +112,38 @@ BIB_ROWS = [
     CategoryRow(
         "Mojibake (double-encoded UTF-8) fix", "Re-decoded field data",
         "Yes (`--no-fix-mojibake`)", "`fixed_mojibake`", "INFORMATIONAL",
-        "No (header + count always shown; full per-record list via --log-full fixed_mojibake or "
-        "--log-informational)", "`--no-fix-mojibake`; `--log-informational`",
+        "No -- INFORMATIONAL categories are never listed in full, "
+        "not even via --log-full", '`--no-fix-mojibake`',
     ),
     CategoryRow(
         "Leader bytes 05/06/08/17 defaulted", "Defaulted leader byte",
         "Yes (`--no-fix-invalid-leader-bytes`)", "`leader_byte_defaulted`",
-        "INFORMATIONAL", "No (header + count always shown; full per-record list via --log-full "
-                         "leader_byte_defaulted or --log-informational)",
-        "`--no-fix-invalid-leader-bytes`; `--log-informational`",
+        "INFORMATIONAL", "No -- INFORMATIONAL categories are never listed in full, "
+        "not even via --log-full",
+        '`--no-fix-invalid-leader-bytes`',
     ),
     CategoryRow(
         "999 -> 945 remap", "Renamed field tag",
         "**No** (`--remap-999-to-945` to enable)", "`remapped_999_to_945`",
-        "INFORMATIONAL", "No (header + count always shown; full per-record list via --log-full "
-                         "remapped_999_to_945 or --log-informational)",
-        "`--remap-999-to-945`; `--log-full remapped_999_to_945`; `--log-informational`",
+        "INFORMATIONAL", "No -- INFORMATIONAL categories are never listed in full, "
+        "not even via --log-full",
+        '`--remap-999-to-945`',
     ),
     CategoryRow(
         "$9 -> $0 normalization", "Renamed subfield code",
         "Yes (`--no-normalize-subfield-9`)", "`normalized_subfield_9_to_0`",
         "INFORMATIONAL",
-        "No (header + count always shown; full per-record list via --log-full "
-        "normalized_subfield_9_to_0 or --log-informational)",
-        "`--no-normalize-subfield-9`; `--log-full normalized_subfield_9_to_0`; "
-        "`--log-informational`",
+        "No -- INFORMATIONAL categories are never listed in full, "
+        "not even via --log-full",
+        '`--no-normalize-subfield-9`',
     ),
     CategoryRow(
         "Smart-character normalization", "Replaced characters",
         "Yes (`--no-normalize-smart-characters`)",
-        "`normalized_smart_characters`", "INFORMATIONAL", "No (header + count always shown; full "
-                                                          "per-record list via --log-full "
-                                                          "normalized_smart_characters or "
-                                                          "--log-informational)",
-        "`--no-normalize-smart-characters`; `--log-full normalized_smart_characters`; "
-        "`--log-informational`",
+        "`normalized_smart_characters`", "INFORMATIONAL",
+        "No -- INFORMATIONAL categories are never listed in full, "
+        "not even via --log-full",
+        '`--no-normalize-smart-characters`',
     ),
     CategoryRow(
         "Misplaced subfield code (a stray space right after the delimiter, "
@@ -152,11 +153,10 @@ BIB_ROWS = [
         "below, so these are recovered instead of discarded",
         "Yes (`--no-fix-misplaced-subfield-codes`)",
         "`fixed_misplaced_subfield_code`", "INFORMATIONAL",
-        "No (header + count always shown; full per-record list via --log-full "
-        "fixed_misplaced_subfield_code or --log-informational)",
+        "No -- INFORMATIONAL categories are never listed in full, "
+        "not even via --log-full",
         "`--no-fix-misplaced-subfield-codes` (leaves it for invalid "
-        "subfield code removal below instead); "
-        "`--log-full fixed_misplaced_subfield_code`; `--log-informational`",
+        "subfield code removal below instead)",
     ),
     CategoryRow(
         "Invalid subfield code removal", "Removed subfield",
@@ -171,9 +171,9 @@ BIB_ROWS = [
         "in the wild as `035  $a$0<local number>`), on any field",
         "Subfield removed", "Yes, always", "`removed_null_identifier`",
         "INFORMATIONAL",
-        "No (header + count always shown; full per-record list via --log-full "
-        "removed_null_identifier or --log-informational)",
-        "`--log-full removed_null_identifier`",
+        "No -- INFORMATIONAL categories are never listed in full, "
+        "not even via --log-full",
+        '--',
     ),
     CategoryRow(
         "Missing-required-$a field removal (also treats a punctuation-only "
@@ -233,8 +233,8 @@ BIB_ROWS = [
     CategoryRow(
         "Invalid (non-numeric) tag -> 9XX rename", "Renamed field tag",
         "Yes (`--no-fix-invalid-tags`)", "`invalid_tag`", "INFORMATIONAL",
-        "No (header + count always shown; full per-record list via --log-full invalid_tag or "
-        "--log-informational)", "`--no-fix-invalid-tags`; `--log-informational`",
+        "No -- INFORMATIONAL categories are never listed in full, "
+        "not even via --log-full", '`--no-fix-invalid-tags`',
     ),
     CategoryRow(
         "Invalid tag, no 9XX slot free", "Field removed entirely "
@@ -249,17 +249,16 @@ BIB_ROWS = [
     CategoryRow(
         "Leader entry-map (bytes 20-23) correction", "Corrected leader bytes",
         "Yes, always", "`leader_entry_map_fixed`", "INFORMATIONAL",
-        "No (header + count always shown; full per-record list via --log-full "
-        "leader_entry_map_fixed or --log-informational)",
-        "`--log-full leader_entry_map_fixed`; `--log-informational` "
-        "(no disable switch -- always runs)",
+        "No -- INFORMATIONAL categories are never listed in full, "
+        "not even via --log-full",
+        '--',
     ),
     CategoryRow(
         "Oversized record (>99999 bytes) sentinel", "Wrote sentinel length",
         "n/a (only if it occurs)", "`oversized_sentinel_fixed`",
-        "INFORMATIONAL", "No (header + count always shown; full per-record list via --log-full "
-                         "oversized_sentinel_fixed or --log-informational)",
-        "`--log-informational` (no disable switch -- always runs)",
+        "INFORMATIONAL", "No -- INFORMATIONAL categories are never listed in full, "
+        "not even via --log-full",
+        '--',
     ),
     CategoryRow(
         "Unfixable oversized field/base address",
@@ -303,19 +302,17 @@ BIB_ROWS = [
         "Dangling 880 $6 link", "Flagged only, no change",
         "**No** (`--check-dangling-880-links` to enable)",
         "`dangling_880_link`", "INFORMATIONAL",
-        "No (header + count always shown; full per-record list via --log-full dangling_880_link or "
-        "--log-informational)",
-        "`--check-dangling-880-links`; `--log-informational` "
-        "(detect-only, no fix switch)",
+        "No -- INFORMATIONAL categories are never listed in full, "
+        "not even via --log-full",
+        '`--check-dangling-880-links`',
     ),
     CategoryRow(
         "Invalid ISBN/ISSN checksum", "Flagged only, no change",
         "**No** (`--check-isbn-issn-checksum` to enable)",
         "`invalid_isbn_issn_checksum`", "INFORMATIONAL",
-        "No (header + count always shown; full per-record list via --log-full "
-        "invalid_isbn_issn_checksum or --log-informational)",
-        "`--check-isbn-issn-checksum`; `--log-informational` "
-        "(detect-only, no fix switch)",
+        "No -- INFORMATIONAL categories are never listed in full, "
+        "not even via --log-full",
+        '`--check-isbn-issn-checksum`',
     ),
     CategoryRow(
         "Duplicate identifier across records", "Flagged only, no change",
@@ -338,8 +335,8 @@ HOLDINGS_ROWS = [
     CategoryRow(
         "Mojibake fix", "Re-decoded field data", "Yes, always",
         "`fixed_mojibake`", "INFORMATIONAL",
-        "No (header + count always shown; full per-record list "
-        "via --log-full fixed_mojibake or --log-informational)",
+        "No -- INFORMATIONAL categories are never listed in full, "
+        "not even via --log-full",
         "-- (no switch -- always runs and always logged)",
     ),
     CategoryRow(
@@ -350,17 +347,16 @@ HOLDINGS_ROWS = [
     ),
     CategoryRow(
         "$9 -> $0 normalization", "Renamed subfield code", "Yes, always",
-        "`normalized_subfield_9_to_0`", "INFORMATIONAL", "No (header + count always shown; full "
-                                                         "per-record list via --log-full "
-                                                         "normalized_subfield_9_to_0 or "
-                                                         "--log-informational)",
+        "`normalized_subfield_9_to_0`", "INFORMATIONAL",
+        "No -- INFORMATIONAL categories are never listed in full, "
+        "not even via --log-full",
         "-- (no switch -- always runs and always logged)",
     ),
     CategoryRow(
         "Smart-character normalization", "Replaced characters",
         "Yes, always", "`normalized_smart_characters`", "INFORMATIONAL",
-        "No (header + count always shown; full per-record list via --log-full "
-        "normalized_smart_characters or --log-informational)",
+        "No -- INFORMATIONAL categories are never listed in full, "
+        "not even via --log-full",
         "-- (no switch -- always runs and always logged)",
     ),
     CategoryRow(
@@ -370,10 +366,9 @@ HOLDINGS_ROWS = [
         "Corrected code/data split -- runs before invalid-code removal "
         "below, so these are recovered instead of discarded",
         "Yes, always", "`fixed_misplaced_subfield_code`", "INFORMATIONAL",
-        "No (header + count always shown; full per-record list via --log-full "
-        "fixed_misplaced_subfield_code or --log-informational)",
-        "`--log-full fixed_misplaced_subfield_code` (the fix itself always "
-        "runs regardless)",
+        "No -- INFORMATIONAL categories are never listed in full, "
+        "not even via --log-full",
+        '--',
     ),
     CategoryRow(
         "Invalid subfield code removal", "Removed subfield", "Yes, always",
@@ -387,8 +382,8 @@ HOLDINGS_ROWS = [
     CategoryRow(
         "Placeholder 008 added (32-byte blank)", "Added default field",
         "Yes, always", "`added_default_holdings_008`", "INFORMATIONAL",
-        "No (header + count always shown; full per-record list via --log-full "
-        "added_default_holdings_008 or --log-informational)",
+        "No -- INFORMATIONAL categories are never listed in full, "
+        "not even via --log-full",
         "-- (no switch -- always runs and always logged)",
     ),
     CategoryRow(
@@ -484,9 +479,9 @@ HOLDINGS_ROWS = [
         "852 (Location) missing $h (call number) entirely",
         "Flagged only, field left completely untouched -- nothing to "
         "remove", "detect-only", "`missing_call_number`", "INFORMATIONAL",
-        "No (header + count always shown; full per-record list via --log-full "
-        "missing_call_number or --log-informational)",
-        "`--log-full missing_call_number`",
+        "No -- INFORMATIONAL categories are never listed in full, "
+        "not even via --log-full",
+        '--',
     ),
     CategoryRow(
         "852 $a/$b/$c all missing/empty/punctuation-only (no usable "
@@ -503,8 +498,8 @@ HOLDINGS_ROWS = [
     CategoryRow(
         '852 $c placeholder ("Migration") added', "Added subfield",
         "**Yes** (`--no-fix-missing-852c` to disable)", "`added_missing_852c`",
-        "INFORMATIONAL", "No (header + count always shown; full per-record list via "
-                         "--log-full added_missing_852c or --log-informational)",
+        "INFORMATIONAL", "No -- INFORMATIONAL categories are never listed in full, "
+        "not even via --log-full",
         "`--no-fix-missing-852c`",
     ),
     CategoryRow(
@@ -517,9 +512,9 @@ HOLDINGS_ROWS = [
     ),
     CategoryRow(
         "Invalid (non-numeric) tag -> 9XX rename", "Renamed field tag",
-        "Yes, always", "`invalid_tag`", "INFORMATIONAL", "No (header + count always shown; full "
-                                                         "per-record list via --log-full "
-                                                         "invalid_tag or --log-informational)",
+        "Yes, always", "`invalid_tag`", "INFORMATIONAL",
+        "No -- INFORMATIONAL categories are never listed in full, "
+        "not even via --log-full",
         "-- (no switch -- always runs and always logged)",
     ),
     CategoryRow(
@@ -542,9 +537,9 @@ HOLDINGS_ROWS = [
         "the same problem (see the $h and $b/$c rows above)",
         "Subfield removed", "Yes, always", "`removed_null_identifier`",
         "INFORMATIONAL",
-        "No (header + count always shown; full per-record list via --log-full "
-        "removed_null_identifier or --log-informational)",
-        "`--log-full removed_null_identifier`",
+        "No -- INFORMATIONAL categories are never listed in full, "
+        "not even via --log-full",
+        '--',
     ),
     CategoryRow(
         "Missing 004 (link to bib record)", "Flagged only, no change",
@@ -553,10 +548,9 @@ HOLDINGS_ROWS = [
     ),
     CategoryRow(
         "Multiple 004 fields", "Flagged only, no change", "detect-only",
-        "`holdings_multiple_004`", "INFORMATIONAL", "No (header + count always shown; "
-                                                    "full per-record list via --log-full "
-                                                    "holdings_multiple_004 or "
-                                                    "--log-informational)",
+        "`holdings_multiple_004`", "INFORMATIONAL",
+        "No -- INFORMATIONAL categories are never listed in full, "
+        "not even via --log-full",
         "-- (detect-only, no switch)",
     ),
     CategoryRow(

@@ -473,8 +473,8 @@ def build_bib_records() -> list[bytes]:
     # removed_null_identifier: empty $a immediately followed by another
     # subfield -- seen in the wild as 035 $a$0<local number>, where
     # whatever produced the file split a single value across two
-    # subfields and left the first one empty. Only ever logged in full
-    # via --log-full/--log-informational (see docs/REPAIR_CATEGORIES.md);
+    # subfields and left the first one empty. INFORMATIONAL -- header +
+    # count only, never listed in full (see docs/REPAIR_CATEGORIES.md);
     # the fix itself always runs.
     records.append(_record(_BIB_LEADER, [
         m.Field_("001", None, None, content="ks-nullid"),

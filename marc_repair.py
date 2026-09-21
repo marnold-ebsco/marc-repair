@@ -2586,9 +2586,8 @@ def fix_852_call_number(parsed: ParsedRecord) -> tuple[list[str], list[str]]:
         bad subfield to remove, just nothing there -- so the field is
         left completely untouched (not even its other subfields), and
         returned in `missing_details` instead (category
-        "missing_call_number", INFORMATIONAL; header+count always
-        shown, full per-record listing only via --log-full/
-        --log-informational -- see `repair_holdings_records`).
+        "missing_call_number", INFORMATIONAL; header+count only --
+        INFORMATIONAL categories are never listed in full).
 
     No-op (in both lists) for an 852 that already has a usable $h.
     """
@@ -4248,8 +4247,9 @@ _CATEGORY_DISPLAY_NOTE: dict[str, str] = {
 #: know exactly which records), or the finding is something a cataloger
 #: would plausibly want to go fix one-by-one (e.g. a broken URL) rather
 #: than accept in bulk. Everything else defaults to header+count only
-#: -- get the full list for any of those via --log-full (repeatable)
-#: or --log-informational (every currently-INFORMATIONAL category).
+#: -- get the full list for any of those via --log-full (repeatable).
+#: Note this can never include an INFORMATIONAL category, though --
+#: see `write_log`.
 #: Deliberately excludes a couple of categories that are both
 #: individually real and can be very high-volume across a file,
 #: unlikely to ever be individually fixed (dangling_880_link,
@@ -4322,11 +4322,19 @@ def write_log(
     matching record is listed in full only if `category` is in
     `full_categories` (defaults to `_ALWAYS_FULL_CATEGORIES` when not
     given); otherwise the header's count is all a reader gets, and
-    --log-full/--log-informational are how they'd ask for the rest.
-    This split point is the whole reason `_ALWAYS_FULL_CATEGORIES` is
-    a small curated set rather than "everything": a run with (say)
-    50,000 padded-indicator fixes and 3 doubled-proxy-URLs should make
-    both facts easy to find, not bury the 3 under the 50,000."""
+    --log-full is how they'd ask for the rest. This split point is the
+    whole reason `_ALWAYS_FULL_CATEGORIES` is a small curated set
+    rather than "everything": a run with (say) 50,000 padded-indicator
+    fixes and 3 doubled-proxy-URLs should make both facts easy to
+    find, not bury the 3 under the 50,000.
+
+    INFORMATIONAL categories never get listed in full, regardless of
+    `full_categories` -- they're the highest-volume, least-actionable
+    findings (typographic normalization, MARC-8 transcoding, and the
+    like), so a header+count is genuinely all there is to say about
+    them. A category worth a cataloger's individual attention belongs
+    in FIXED/REQUIRES ATTENTION or NEEDS REVIEW instead, not forced
+    full while still sitting in INFORMATIONAL."""
     if full_categories is None:
         full_categories = _ALWAYS_FULL_CATEGORIES
     groups: dict[tuple[int, str, str], list[LogEntry]] = {}
@@ -4348,7 +4356,7 @@ def write_log(
             description = _CHECK_DESCRIPTIONS.get(category, "(no description available)")
             fh.write(f"=== {description} ===\n")
             fh.write(f"=== {len(group)} record(s) ===\n")
-            if category in full_categories:
+            if category in full_categories and label != "INFORMATIONAL":
                 for e in group:
                     fh.write(e.render() + "\n")
 
@@ -4494,7 +4502,6 @@ def repair_holdings_records(
     log_path: str,
     fix_missing_852c: bool = True,
     full_categories: set[str] | None = None,
-    log_informational: bool = False,
     on_progress: Callable[[int], None] | None = None,
     on_record: Callable[[int], None] | None = None,
     on_estimate: Callable[[int, int], None] | None = None,
@@ -4913,10 +4920,6 @@ def repair_holdings_records(
     if fix_missing_852c:
         active_categories.add("added_missing_852c")
     resolved_full_categories = _ALWAYS_FULL_CATEGORIES | (full_categories or set())
-    if log_informational:
-        resolved_full_categories |= {
-            c for c in active_categories if _section_for_category(c)[1] == "INFORMATIONAL"
-        }
     write_log(
         log_path, log_entries, active_categories=active_categories,
         full_categories=resolved_full_categories,
@@ -5107,20 +5110,9 @@ def main(argv: list[str] | None = None) -> int:
         "content problem (e.g. a broken URL) a cataloger would "
         "plausibly want to go fix one-by-one -- are already listed in "
         "full without needing this; use it for anything else you need "
-        "the per-record detail on. See also --log-informational",
-    )
-    parser.add_argument(
-        "--log-informational",
-        dest="log_informational",
-        action="store_true",
-        default=False,
-        help="list every matching record (like --log-full) for every "
-        "category currently in the INFORMATIONAL section -- typically "
-        "the highest-volume categories (e.g. every MARC-8 record "
-        "transcoded), which is why they aren't listed in full by "
-        "default; the header + count for each is written either way "
-        "(see --log). The underlying fixes/detections always run and "
-        "affect the output regardless of this flag",
+        "the per-record detail on. Has no effect on a category "
+        "currently in the INFORMATIONAL section, which is never "
+        "listed in full",
     )
     parser.add_argument(
         "--no-fix-misplaced-subfield-codes",
@@ -5253,9 +5245,8 @@ def main(argv: list[str] | None = None) -> int:
         "fails the standard checksum for its length. Off by default "
         "since it's a detect-only, no-fix check on data that's often "
         "already correct; pass this flag to have it run and be logged "
-        "as invalid_isbn_issn_checksum (header + count always shown; "
-        "--log-full invalid_isbn_issn_checksum or --log-informational "
-        "for the full per-record list)",
+        "as invalid_isbn_issn_checksum -- INFORMATIONAL, so only a "
+        "header + count, never the full per-record list",
     )
     parser.add_argument(
         "--check-dangling-880-links",
@@ -5263,9 +5254,9 @@ def main(argv: list[str] | None = None) -> int:
         help="detect an 880 field whose $6 linking subfield references "
         "a tag that doesn't exist elsewhere in the record. Off by "
         "default since it's a detect-only, no-fix check; pass this "
-        "flag to have it run and be logged as dangling_880_link "
-        "(header + count always shown; --log-full dangling_880_link "
-        "or --log-informational for the full per-record list)",
+        "flag to have it run and be logged as dangling_880_link -- "
+        "INFORMATIONAL, so only a header + count, never the full "
+        "per-record list",
     )
     parser.add_argument(
         "--no-normalize-smart-characters",
@@ -5344,7 +5335,6 @@ def main(argv: list[str] | None = None) -> int:
                 holdings_log_path,
                 fix_missing_852c=args.fix_missing_852c,
                 full_categories=set(args.log_full),
-                log_informational=args.log_informational,
                 on_progress=holdings_progress.on_progress,
                 on_record=holdings_progress.maybe_print,
                 on_estimate=holdings_progress.maybe_print_estimate,
@@ -5396,7 +5386,6 @@ def main(argv: list[str] | None = None) -> int:
             log_path,
             fix_missing_852c=args.fix_missing_852c,
             full_categories=set(args.log_full),
-            log_informational=args.log_informational,
             on_progress=progress.on_progress,
             on_record=progress.maybe_print,
             on_estimate=progress.maybe_print_estimate,
@@ -5844,16 +5833,6 @@ def main(argv: list[str] | None = None) -> int:
         active_categories.add("invalid_tag")
 
     resolved_full_categories = _ALWAYS_FULL_CATEGORIES | set(args.log_full)
-    if args.log_informational:
-        # --log-informational: list every record for every currently
-        # INFORMATIONAL category in full, on top of whatever
-        # --log-full already named -- the underlying fixes/detections
-        # ran and affected the output regardless of this flag either
-        # way; it only controls what gets listed (a header+count for
-        # every category is always written -- see `write_log`).
-        resolved_full_categories |= {
-            c for c in active_categories if _section_for_category(c)[1] == "INFORMATIONAL"
-        }
 
     # Not-fixable/not-fixed-in-this-run issues first (still need your
     # attention in the output), fixed ones last; within each, grouped

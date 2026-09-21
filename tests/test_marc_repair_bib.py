@@ -450,7 +450,9 @@ class TestTranscodeMarc8:
         assert converted == "כתאב אלחגה"
         assert "\x1b" not in converted  # no leftover raw escape byte
 
-    def test_log_informational_flag_enables_transcoded_marc8_logging(self, tmp_path):
+    def test_transcoded_marc8_stays_summary_only_even_with_log_full(self, tmp_path):
+        # transcoded_marc8 is INFORMATIONAL -- never listed in full, not
+        # even via --log-full, which would work for any other category.
         pytest.importorskip("pymarc")
         leader = list(_SYNTHETIC_LEADER)
         leader[9] = " "
@@ -467,11 +469,12 @@ class TestTranscodeMarc8:
         out = tmp_path / "out.mrc"
         log = tmp_path / "run.log"
         rc = m.main([
-            str(src), "-o", str(out), "--log-informational", "--log", str(log),
+            str(src), "-o", str(out), "--log-full", "transcoded_marc8", "--log", str(log),
         ])
         assert rc == 0
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert _detail_line_marker("transcoded_marc8").search(content)
+        assert "=== INFORMATIONAL: transcoded_marc8 ===" in content
+        assert not _detail_line_marker("transcoded_marc8").search(content)
 
     def test_no_transcode_marc8_flag_leaves_it_as_marc8(self, tmp_path):
         leader = list(_SYNTHETIC_LEADER)
@@ -805,7 +808,9 @@ class TestStripNullIdentifiersBibPipeline:
         assert not any(code == "a" for code, _ in f035.subfields)
         assert ("0", "COLOFB  1492") in f035.subfields
 
-    def test_logged_when_flag_enabled(self, tmp_path):
+    def test_stays_summary_only_even_with_log_full(self, tmp_path):
+        # removed_null_identifier is INFORMATIONAL -- never listed in
+        # full, not even via --log-full.
         src = tmp_path / "bib.mrc"
         src.write_bytes(m.assemble_marc(self._record_with_empty_035_a()))
         out = tmp_path / "out.mrc"
@@ -816,7 +821,7 @@ class TestStripNullIdentifiersBibPipeline:
         ])
         assert rc == 0
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert _detail_line_marker("removed_null_identifier").search(content)
+        assert not _detail_line_marker("removed_null_identifier").search(content)
         assert "=== INFORMATIONAL: removed_null_identifier ===" in content
 
 
@@ -1046,7 +1051,9 @@ class TestFixMisplacedSubfieldCodes:
         ])
         assert rc == 0
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert _detail_line_marker("fixed_misplaced_subfield_code").search(content)
+        # fixed_misplaced_subfield_code is INFORMATIONAL -- never listed
+        # in full, not even via --log-full.
+        assert not _detail_line_marker("fixed_misplaced_subfield_code").search(content)
         assert "=== INFORMATIONAL: fixed_misplaced_subfield_code ===" in content
         assert not _detail_line_marker("removed_invalid_subfield").search(content)
         parsed_out = m.read_intact_record(m._read_text(str(out)))
@@ -1255,17 +1262,21 @@ class TestLeaderEntryMapCorrection:
         raw[20:24] = b"45x0"
         return bytes(raw)
 
-    def test_log_informational_flag_enables_leader_entry_map_fixed_logging(self, tmp_path):
+    def test_stays_summary_only_even_with_log_full(self, tmp_path):
+        # leader_entry_map_fixed is INFORMATIONAL -- never listed in
+        # full, not even via --log-full.
         src = tmp_path / "badmap.mrc"
         src.write_bytes(self._corrupted_entry_map_bytes())
         out = tmp_path / "out.mrc"
         log = tmp_path / "run.log"
         rc = m.main([
-            str(src), "-o", str(out), "--log-informational", "--log", str(log),
+            str(src), "-o", str(out), "--log-full", "leader_entry_map_fixed",
+            "--log", str(log),
         ])
         assert rc == 0
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert _detail_line_marker("leader_entry_map_fixed").search(content)
+        assert not _detail_line_marker("leader_entry_map_fixed").search(content)
+        assert "=== INFORMATIONAL: leader_entry_map_fixed ===" in content
 
     def _corrupted_entry_map_bytes_invalid_utf8(self):
         # Same idea as `_corrupted_entry_map_bytes`, but the corrupted byte
@@ -1577,7 +1588,7 @@ class TestUnfixableErrorFile:
         )
         out = tmp_path / "out.mrc"
         log = tmp_path / "run.log"
-        rc = m.main([str(src), "-o", str(out), "--log", str(log), "--log-informational"])
+        rc = m.main([str(src), "-o", str(out), "--log", str(log)])
         assert rc == 1
         content = _resolve_log(log).read_text(encoding="utf-8")
         assert content.index("=== UNFIXABLE") < content.index("=== INFORMATIONAL")
@@ -1774,11 +1785,15 @@ class TestFixInvalidTags:
         src.write_bytes(m.assemble_marc(parsed))
         out = tmp_path / "out.mrc"
         log = tmp_path / "run.log"
-        rc = m.main([str(src), "-o", str(out), "--log-informational", "--log", str(log)])
+        rc = m.main([
+            str(src), "-o", str(out), "--log-full", "invalid_tag", "--log", str(log),
+        ])
         assert rc == 0
         content = _resolve_log(log).read_text(encoding="utf-8")
+        # invalid_tag is INFORMATIONAL -- never listed in full, not
+        # even via --log-full.
         assert "=== INFORMATIONAL: invalid_tag ===" in content
-        assert _detail_line_marker("invalid_tag").search(content)
+        assert not _detail_line_marker("invalid_tag").search(content)
         assert not _detail_line_marker("unfixed_non_numeric_tag").search(content)
         results = m.repair_text(m._read_text(str(out)))
         tags = [f.tag for f in results[0].fields]
@@ -1955,8 +1970,8 @@ class TestRemap999To945:
         log = tmp_path / "run.log"
         rc = m.main([str(src), "-o", str(out), "--remap-999-to-945", "--log", str(log)])
         assert rc == 0
-        # runs, header + count always shown, but not listed in full
-        # unless --log-full remapped_999_to_945 (or --log-informational)
+        # runs, header + count always shown, but never listed in full
+        # (INFORMATIONAL) -- not even via --log-full
         content = _resolve_log(log).read_text(encoding="utf-8")
         assert not _detail_line_marker("remapped_999_to_945").search(content)
         results = m.repair_text(m._read_text(str(out)))
@@ -1966,7 +1981,9 @@ class TestRemap999To945:
         assert field.indicators == "ff"
         assert field.subfields == [("i", "12345"), ("l", "MAIN")]
 
-    def test_log_999_to_945_flag_enables_logging(self, tmp_path):
+    def test_stays_summary_only_even_with_log_full(self, tmp_path):
+        # remapped_999_to_945 is INFORMATIONAL -- never listed in full,
+        # not even via --log-full.
         parsed = m.ParsedRecord(
             leader=_SYNTHETIC_LEADER,
             entries=[],
@@ -1981,11 +1998,12 @@ class TestRemap999To945:
         log = tmp_path / "run.log"
         rc = m.main([
             str(src), "-o", str(out), "--remap-999-to-945",
-            "--log-informational", "--log", str(log),
+            "--log-full", "remapped_999_to_945", "--log", str(log),
         ])
         assert rc == 0
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert _detail_line_marker("remapped_999_to_945").search(content)
+        assert not _detail_line_marker("remapped_999_to_945").search(content)
+        assert "=== INFORMATIONAL: remapped_999_to_945 ===" in content
 
 
 # ---------------------------------------------------------------------------
@@ -2022,7 +2040,9 @@ class TestNormalizeSubfield9To0:
         assert details == []
         assert parsed.fields[0].subfields == [("a", "Subject")]
 
-    def test_log_informational_flag_enables_normalized_subfield_9_to_0_logging(self, tmp_path):
+    def test_stays_summary_only_even_with_log_full(self, tmp_path):
+        # normalized_subfield_9_to_0 is INFORMATIONAL -- never listed
+        # in full, not even via --log-full.
         parsed = m.ParsedRecord(
             leader=_SYNTHETIC_LEADER,
             entries=[],
@@ -2036,11 +2056,13 @@ class TestNormalizeSubfield9To0:
         out = tmp_path / "out.mrc"
         log = tmp_path / "run.log"
         rc = m.main([
-            str(src), "-o", str(out), "--log-informational", "--log", str(log),
+            str(src), "-o", str(out), "--log-full", "normalized_subfield_9_to_0",
+            "--log", str(log),
         ])
         assert rc == 0
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert _detail_line_marker("normalized_subfield_9_to_0").search(content)
+        assert not _detail_line_marker("normalized_subfield_9_to_0").search(content)
+        assert "=== INFORMATIONAL: normalized_subfield_9_to_0 ===" in content
         results = m.repair_text(m._read_text(str(out)))
         field = next(f for f in results[0].fields if f.tag == "650")
         assert field.subfields == [("a", "Subject"), ("0", "123456")]
@@ -2111,7 +2133,9 @@ class TestNormalizeSmartCharacters:
         m.normalize_smart_characters(parsed)
         assert parsed.fields[0].subfields == [("a", "a bc")]
 
-    def test_log_informational_flag_enables_normalized_smart_characters_logging(self, tmp_path):
+    def test_stays_summary_only_even_with_log_full(self, tmp_path):
+        # normalized_smart_characters is INFORMATIONAL -- never listed
+        # in full, not even via --log-full.
         parsed = m.ParsedRecord(
             leader=_SYNTHETIC_LEADER,
             entries=[],
@@ -2125,11 +2149,13 @@ class TestNormalizeSmartCharacters:
         out = tmp_path / "out.mrc"
         log = tmp_path / "run.log"
         rc = m.main([
-            str(src), "-o", str(out), "--log-informational", "--log", str(log),
+            str(src), "-o", str(out), "--log-full", "normalized_smart_characters",
+            "--log", str(log),
         ])
         assert rc == 0
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert _detail_line_marker("normalized_smart_characters").search(content)
+        assert not _detail_line_marker("normalized_smart_characters").search(content)
+        assert "=== INFORMATIONAL: normalized_smart_characters ===" in content
         results = m.repair_text(m._read_text(str(out)))
         title_field = next(f for f in results[0].fields if f.tag == "520")
         assert title_field.subfields == [("a", "It's great.")]
@@ -2641,44 +2667,6 @@ def _run_cli_default_case(case: "_CliDefaultCase", tmp_path):
     assert case.verify(results)
 
 
-_INFORMATIONAL_BY_DEFAULT_CASES = [
-    _CliDefaultCase(
-        id="leader_byte_defaulted",
-        build=lambda: m.assemble_marc(m.ParsedRecord(
-            leader=_VALID_LEADER[:5] + "0" + _VALID_LEADER[6:],
-            entries=[],
-            fields=[m.Field_("008", None, None, content="x" * 40)],
-        )),
-        extra_cli_args=["--log-informational"],
-        required_log_substrings=[
-            "=== INFORMATIONAL: leader_byte_defaulted ===",
-            _detail_line_marker("leader_byte_defaulted"),
-        ],
-        verify=lambda results: results[0].leader[5] == "c",
-    ),
-    _CliDefaultCase(
-        id="fixed_mojibake",
-        build=lambda: m.assemble_marc(m.ParsedRecord(
-            leader=_SYNTHETIC_LEADER,
-            entries=[],
-            fields=[
-                m.Field_("008", None, None, content="x" * 40),
-                m.Field_("500", "  ", [("a", "GroÃŸbritannien")]),
-            ],
-        )),
-        extra_cli_args=["--log-informational"],
-        required_log_substrings=[
-            "=== INFORMATIONAL: fixed_mojibake (character encoding issue) ===",
-            _detail_line_marker("fixed_mojibake"),
-        ],
-        verify=lambda results: (
-            next(f for f in results[0].fields if f.tag == "500").subfields
-            == [("a", "Großbritannien")]
-        ),
-    ),
-]
-
-
 def _build_corrupted_entry_map_record() -> bytes:
     parsed = m.ParsedRecord(
         leader=_SYNTHETIC_LEADER,
@@ -2691,6 +2679,36 @@ def _build_corrupted_entry_map_record() -> bytes:
 
 
 _NOT_LOGGED_UNLESS_FLAGGED_CASES = [
+    _CliDefaultCase(
+        id="leader_byte_defaulted",
+        build=lambda: m.assemble_marc(m.ParsedRecord(
+            leader=_VALID_LEADER[:5] + "0" + _VALID_LEADER[6:],
+            entries=[],
+            fields=[m.Field_("008", None, None, content="x" * 40)],
+        )),
+        required_log_substrings=["=== INFORMATIONAL: leader_byte_defaulted ==="],
+        forbidden_log_substrings=[_detail_line_marker("leader_byte_defaulted")],
+        verify=lambda results: results[0].leader[5] == "c",
+    ),
+    _CliDefaultCase(
+        id="fixed_mojibake",
+        build=lambda: m.assemble_marc(m.ParsedRecord(
+            leader=_SYNTHETIC_LEADER,
+            entries=[],
+            fields=[
+                m.Field_("008", None, None, content="x" * 40),
+                m.Field_("500", "  ", [("a", "GroÃŸbritannien")]),
+            ],
+        )),
+        required_log_substrings=[
+            "=== INFORMATIONAL: fixed_mojibake (character encoding issue) ===",
+        ],
+        forbidden_log_substrings=[_detail_line_marker("fixed_mojibake")],
+        verify=lambda results: (
+            next(f for f in results[0].fields if f.tag == "500").subfields
+            == [("a", "Großbritannien")]
+        ),
+    ),
     _CliDefaultCase(
         id="leader_entry_map_fixed",
         build=_build_corrupted_entry_map_record,
@@ -2852,13 +2870,9 @@ class TestFixInvalidBibliographicLevel:
 
 class TestCliDefaultBehaviors:
     """Each fix/detect category runs by default (or not) and gets logged
-    by default (or not) in one of three shapes -- see the case tables
+    by default (or not) in one of two shapes -- see the case tables
     above. This exercises that CLI wiring once per category without
     repeating the same four-step test body for each one."""
-
-    @pytest.mark.parametrize("case", _INFORMATIONAL_BY_DEFAULT_CASES, ids=lambda c: c.id)
-    def test_runs_by_default_and_logged_as_informational(self, case, tmp_path):
-        _run_cli_default_case(case, tmp_path)
 
     @pytest.mark.parametrize("case", _NOT_LOGGED_UNLESS_FLAGGED_CASES, ids=lambda c: c.id)
     def test_runs_by_default_but_not_logged_unless_flagged(self, case, tmp_path):

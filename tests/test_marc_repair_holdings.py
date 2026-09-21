@@ -276,7 +276,9 @@ class TestRepairHoldingsRecords:
         f852 = next(f for f in parsed.fields if f.tag == "852")
         assert ("z", " Microfilm: 1983-1999") in f852.subfields
 
-    def test_misplaced_subfield_code_logged_when_flag_enabled(self, tmp_path):
+    def test_misplaced_subfield_code_stays_summary_only_even_with_log_full(self, tmp_path):
+        # fixed_misplaced_subfield_code is INFORMATIONAL -- never listed
+        # in full, not even via full_categories.
         fields = [
             m.Field_("004", None, None, content="ocm123"),
             m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
@@ -292,7 +294,8 @@ class TestRepairHoldingsRecords:
             str(src), str(out), str(log), full_categories={"fixed_misplaced_subfield_code"},
         )
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert _detail_line_marker("fixed_misplaced_subfield_code").search(content)
+        assert not _detail_line_marker("fixed_misplaced_subfield_code").search(content)
+        assert "INFORMATIONAL: fixed_misplaced_subfield_code" in content
 
     def test_null_identifier_removed_but_not_logged_by_default(self, tmp_path):
         # $b is the null identifier under test, on a field OTHER than
@@ -318,7 +321,9 @@ class TestRepairHoldingsRecords:
         assert not any(code == "b" for code, _ in f500.subfields)
         assert ("a", "Main Library") in f500.subfields
 
-    def test_null_identifier_logged_when_flag_enabled(self, tmp_path):
+    def test_null_identifier_stays_summary_only_even_with_log_full(self, tmp_path):
+        # removed_null_identifier is INFORMATIONAL -- never listed in
+        # full, not even via full_categories.
         fields = [
             m.Field_("004", None, None, content="ocm123"),
             m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
@@ -332,7 +337,7 @@ class TestRepairHoldingsRecords:
             str(src), str(out), str(log), full_categories={"removed_null_identifier"},
         )
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert _detail_line_marker("removed_null_identifier").search(content)
+        assert not _detail_line_marker("removed_null_identifier").search(content)
         assert "=== INFORMATIONAL:" in content
 
     def test_escape_sequence_flagged_not_transcoded(self, tmp_path):
@@ -468,9 +473,7 @@ class TestRepairHoldingsRecords:
             m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
             m.Field_("852", "  ", [("a", "Main Library"), ("h", "ABC123")]),
         ]
-        result, out, log = self._run(
-            tmp_path, [self._holdings_record(fields=fields)], log_informational=True,
-        )
+        result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
         assert result["not_fixed"] == 0  # informational, not NOT FIXED
         content = _resolve_log(log).read_text(encoding="utf-8")
         assert "holdings_multiple_004" in content
@@ -616,11 +619,10 @@ class TestRepairHoldingsRecords:
         out = tmp_path / "out.mrc"
         log = tmp_path / "out.log"
         result = m.repair_holdings_records(
-            str(src), str(out), str(log), fix_missing_852c=True, log_informational=True,
+            str(src), str(out), str(log), fix_missing_852c=True,
         )
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert "added_missing_852c" in content
-        assert "Migration" in content
+        assert "=== INFORMATIONAL: added_missing_852c ===" in content
         parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
         field852 = next(f for f in parsed.fields if f.tag == "852")
         assert ("c", "Migration") in field852.subfields
@@ -787,7 +789,9 @@ class TestRepairHoldingsRecords:
         f852 = next(f for f in parsed.fields if f.tag == "852")
         assert ("a", "Main Library") in f852.subfields
 
-    def test_852_missing_h_logged_informational_when_flag_enabled(self, tmp_path):
+    def test_852_missing_h_stays_summary_only_even_with_log_full(self, tmp_path):
+        # missing_call_number is INFORMATIONAL -- never listed in full,
+        # not even via full_categories.
         fields = [
             m.Field_("004", None, None, content="ocm123"),
             m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
@@ -800,7 +804,7 @@ class TestRepairHoldingsRecords:
             str(src), str(out), str(log), full_categories={"missing_call_number"},
         )
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert _detail_line_marker("missing_call_number").search(content)
+        assert not _detail_line_marker("missing_call_number").search(content)
         assert "=== INFORMATIONAL:" in content
         assert not _detail_line_marker("removed_bad_call_number").search(content)
         parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))

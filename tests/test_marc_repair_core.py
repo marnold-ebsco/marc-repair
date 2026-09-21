@@ -530,13 +530,19 @@ class TestWriteLog:
         assert len(not_fixed_lines) == 2
 
     def test_appends_rather_than_overwrites(self, tmp_path):
+        # fixed=False (rather than True) so these synthetic, unrecognized
+        # categories fall back to NOT FIXED rather than INFORMATIONAL --
+        # INFORMATIONAL categories are never listed in full (see
+        # `write_log`), which would defeat the point of this test.
         log_path = tmp_path / "run.log"
         full = {"cat_a", "cat_b"}
         m.write_log(
-            str(log_path), [m.LogEntry("cat_a", True, "t1", 0, "", "first")], full_categories=full,
+            str(log_path), [m.LogEntry("cat_a", False, "t1", 0, "", "first")],
+            full_categories=full,
         )
         m.write_log(
-            str(log_path), [m.LogEntry("cat_b", True, "t2", 0, "", "second")], full_categories=full,
+            str(log_path), [m.LogEntry("cat_b", False, "t2", 0, "", "second")],
+            full_categories=full,
         )
         content = log_path.read_text(encoding="utf-8")
         assert "first" in content
@@ -589,8 +595,11 @@ class TestWriteLog:
             _category_header_line(lines, c) for c in informational_categories
         ]
         assert not_fixed_header < fixed_header < dup_header < min(informational_headers)
+        # naming these categories in full_categories has no effect --
+        # INFORMATIONAL categories are never listed in full (see
+        # `write_log`)
         info_lines = [ln for ln in lines[min(informational_headers):] if ln.startswith("\t")]
-        assert len(info_lines) == 4
+        assert info_lines == []
 
     def test_blank_line_before_each_header_except_the_first(self, tmp_path):
         entries = [
@@ -988,10 +997,10 @@ class TestHoldingsMisrouteGuard:
 
 
 # ---------------------------------------------------------------------------
-# --log-informational
+# INFORMATIONAL categories are never listed in full
 # ---------------------------------------------------------------------------
 
-class TestLogInformational:
+class TestInformationalNeverFull:
     def test_omits_informational_section_by_default(self, tmp_path):
         parsed = m.ParsedRecord(
             leader=_SYNTHETIC_LEADER,
@@ -1018,7 +1027,7 @@ class TestLogInformational:
         field = next(f for f in results[0].fields if f.tag == "520")
         assert field.subfields == [("a", "It's great.")]
 
-    def test_log_informational_flag_includes_the_section(self, tmp_path):
+    def test_log_full_cannot_force_an_informational_category_either(self, tmp_path):
         parsed = m.ParsedRecord(
             leader=_SYNTHETIC_LEADER,
             entries=[],
@@ -1031,7 +1040,11 @@ class TestLogInformational:
         src.write_bytes(m.assemble_marc(parsed))
         out = tmp_path / "out.mrc"
         log = tmp_path / "run.log"
-        rc = m.main([str(src), "-o", str(out), "--log-informational", "--log", str(log)])
+        rc = m.main([
+            str(src), "-o", str(out), "--log-full", "normalized_smart_characters",
+            "--log", str(log),
+        ])
         assert rc == 0
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert _detail_line_marker("normalized_smart_characters").search(content)
+        assert "INFORMATIONAL: normalized_smart_characters" in content
+        assert not _detail_line_marker("normalized_smart_characters").search(content)

@@ -135,14 +135,14 @@ left in the main holdings output.
 | Missing any other field | `--ensure-field` (opt-in; you supply the content); logged as `added_field` under **FIXED/REQUIRES ATTENTION** since a human-supplied value is worth double-checking |
 | Missing 008 | Placeholder inserted unconditionally (a fixed, material-type-agnostic default — real content still needs `--ensure-field "008:..."`, which takes priority per-record); every MARC21 record must have an 008, so there's no flag to leave one out; logged in full as `added_default_008` under **FIXED/REQUIRES ATTENTION** for the same reason as `added_default_245` above |
 | Fields missing a required `$a` | Removed by default (see `required_a_tags.txt`, editable); `--no-strip-missing-required-a` to leave them instead; the exact removed content is logged in full as `field_removed_because_missing_a` under **FIXED/REQUIRES ATTENTION** since real data was discarded |
-| Subfield code is a stray space immediately followed by its real, still-present code (e.g. raw `\x1f c2000.` really meaning `$c` "c2000." — a common AACR2-era copyright-date convention, corrupted by one extra inserted space; seen at real scale in production data) | Corrected by default, before invalid-code removal below gets a chance to discard it — nothing is guessed or lost, the real code is simply the very next character; `--no-fix-misplaced-subfield-codes` to leave it for invalid-code removal to strip instead. Not logged per-record by default (this can be a large fraction of a file with this defect) — pass `--log-fixed-misplaced-subfield-code` to log each one as `fixed_misplaced_subfield_code` (INFORMATIONAL) |
+| Subfield code is a stray space immediately followed by its real, still-present code (e.g. raw `\x1f c2000.` really meaning `$c` "c2000." — a common AACR2-era copyright-date convention, corrupted by one extra inserted space; seen at real scale in production data) | Corrected by default, before invalid-code removal below gets a chance to discard it — nothing is guessed or lost, the real code is simply the very next character; `--no-fix-misplaced-subfield-codes` to leave it for invalid-code removal to strip instead. Logged as `fixed_misplaced_subfield_code` (INFORMATIONAL — header + count only, never listed in full) |
 | Invalid subfield codes (not `[a-z0-9]`) | Removed unconditionally — no flag leaves these in place, since there's no safe way to guess what an unusable code should have been; the exact removed content is logged in full as `removed_invalid_subfield` under **FIXED/REQUIRES ATTENTION** since real data was discarded |
 | A field where every subfield's data is empty (any tag) | Removed by default (not logged since nothing is discarded); `--no-strip-empty-fields` to leave them instead |
 | Data field with 0 or 1 indicator characters instead of 2 | Padded with spaces by default; `--no-fix-bad-indicators` to leave it instead (such a field then fails Mode 1 and falls back to Mode 2/UNRESOLVED); logged as `padded_indicators` under **FIXED/REQUIRES ATTENTION** |
-| `999` fields (Sierra's internal item-linking field, not part of MARC21) | Left as-is by default (not every source is Sierra-originated, and it's not a structural defect); pass `--remap-999-to-945` to retag every one to `945` with indicators `ff` (a locally-defined field other systems will actually accept) instead. Not logged by default even when enabled (a record can carry many 999s) — also pass `--log-999-to-945` to log each one as `remapped_999_to_945` (INFORMATIONAL) |
-| `$9` subfields (legacy/local stand-in for `$0`) | Rewritten to `$0` by default; `--no-normalize-subfield-9` to leave as-is. Not logged per-record by default (this can be nearly every record in a file that uses `$9`) — pass `--log-normalized-subfield-9-to-0` to log each one as `normalized_subfield_9_to_0` (INFORMATIONAL) |
-| Typographic "smart" Unicode punctuation (curly quotes, em/en dashes, ellipsis — see table below) | Normalized to plain ASCII by default; `--no-normalize-smart-characters` to leave as-is. Not logged per-record by default (this can be nearly every record in a file with typographic punctuation) — pass `--log-normalized-smart-characters` to log each one as `normalized_smart_characters` (INFORMATIONAL) |
-| Legacy MARC-8/ANSEL encoding | Converted to UTF-8 by default (requires `pymarc`; the run fails loudly if it's missing, rather than silently leaving non-UTF-8 output — install it, or pass `--no-transcode-marc8` if you explicitly want non-UTF-8 records left as-is). Not logged per-record by default (this can be nearly every record in a legacy file) — pass `--log-transcoded-marc8` to log each one as `transcoded_marc8` (INFORMATIONAL) |
+| `999` fields (Sierra's internal item-linking field, not part of MARC21) | Left as-is by default (not every source is Sierra-originated, and it's not a structural defect); pass `--remap-999-to-945` to retag every one to `945` with indicators `ff` (a locally-defined field other systems will actually accept) instead. Logged as `remapped_999_to_945` (INFORMATIONAL — header + count only, never listed in full, since a record can carry many 999s) |
+| `$9` subfields (legacy/local stand-in for `$0`) | Rewritten to `$0` by default; `--no-normalize-subfield-9` to leave as-is. Logged as `normalized_subfield_9_to_0` (INFORMATIONAL — header + count only, never listed in full, since this can be nearly every record in a file that uses `$9`) |
+| Typographic "smart" Unicode punctuation (curly quotes, em/en dashes, ellipsis — see table below) | Normalized to plain ASCII by default; `--no-normalize-smart-characters` to leave as-is. Logged as `normalized_smart_characters` (INFORMATIONAL — header + count only, never listed in full, since this can be nearly every record in a file with typographic punctuation) |
+| Legacy MARC-8/ANSEL encoding | Converted to UTF-8 by default (requires `pymarc`; the run fails loudly if it's missing, rather than silently leaving non-UTF-8 output — install it, or pass `--no-transcode-marc8` if you explicitly want non-UTF-8 records left as-is). Logged as `transcoded_marc8` (INFORMATIONAL — header + count only, never listed in full, since this can be nearly every record in a legacy file) |
 | A tag that isn't 3 numeric digits (e.g. `24A` from directory corruption) | Renamed to an unused tag in the 900-999 locally-defined range by default, picked from tags seen during the normal single pass (no extra full pass — only the rare record needing this gets a second, targeted look afterward); logged as `invalid_tag` (INFORMATIONAL). If every 900-999 tag is already taken elsewhere in the file, there's nowhere left to rename to — the whole field is removed instead (FOLIO can't load a non-numeric tag either way), via a full second pass over the output file since removal changes the record's byte length; logged in full as `unfixed_non_numeric_tag` under **FIXED/REQUIRES ATTENTION**, since real field content is discarded. `--no-fix-invalid-tags` skips the rename attempt entirely, leaving the tag untouched instead of removed (also logged as `unfixed_non_numeric_tag`) — named "unfixed" because neither path actually gives the tag a valid replacement |
 | A URL subfield with a literally duplicated proxy prefix (e.g. an ezproxy wrapper repeated twice) | Always detected and logged in full as `doubled_proxy_url` (NEEDS REVIEW), never auto-fixed — no safe correction to guess |
 | Duplicate record identifiers (same `001`, or `907$a` if it looks like a Sierra bib number, on more than one record) | Always detected and logged (DUPLICATE RECORDS), never auto-fixed — no safe correction to guess |
@@ -241,27 +241,20 @@ which bucket a given fix fell into:
    oversized record's leader sentinel applied), or a lower-priority
    detect-only finding (a dangling 880 `$6` link, an ISBN/ISSN with a
    bad check digit). The header + count for every category here always
-   shows; every category is summary-only by default now (unlike NEEDS
-   REVIEW above) -- some of the highest-volume ones need
-   `--log-informational` (or their own `--log-full`) before every
-   matching record is also listed — see the flag list right below
-
-Five of the highest-volume fixes need their own flag in addition to
-`--log-informational` before they're logged at all — the fix always
-runs, only the per-record log line doesn't — since any one of these can
-otherwise be the majority of a real file's log:
-`--log-transcoded-marc8` (every MARC-8 record converted),
-`--log-leader-entry-map-fixed` (every record with a corrupted
-entry-map byte), `--log-999-to-945` (every Sierra `999` remapped),
-`--log-normalized-smart-characters` (every typographic-punctuation
-substitution), and `--log-normalized-subfield-9-to-0` (every `$9`
-rewritten to `$0`).
+   shows, but the per-record detail never does — these are the
+   highest-volume, least-actionable findings, so a header + count is
+   genuinely all there is to say about any of them. Unlike every other
+   section, this one is never listed in full, not even via
+   `--log-full`: if one of these needs the full per-record list, that's
+   a sign it belongs in FIXED/REQUIRES ATTENTION or NEEDS REVIEW
+   instead
 
 Two detect-only checks don't even run by default, since they're pure
 overhead with no fix attached unless you're actually looking for their
 specific finding: `--check-dangling-880-links` and
-`--check-isbn-issn-checksum`. Both still need `--log-informational` too
-before their findings show up in the log.
+`--check-isbn-issn-checksum`. Both land in INFORMATIONAL once enabled,
+so — same as everything else there — you get a header + count, not a
+per-record list.
 
 ...and by category within each section, with a header and count, so e.g.
 all 375 missing-008 findings sit together instead of scattered by record
