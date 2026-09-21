@@ -667,6 +667,46 @@ class TestProgressEstimate:
         assert "Estimated total runtime: ~0s" not in err
 
 
+class TestPromptsForMissingInput:
+    def test_prompts_and_uses_typed_path(self, tmp_path, monkeypatch):
+        src = tmp_path / "in.mrc"
+        src.write_bytes(
+            m.assemble_marc(m.ParsedRecord(
+                leader=_SYNTHETIC_LEADER, entries=[],
+                fields=[m.Field_("245", "00", [("a", "Title.")])],
+            ))
+        )
+        out = tmp_path / "out.mrc"
+        monkeypatch.setattr("builtins.input", lambda prompt="": str(src))
+        rc = m.main(["-o", str(out)])
+        assert rc == 0
+        assert out.exists()
+
+    def test_reprompts_on_nonexistent_path_then_accepts_a_real_one(self, tmp_path, monkeypatch):
+        src = tmp_path / "in.mrc"
+        src.write_bytes(
+            m.assemble_marc(m.ParsedRecord(
+                leader=_SYNTHETIC_LEADER, entries=[],
+                fields=[m.Field_("245", "00", [("a", "Title.")])],
+            ))
+        )
+        out = tmp_path / "out.mrc"
+        answers = iter([str(tmp_path / "does_not_exist.mrc"), str(src)])
+        monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+        rc = m.main(["-o", str(out)])
+        assert rc == 0
+        assert out.exists()
+
+    def test_eof_on_prompt_exits_with_error(self, monkeypatch):
+        def raise_eof(prompt=""):
+            raise EOFError
+
+        monkeypatch.setattr("builtins.input", raise_eof)
+        with pytest.raises(SystemExit) as exc_info:
+            m.main([])
+        assert exc_info.value.code == 2
+
+
 class TestCLIHelpers:
     def test_default_output_path_appends_repaired_before_extension(self):
         assert m._default_output_path("/tmp/foo.mrc") == "/tmp/foo_repaired.mrc"

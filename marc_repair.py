@@ -4939,7 +4939,9 @@ def main(argv: list[str] | None = None) -> int:
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument(
-        "input", help="MARC file (.mrc) or pasted-text file with one or more records"
+        "input", nargs="?", default=None,
+        help="MARC file (.mrc) or pasted-text file with one or more records "
+        "-- prompted for interactively if omitted",
     )
     parser.add_argument(
         "-o", "--out", help="output .mrc file (default: INPUT_repaired.mrc next to the input)"
@@ -5294,6 +5296,18 @@ def main(argv: list[str] | None = None) -> int:
         "pass this flag to skip transcoding deliberately instead",
     )
     args = parser.parse_args(argv)
+
+    while not args.input:
+        try:
+            args.input = input("Input MARC file: ").strip()
+        except EOFError:
+            parser.error("no input file given")
+        if not args.input:
+            print("no input file given -- try again, or Ctrl-C to quit", file=sys.stderr)
+            continue
+        if not os.path.isfile(args.input):
+            print(f"{args.input!r} is not a file -- try again", file=sys.stderr)
+            args.input = None
 
     if args.count:
         print(f"{count_records(args.input)} record(s) in {args.input}")
