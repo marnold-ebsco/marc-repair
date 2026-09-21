@@ -1218,7 +1218,8 @@ class TestRepairHoldingsRecords:
         content = _resolve_log(log).read_text(encoding="utf-8")
         assert "holdings_852_b_suspect_content" in content
         assert "=== FIXED/REQUIRES ATTENTION:" in content
-        assert "flattened subfields" in content
+        assert "contains multiple '#' characters" in content
+        assert "replaced with placeholder" in content
         parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
         f852 = next(f for f in parsed.fields if f.tag == "852")
         assert ("b", m.DEFAULT_852_LOCATION_CONTENT) in f852.subfields

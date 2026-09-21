@@ -2982,11 +2982,14 @@ def fix_852_b_suspect_content(
             if _852_B_NUMERIC_PATTERN.match(data):
                 reason = "is purely numeric, not a location code"
             elif data.count("#") >= 2:
-                reason = "contains multiple '#' characters -- looks like flattened subfields"
+                reason = "contains multiple '#' characters"
             else:
                 new_subfields.append((code, data))
                 continue
-            details.append(f"=852  {f.indicators}${code}{data} {reason}")
+            details.append(
+                f"=852  {f.indicators}${code}{data} {reason} -- replaced with "
+                f"placeholder {DEFAULT_852_LOCATION_CONTENT!r}"
+            )
             new_subfields.append((code, DEFAULT_852_LOCATION_CONTENT))
         f.subfields = new_subfields
     return details
@@ -4134,8 +4137,7 @@ _CHECK_DESCRIPTIONS: dict[str, str] = {
     "like data that migrated into the wrong subfield -- purely "
     "numeric, or containing flattened subfield-delimiter markers -- "
     "and is replaced wholesale with "
-    f"{DEFAULT_852_LOCATION_CONTENT!r} (the original content is logged "
-    "as-is below, not repeated per line). POSSIBLE DATA LOSS.",
+    f"{DEFAULT_852_LOCATION_CONTENT!r}. POSSIBLE DATA LOSS.",
     "holdings_853_missing_8": "An 853 (Captions and Pattern) field has "
     "no $8 (Field link and sequence number) -- the 863/864/865 "
     "enumeration fields that should reference it can't be linked. "
