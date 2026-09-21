@@ -15,6 +15,7 @@ extracts exhibiting the three defect classes this tool targets:
 
 import glob
 import os
+import re
 import sys
 from dataclasses import dataclass, field
 from typing import Callable
@@ -230,7 +231,7 @@ class TestFixBadIndicators:
         title_field = next(f for f in fixed.fields if f.tag == "245")
         assert title_field.indicators == " 0"
         assert title_field.subfields == [("a", "Title.")]
-        assert fixed.indicator_fixes == [("245", 1)]
+        assert fixed.indicator_fixes == [("245", 1, "0", "\x1faTitle.")]
 
     def test_pads_two_missing_indicators_and_records_fix(self):
         fields = [
@@ -245,7 +246,7 @@ class TestFixBadIndicators:
         fixed, _end = result
         title_field = next(f for f in fixed.fields if f.tag == "245")
         assert title_field.indicators == "  "
-        assert fixed.indicator_fixes == [("245", 2)]
+        assert fixed.indicator_fixes == [("245", 2, "", "\x1faTitle.")]
 
     def test_untouched_record_has_no_fixes_recorded(self):
         fields = [m.Field_("245", "00", [("a", "Title.")])]
@@ -257,12 +258,14 @@ class TestFixBadIndicators:
         assert fixed.indicator_fixes == []
 
     def test_main_end_to_end_logs_as_fixed_at_bottom(self, tmp_path, monkeypatch):
-        # transcode_marc8_failed is one of the few categories still left
-        # genuinely NOT FIXED by default -- everything else easy to
-        # trigger (unfixed_non_numeric_tag, incomplete_852) is now
-        # FIXED/REQUIRES ATTENTION, and missing_008/invalid_subfield_code have
-        # been retired entirely (008/invalid subfield codes are now
-        # always fixed unconditionally). Forcing a real transcode
+        # No genuinely NOT FIXED bib category is easy to trigger under
+        # default flags anymore -- everything that used to land there
+        # (unfixed_non_numeric_tag, incomplete_852) is now FIXED/
+        # REQUIRES ATTENTION or NEEDS REVIEW (transcode_marc8_failed),
+        # and missing_008/invalid_subfield_code have been retired
+        # entirely (008/invalid subfield codes are now always fixed
+        # unconditionally). So this instead checks FIXED/REQUIRES
+        # ATTENTION sorts before NEEDS REVIEW. Forcing a real transcode
         # failure (rather than just disabling a flag) needs pymarc's
         # marc8_to_unicode to actually raise, same technique as
         # test_main_falls_back_gracefully_on_transcode_failure above.
@@ -293,19 +296,21 @@ class TestFixBadIndicators:
         rc = m.main([str(src), "-o", str(out), "--log", str(log)])
         assert rc == 0
         lines = _resolve_log(log).read_text(encoding="utf-8").splitlines()
-        not_fixed_idx = next(i for i, ln in enumerate(lines) if ln.startswith("=== NOT FIXED"))
         attention_idx = next(
             i for i, ln in enumerate(lines)
             if ln.startswith("=== FIXED/REQUIRES ATTENTION")
         )
-        assert not_fixed_idx < attention_idx, (
-            "NOT FIXED block must come before FIXED/REQUIRES ATTENTION block"
+        needs_review_idx = next(
+            i for i, ln in enumerate(lines) if ln.startswith("=== NEEDS REVIEW")
+        )
+        assert attention_idx < needs_review_idx, (
+            "FIXED/REQUIRES ATTENTION block must come before NEEDS REVIEW block"
         )
         assert any(
             "[FIXED/REQUIRES ATTENTION]" in ln and "padded" in ln
-            for ln in lines[attention_idx:]
+            for ln in lines[attention_idx:needs_review_idx]
         )
-        assert any("[NOT FIXED]" in ln for ln in lines[not_fixed_idx:attention_idx])
+        assert any("[NEEDS REVIEW]" in ln for ln in lines[needs_review_idx:])
 
 
 # ---------------------------------------------------------------------------
@@ -463,7 +468,7 @@ class TestTranscodeMarc8:
         ])
         assert rc == 0
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert "\ttranscoded_marc8\t" in content
+        assert _detail_line_marker("transcoded_marc8").search(content)
 
     def test_no_transcode_marc8_flag_leaves_it_as_marc8(self, tmp_path):
         leader = list(_SYNTHETIC_LEADER)
@@ -552,8 +557,8 @@ class TestTranscodeMarc8:
         rc = m.main([str(src), "-o", str(out), "--log", str(log)])
         assert rc == 0  # must not crash the whole run
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert "=== NOT FIXED: transcode_marc8_failed ===" in content
-        assert "\ttranscode_marc8_failed\t" in content
+        assert "=== NEEDS REVIEW: transcode_marc8_failed ===" in content
+        assert _detail_line_marker("transcode_marc8_failed").search(content)
         results = m.repair_text(m._read_text(str(out)))
         assert results[0].leader[9] == " "  # left declaring MARC-8
 
@@ -791,7 +796,7 @@ class TestStripNullIdentifiersBibPipeline:
         assert rc == 0
         content = _resolve_log(log).read_text(encoding="utf-8")
         assert "=== INFORMATIONAL: removed_null_identifier ===" in content
-        assert "\tremoved_null_identifier\t" not in content
+        assert not _detail_line_marker("removed_null_identifier").search(content)
         parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
         f035 = next(f for f in parsed.fields if f.tag == "035")
         assert not any(code == "a" for code, _ in f035.subfields)
@@ -808,7 +813,7 @@ class TestStripNullIdentifiersBibPipeline:
         ])
         assert rc == 0
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert "\tremoved_null_identifier\t" in content
+        assert _detail_line_marker("removed_null_identifier").search(content)
         assert "[INFORMATIONAL]" in content
 
 
@@ -1038,9 +1043,9 @@ class TestFixMisplacedSubfieldCodes:
         ])
         assert rc == 0
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert "\tfixed_misplaced_subfield_code\t" in content
+        assert _detail_line_marker("fixed_misplaced_subfield_code").search(content)
         assert "[INFORMATIONAL]" in content
-        assert "\tremoved_invalid_subfield\t" not in content
+        assert not _detail_line_marker("removed_invalid_subfield").search(content)
         parsed_out = m.read_intact_record(m._read_text(str(out)))
         f260 = next(f for f in parsed_out.fields if f.tag == "260")
         assert ("c", "2000.") in f260.subfields
@@ -1067,7 +1072,7 @@ class TestFixMisplacedSubfieldCodes:
         rc = m.main([str(src), "-o", str(out), "--log", str(log)])
         assert rc == 0
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert "\tfixed_misplaced_subfield_code\t" not in content
+        assert not _detail_line_marker("fixed_misplaced_subfield_code").search(content)
         parsed_out = m.read_intact_record(m._read_text(str(out)))
         f260 = next(f for f in parsed_out.fields if f.tag == "260")
         assert ("c", "2000.") in f260.subfields
@@ -1257,7 +1262,7 @@ class TestLeaderEntryMapCorrection:
         ])
         assert rc == 0
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert "\tleader_entry_map_fixed\t" in content
+        assert _detail_line_marker("leader_entry_map_fixed").search(content)
 
     def _corrupted_entry_map_bytes_invalid_utf8(self):
         # Same idea as `_corrupted_entry_map_bytes`, but the corrupted byte
@@ -1450,7 +1455,7 @@ class TestReattachOrphanedFieldsCLI:
         assert rc == 0
         assert m.count_records(str(out)) == 1
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert "\treattached_orphaned_field\t" in content
+        assert _detail_line_marker("reattached_orphaned_field").search(content)
         assert "[FIXED/REQUIRES ATTENTION]" in content
         parsed = m.read_intact_record(m._read_text(str(out)))
         assert parsed.fields[-1].tag == "700"
@@ -1770,8 +1775,8 @@ class TestFixInvalidTags:
         assert rc == 0
         content = _resolve_log(log).read_text(encoding="utf-8")
         assert "=== INFORMATIONAL: invalid_tag ===" in content
-        assert "\tinvalid_tag\t" in content
-        assert "\tunfixed_non_numeric_tag\t" not in content
+        assert _detail_line_marker("invalid_tag").search(content)
+        assert not _detail_line_marker("unfixed_non_numeric_tag").search(content)
         results = m.repair_text(m._read_text(str(out)))
         tags = [f.tag for f in results[0].fields]
         assert "24A" not in tags
@@ -1796,8 +1801,8 @@ class TestFixInvalidTags:
         ])
         assert rc == 0
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert "=== FIXED/REQUIRES ATTENTION: unfixed_non_numeric_tag ===" in content
-        assert "\tunfixed_non_numeric_tag\t" in content
+        assert "=== NEEDS REVIEW: unfixed_non_numeric_tag ===" in content
+        assert _detail_line_marker("unfixed_non_numeric_tag").search(content)
         results = m.repair_text(m._read_text(str(out)))
         tags = [f.tag for f in results[0].fields]
         assert "24A" in tags
@@ -1866,7 +1871,7 @@ class TestFixInvalidTags:
         ])
         assert rc == 0
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert "=== FIXED/REQUIRES ATTENTION: unfixed_non_numeric_tag ===" in content
+        assert "=== NEEDS REVIEW: unfixed_non_numeric_tag ===" in content
         assert "content discarded" in content
         results = m.repair_text(m._read_text(str(out)))
         assert not any(f.tag == "24A" for f in results[1].fields)
@@ -1950,7 +1955,7 @@ class TestRemap999To945:
         # runs, header + count always shown, but not listed in full
         # unless --log-full remapped_999_to_945 (or --log-informational)
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert "\tremapped_999_to_945\t" not in content
+        assert not _detail_line_marker("remapped_999_to_945").search(content)
         results = m.repair_text(m._read_text(str(out)))
         tags = [f.tag for f in results[0].fields]
         assert "999" not in tags
@@ -1977,7 +1982,7 @@ class TestRemap999To945:
         ])
         assert rc == 0
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert "\tremapped_999_to_945\t" in content
+        assert _detail_line_marker("remapped_999_to_945").search(content)
 
 
 # ---------------------------------------------------------------------------
@@ -2032,7 +2037,7 @@ class TestNormalizeSubfield9To0:
         ])
         assert rc == 0
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert "\tnormalized_subfield_9_to_0\t" in content
+        assert _detail_line_marker("normalized_subfield_9_to_0").search(content)
         results = m.repair_text(m._read_text(str(out)))
         field = next(f for f in results[0].fields if f.tag == "650")
         assert field.subfields == [("a", "Subject"), ("0", "123456")]
@@ -2121,7 +2126,7 @@ class TestNormalizeSmartCharacters:
         ])
         assert rc == 0
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert "\tnormalized_smart_characters\t" in content
+        assert _detail_line_marker("normalized_smart_characters").search(content)
         results = m.repair_text(m._read_text(str(out)))
         title_field = next(f for f in results[0].fields if f.tag == "520")
         assert title_field.subfields == [("a", "It's great.")]
@@ -2591,13 +2596,21 @@ class _CliDefaultCase:
     requires_pymarc: bool = False
 
 
-def _detail_line_marker(category: str) -> str:
-    """Substring that only appears in an actual per-record detail line
-    for `category` (see `LogEntry.render`, tab-separated), never in
-    the "=== SECTION: category ===" header `write_log` always writes
-    for every active category regardless of whether it's listed in
-    full -- headers use no literal tabs at all."""
-    return f"\t{category}\t"
+def _detail_line_marker(category: str) -> re.Pattern:
+    """Pattern that only matches when `category` has an actual
+    per-record detail line logged in full -- not just its header+count
+    (LogEntry.render() no longer repeats the category name on every
+    row, since it's already stated once in the category's own header
+    right above; see LogEntry.render's own comment). Matches the
+    category's 3-line header followed immediately by a row starting
+    with "[" -- the only thing that can immediately follow the count
+    line when at least one record was actually listed."""
+    return re.compile(
+        rf"=== [^\n]*: {re.escape(category)}(?: \([^)\n]*\))? ===\n"
+        rf"=== [^\n]* ===\n"
+        rf"=== \d+ record\(s\) ===\n"
+        rf"\["
+    )
 
 
 def _run_cli_default_case(case: "_CliDefaultCase", tmp_path):
@@ -2612,9 +2625,15 @@ def _run_cli_default_case(case: "_CliDefaultCase", tmp_path):
     resolved_log = _resolve_log(log)
     content = resolved_log.read_text(encoding="utf-8") if resolved_log.exists() else ""
     for substring in case.required_log_substrings:
-        assert substring in content
+        if isinstance(substring, re.Pattern):
+            assert substring.search(content)
+        else:
+            assert substring in content
     for substring in case.forbidden_log_substrings:
-        assert substring not in content
+        if isinstance(substring, re.Pattern):
+            assert not substring.search(content)
+        else:
+            assert substring not in content
     results = m.repair_text(m._read_text(str(out)))
     assert case.verify(results)
 

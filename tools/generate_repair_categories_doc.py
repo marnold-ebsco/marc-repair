@@ -102,7 +102,7 @@ BIB_ROWS = [
     ),
     CategoryRow(
         "Transcode failure", "Left field untranscoded",
-        "n/a (only if it occurs)", "`transcode_marc8_failed`", "NOT FIXED",
+        "n/a (only if it occurs)", "`transcode_marc8_failed`", "NEEDS REVIEW",
         "**Yes**", "`--no-transcode-marc8` (skips this entirely)",
     ),
     CategoryRow(
@@ -239,7 +239,7 @@ BIB_ROWS = [
     CategoryRow(
         "Invalid tag, no 9XX slot free", "Field removed entirely "
         "(full-file rewrite -- see strip_invalid_tags)",
-        "(fallback of above)", "`unfixed_non_numeric_tag`", "FIXED/REQUIRES ATTENTION",
+        "(fallback of above)", "`unfixed_non_numeric_tag`", "NEEDS REVIEW",
         "**Yes**",
         "`--no-fix-invalid-tags` (skips the attempt entirely -- field "
         "left untouched instead of removed); `--remap-999-to-945` "
@@ -279,17 +279,17 @@ BIB_ROWS = [
     CategoryRow(
         "Suspect MARC-8 escape (miskeyed diacritic)",
         "Flagged only, no change", "detect-only", "`suspect_marc8_escape`",
-        "NOT FIXED", "**Yes**", "-- (detect-only, no switch)",
+        "NEEDS REVIEW", "**Yes**", "-- (detect-only, no switch)",
     ),
     CategoryRow(
         "Doubled proxy URL prefix", "Flagged only, no change",
-        "detect-only", "`doubled_proxy_url`", "INFORMATIONAL", "**Yes**",
+        "detect-only", "`doubled_proxy_url`", "NEEDS REVIEW", "**Yes**",
         "-- (detect-only, no switch)",
     ),
     CategoryRow(
         "Invalid indicator *value* (present but not digit/blank)",
         "Flagged only, no change", "detect-only",
-        "`invalid_indicator_value`", "INFORMATIONAL", "**Yes**",
+        "`invalid_indicator_value`", "NEEDS REVIEW", "**Yes**",
         "-- (detect-only, no switch)",
     ),
     CategoryRow(
@@ -503,7 +503,9 @@ HOLDINGS_ROWS = [
     CategoryRow(
         '852 $c placeholder ("Migration") added', "Added subfield",
         "**Yes** (`--no-fix-missing-852c` to disable)", "`added_missing_852c`",
-        "INFORMATIONAL", "**Yes**", "`--no-fix-missing-852c`",
+        "INFORMATIONAL", "No (header + count always shown; full per-record list via "
+                         "--log-full added_missing_852c or --log-informational)",
+        "`--no-fix-missing-852c`",
     ),
     CategoryRow(
         "852 subfield present but with no data at all (e.g. a bare "
@@ -523,7 +525,7 @@ HOLDINGS_ROWS = [
     CategoryRow(
         "Invalid tag, no 9XX slot free", "Field removed entirely "
         "(full-file rewrite)", "(fallback)",
-        "`unfixed_non_numeric_tag`", "FIXED/REQUIRES ATTENTION", "**Yes**",
+        "`unfixed_non_numeric_tag`", "NEEDS REVIEW", "**Yes**",
         "-- (no switch -- depends only on whether every 900-999 tag is "
         "already taken elsewhere in the file)",
     ),
@@ -551,7 +553,10 @@ HOLDINGS_ROWS = [
     ),
     CategoryRow(
         "Multiple 004 fields", "Flagged only, no change", "detect-only",
-        "`holdings_multiple_004`", "INFORMATIONAL", "**Yes**",
+        "`holdings_multiple_004`", "INFORMATIONAL", "No (header + count always shown; "
+                                                    "full per-record list via --log-full "
+                                                    "holdings_multiple_004 or "
+                                                    "--log-informational)",
         "-- (detect-only, no switch)",
     ),
     CategoryRow(

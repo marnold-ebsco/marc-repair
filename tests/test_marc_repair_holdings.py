@@ -15,6 +15,7 @@ extracts exhibiting the three defect classes this tool targets:
 
 import glob
 import os
+import re
 import sys
 
 import pytest
@@ -44,13 +45,21 @@ def _resolve_log(log_path):
     return type(log_path)(matches[0])
 
 
-def _detail_line_marker(category: str) -> str:
-    """Substring that only appears in an actual per-record detail line
-    for `category` (see `LogEntry.render`, tab-separated), never in
-    the "=== SECTION: category ===" header `write_log` always writes
-    for every active category regardless of whether it's listed in
-    full -- headers use no literal tabs at all."""
-    return f"\t{category}\t"
+def _detail_line_marker(category: str) -> re.Pattern:
+    """Pattern that only matches when `category` has an actual
+    per-record detail line logged in full -- not just its header+count
+    (LogEntry.render() no longer repeats the category name on every
+    row, since it's already stated once in the category's own header
+    right above; see LogEntry.render's own comment). Matches the
+    category's 3-line header followed immediately by a row starting
+    with "[" -- the only thing that can immediately follow the count
+    line when at least one record was actually listed."""
+    return re.compile(
+        rf"=== [^\n]*: {re.escape(category)}(?: \([^)\n]*\))? ===\n"
+        rf"=== [^\n]* ===\n"
+        rf"=== \d+ record\(s\) ===\n"
+        rf"\["
+    )
 
 
 def _read(name: str) -> str:
@@ -186,11 +195,11 @@ class TestRepairHoldingsRecords:
             ]
         return m.assemble_marc(m.ParsedRecord(leader=leader, entries=[], fields=fields))
 
-    def _run(self, tmp_path, records: list[bytes]):
+    def _run(self, tmp_path, records: list[bytes], **kwargs):
         src = self._write_holdings_file(tmp_path, records)
         out = tmp_path / "out.mrc"
         log = tmp_path / "out.log"
-        result = m.repair_holdings_records(str(src), str(out), str(log))
+        result = m.repair_holdings_records(str(src), str(out), str(log), **kwargs)
         return result, out, log
 
     def test_clean_record_passes_through_with_no_log(self, tmp_path):
@@ -261,8 +270,8 @@ class TestRepairHoldingsRecords:
         ]
         result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert _detail_line_marker("fixed_misplaced_subfield_code") not in content
-        assert _detail_line_marker("removed_invalid_subfield") not in content
+        assert not _detail_line_marker("fixed_misplaced_subfield_code").search(content)
+        assert not _detail_line_marker("removed_invalid_subfield").search(content)
         parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
         f852 = next(f for f in parsed.fields if f.tag == "852")
         assert ("z", " Microfilm: 1983-1999") in f852.subfields
@@ -283,7 +292,7 @@ class TestRepairHoldingsRecords:
             str(src), str(out), str(log), full_categories={"fixed_misplaced_subfield_code"},
         )
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert _detail_line_marker("fixed_misplaced_subfield_code") in content
+        assert _detail_line_marker("fixed_misplaced_subfield_code").search(content)
 
     def test_null_identifier_removed_but_not_logged_by_default(self, tmp_path):
         # $b is the null identifier under test, on a field OTHER than
@@ -303,7 +312,7 @@ class TestRepairHoldingsRecords:
         ]
         result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert _detail_line_marker("removed_null_identifier") not in content
+        assert not _detail_line_marker("removed_null_identifier").search(content)
         parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
         f500 = next(f for f in parsed.fields if f.tag == "500")
         assert not any(code == "b" for code, _ in f500.subfields)
@@ -323,7 +332,7 @@ class TestRepairHoldingsRecords:
             str(src), str(out), str(log), full_categories={"removed_null_identifier"},
         )
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert _detail_line_marker("removed_null_identifier") in content
+        assert _detail_line_marker("removed_null_identifier").search(content)
         assert "[INFORMATIONAL]" in content
 
     def test_escape_sequence_flagged_not_transcoded(self, tmp_path):
@@ -449,8 +458,8 @@ class TestRepairHoldingsRecords:
         ]
         result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert _detail_line_marker("holdings_missing_004") not in content
-        assert _detail_line_marker("holdings_multiple_004") not in content
+        assert not _detail_line_marker("holdings_missing_004").search(content)
+        assert not _detail_line_marker("holdings_multiple_004").search(content)
 
     def test_multiple_004_flagged_informational(self, tmp_path):
         fields = [
@@ -459,7 +468,9 @@ class TestRepairHoldingsRecords:
             m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
             m.Field_("852", "  ", [("a", "Main Library"), ("h", "ABC123")]),
         ]
-        result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
+        result, out, log = self._run(
+            tmp_path, [self._holdings_record(fields=fields)], log_informational=True,
+        )
         assert result["not_fixed"] == 0  # informational, not NOT FIXED
         content = _resolve_log(log).read_text(encoding="utf-8")
         assert "holdings_multiple_004" in content
@@ -476,7 +487,7 @@ class TestRepairHoldingsRecords:
         assert result["total"] == 1
         assert result["written"] == 2
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert "[FIXED/REQUIRES ATTENTION]\tsplit_holdings_multiple_852" in content
+        assert _detail_line_marker("split_holdings_multiple_852").search(content)
         assert m.count_records(str(out)) == 2
         records = [
             m.read_intact_record(text)
@@ -529,9 +540,9 @@ class TestRepairHoldingsRecords:
         assert result["total"] == 1
         assert result["written"] == 1
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert "[FIXED/REQUIRES ATTENTION]\tincomplete_852" in content
+        assert _detail_line_marker("incomplete_852").search(content)
         assert "no $b" in content
-        assert _detail_line_marker("split_holdings_multiple_852") not in content
+        assert not _detail_line_marker("split_holdings_multiple_852").search(content)
         parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
         f852s = [f for f in parsed.fields if f.tag == "852"]
         assert len(f852s) == 1
@@ -551,7 +562,7 @@ class TestRepairHoldingsRecords:
         assert result["total"] == 1
         assert result["written"] == 1
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert _detail_line_marker("incomplete_852") not in content
+        assert not _detail_line_marker("incomplete_852").search(content)
         parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
         f852s = [f for f in parsed.fields if f.tag == "852"]
         assert len(f852s) == 1
@@ -564,7 +575,7 @@ class TestRepairHoldingsRecords:
         ]
         result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert _detail_line_marker("split_holdings_multiple_852") not in content
+        assert not _detail_line_marker("split_holdings_multiple_852").search(content)
 
     def test_fix_missing_852c_on_by_default(self, tmp_path):
         fields = [
@@ -604,7 +615,9 @@ class TestRepairHoldingsRecords:
         src = self._write_holdings_file(tmp_path, [self._holdings_record(fields=fields)])
         out = tmp_path / "out.mrc"
         log = tmp_path / "out.log"
-        result = m.repair_holdings_records(str(src), str(out), str(log), fix_missing_852c=True)
+        result = m.repair_holdings_records(
+            str(src), str(out), str(log), fix_missing_852c=True, log_informational=True,
+        )
         content = _resolve_log(log).read_text(encoding="utf-8")
         assert "added_missing_852c" in content
         assert "Migration" in content
@@ -768,8 +781,8 @@ class TestRepairHoldingsRecords:
         ]
         result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert _detail_line_marker("missing_call_number") not in content
-        assert _detail_line_marker("removed_bad_call_number") not in content
+        assert not _detail_line_marker("missing_call_number").search(content)
+        assert not _detail_line_marker("removed_bad_call_number").search(content)
         parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
         f852 = next(f for f in parsed.fields if f.tag == "852")
         assert ("a", "Main Library") in f852.subfields
@@ -787,9 +800,9 @@ class TestRepairHoldingsRecords:
             str(src), str(out), str(log), full_categories={"missing_call_number"},
         )
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert _detail_line_marker("missing_call_number") in content
+        assert _detail_line_marker("missing_call_number").search(content)
         assert "[INFORMATIONAL]" in content
-        assert _detail_line_marker("removed_bad_call_number") not in content
+        assert not _detail_line_marker("removed_bad_call_number").search(content)
         parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
         f852 = next(f for f in parsed.fields if f.tag == "852")
         assert ("a", "Main Library") in f852.subfields
@@ -804,7 +817,7 @@ class TestRepairHoldingsRecords:
         content = _resolve_log(log).read_text(encoding="utf-8")
         assert "removed_bad_call_number" in content
         assert "[FIXED/REQUIRES ATTENTION]" in content
-        assert _detail_line_marker("missing_call_number") not in content
+        assert not _detail_line_marker("missing_call_number").search(content)
         parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
         f852 = next(f for f in parsed.fields if f.tag == "852")
         assert ("a", "Main Library") in f852.subfields
@@ -818,7 +831,7 @@ class TestRepairHoldingsRecords:
         ]
         result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert _detail_line_marker("missing_call_number") not in content
+        assert not _detail_line_marker("missing_call_number").search(content)
         parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
         assert any(f.tag == "852" for f in parsed.fields)
 
@@ -858,7 +871,7 @@ class TestRepairHoldingsRecords:
         ]
         result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert _detail_line_marker("added_missing_852_location") not in content
+        assert not _detail_line_marker("added_missing_852_location").search(content)
         parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
         f852 = next(f for f in parsed.fields if f.tag == "852")
         assert not any(code == "b" for code, _ in f852.subfields)
@@ -873,7 +886,7 @@ class TestRepairHoldingsRecords:
         ]
         result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert _detail_line_marker("added_missing_852_location") not in content
+        assert not _detail_line_marker("added_missing_852_location").search(content)
         parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
         f852 = next(f for f in parsed.fields if f.tag == "852")
         assert ("b", "OFC Main") in f852.subfields
@@ -887,7 +900,7 @@ class TestRepairHoldingsRecords:
         ]
         result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert _detail_line_marker("added_missing_852_location") not in content
+        assert not _detail_line_marker("added_missing_852_location").search(content)
         parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
         f852 = next(f for f in parsed.fields if f.tag == "852")
         assert not any(code == "b" for code, _ in f852.subfields)
@@ -956,8 +969,8 @@ class TestRepairHoldingsRecords:
         result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
         log_path = _resolve_log(log)
         content = log_path.read_text(encoding="utf-8") if log_path.exists() else ""
-        assert _detail_line_marker("missing_call_number") not in content
-        assert _detail_line_marker("added_missing_852_location") not in content
+        assert not _detail_line_marker("missing_call_number").search(content)
+        assert not _detail_line_marker("added_missing_852_location").search(content)
         parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
         f852 = next(f for f in parsed.fields if f.tag == "852")
         assert ("b", "Annex") in f852.subfields
@@ -1082,8 +1095,8 @@ class TestRepairHoldingsRecords:
         ]
         result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert _detail_line_marker("recoded_852_b_to_i") not in content
-        assert _detail_line_marker("removed_extra_852_b") not in content
+        assert not _detail_line_marker("recoded_852_b_to_i").search(content)
+        assert not _detail_line_marker("removed_extra_852_b").search(content)
 
     def test_duplicate_h_removed_and_flagged_fixed(self, tmp_path):
         # $h (Classification part) is Not Repeatable per the MARC 21
@@ -1142,7 +1155,7 @@ class TestRepairHoldingsRecords:
         ]
         result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert _detail_line_marker("holdings_852_duplicate_nr_subfield") not in content
+        assert not _detail_line_marker("holdings_852_duplicate_nr_subfield").search(content)
 
     def test_853_missing_8_flagged_not_fixed(self, tmp_path):
         fields = [
@@ -1212,7 +1225,7 @@ class TestRepairHoldingsRecords:
         ]
         result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert _detail_line_marker("holdings_852_b_suspect_content") not in content
+        assert not _detail_line_marker("holdings_852_b_suspect_content").search(content)
 
     def test_empty_852_subfield_removed_and_flagged_fixed(self, tmp_path):
         fields = [
@@ -1244,8 +1257,8 @@ class TestRepairHoldingsRecords:
         ]
         result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert _detail_line_marker("removed_bad_call_number") in content
-        assert _detail_line_marker("removed_empty_852_subfield") not in content
+        assert _detail_line_marker("removed_bad_call_number").search(content)
+        assert not _detail_line_marker("removed_empty_852_subfield").search(content)
 
     def test_no_empty_852_subfield_is_noop(self, tmp_path):
         fields = [
@@ -1255,7 +1268,7 @@ class TestRepairHoldingsRecords:
         ]
         result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert _detail_line_marker("removed_empty_852_subfield") not in content
+        assert not _detail_line_marker("removed_empty_852_subfield").search(content)
 
     def test_repairs_real_short_bucknell_holdings_file(self):
         # Regression/integration check against real production data

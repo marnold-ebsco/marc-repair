@@ -332,13 +332,18 @@ class ParsedRecord:
     entries: list[DirEntry]
     fields: list[Field_] = field(default_factory=list)
     unresolved: list[tuple[int, DirEntry, str, Exception]] = field(default_factory=list)
-    # (tag, spaces_added) for each field corrected during parsing itself
-    # (currently only the default-on indicator-padding fix, see
-    # --no-fix-bad-indicators, does this) -- unlike the other fixes, which
-    # run as a separate pass after parsing and are logged directly by the
-    # caller, this correction has to happen inside Mode 1's own parse, so
-    # it's carried here for the caller to log.
-    indicator_fixes: list[tuple[str, int]] = field(default_factory=list)
+    # (tag, spaces_added, original_indicators, first_subfield_preview) for
+    # each field corrected during parsing itself (currently only the
+    # default-on indicator-padding fix, see --no-fix-bad-indicators, does
+    # this) -- unlike the other fixes, which run as a separate pass after
+    # parsing and are logged directly by the caller, this correction has
+    # to happen inside Mode 1's own parse, so it's carried here for the
+    # caller to log. original_indicators is whatever was actually there
+    # before padding (0 or 1 characters); first_subfield_preview is the
+    # first subfield's own code + up to ~10 characters of its data, so a
+    # human reading the log can tell which field this was without
+    # re-opening the record.
+    indicator_fixes: list[tuple[str, int, str, str]] = field(default_factory=list)
     # (tag, detail) for each field appended by reattach_orphaned_trailing_
     # fields -- that runs as a wrapper around the whole record stream
     # (after this record was already fully parsed), not as part of Mode
@@ -680,8 +685,9 @@ def _read_intact_at(
     before its first subfield delimiter is padded (see
     `_pad_short_indicators`) rather than causing the whole record to bail
     out to Mode 2/UNRESOLVED; each correction is recorded on the returned
-    record's `.indicator_fixes` as (tag, spaces_added) so the caller can log
-    it. Off by default at this function's level -- the CLI itself passes
+    record's `.indicator_fixes` as (tag, spaces_added, original_indicators,
+    first_subfield_preview) so the caller can log it. Off by default at
+    this function's level -- the CLI itself passes
     True by default (see --no-fix-bad-indicators to turn it off there).
     """
     leader = text[start:start + 24]
@@ -700,7 +706,7 @@ def _read_intact_at(
 
     pos = term_idx + 1
     fields: list[Field_] = []
-    indicator_fixes: list[tuple[str, int]] = []
+    indicator_fixes: list[tuple[str, int, str, str]] = []
     for entry in entries:
         end = text.find(FIELDTERM, pos)
         if end == -1:
@@ -714,9 +720,20 @@ def _read_intact_at(
             fields.append(Field_(entry.tag, None, None, content=content))
         else:
             if fix_bad_indicators:
+                original_content = content
                 content, spaces_added = _pad_short_indicators(content)
                 if spaces_added:
-                    indicator_fixes.append((entry.tag, spaces_added))
+                    first_delim = original_content.find(SUBFIELD)
+                    original_indicators = (
+                        original_content[:first_delim] if first_delim >= 0 else original_content
+                    )
+                    preview = (
+                        original_content[first_delim:first_delim + 11]
+                        if first_delim >= 0 else ""
+                    )
+                    indicator_fixes.append(
+                        (entry.tag, spaces_added, original_indicators, preview)
+                    )
             indicators, body = content[:2], content[2:]
             if body and SUBFIELD not in body:
                 return None  # not actually delimited -- bail to Mode 2
@@ -2135,11 +2152,13 @@ def find_suspect_marc8_escapes(parsed: ParsedRecord) -> list[tuple[str, str]]:
     findings: list[tuple[str, str]] = []
     if parsed.leader[9:10] == UNICODE_ENCODING_BYTE:
         return findings  # already UTF-8 -- no raw MARC-8 escapes to find
+    _CONTEXT_CHARS = 10
     for f in parsed.fields:
         texts = [f.content] if f.is_control() else [d for _, d in f.subfields]
         for text in texts:
             if not text or "\x1b" not in text:
                 continue
+            occurrences: list[tuple[str, str, str, str, str]] = []
             for match in _MARC8_SCRIPT_ESCAPE.finditer(text):
                 bytes_per_char, charset_name = _MARC8_SCRIPT_CHARSETS[match.group(2)]
                 span_start = match.end()
@@ -2181,14 +2200,24 @@ def find_suspect_marc8_escapes(parsed: ParsedRecord) -> list[tuple[str, str]]:
                             "against another edition or an authority record "
                             "to confirm the correct spelling"
                         )
-                    findings.append((
-                        "suspect_marc8_escape",
-                        f"tag {f.tag}: single {charset_name} character embedded "
-                        f"mid-word ({before!r}<escape>{after!r}) -- likely a "
-                        "miskeyed diacritic in the source record, not real "
-                        f"{charset_name} content; {suggestion}; "
-                        f"raw MARC-8: {text!r}",
-                    ))
+                    problem_start = match.start() - 1
+                    problem_end = close + 4
+                    window_start = max(0, problem_start - _CONTEXT_CHARS)
+                    window_end = min(len(text), problem_end + _CONTEXT_CHARS)
+                    window = text[window_start:window_end]
+                    occurrences.append((window, charset_name, before, after, suggestion))
+            if not occurrences:
+                continue
+            context_preview = " ... ".join(o[0] for o in occurrences)
+            for window, charset_name, before, after, suggestion in occurrences:
+                findings.append((
+                    "suspect_marc8_escape",
+                    f"tag {f.tag}: single {charset_name} character embedded "
+                    f"mid-word ({before!r}<escape>{after!r}) -- likely a "
+                    "miskeyed diacritic in the source record, not real "
+                    f"{charset_name} content; {suggestion}; "
+                    f"context: {context_preview!r}",
+                ))
     return findings
 
 
@@ -3531,7 +3560,7 @@ def strip_invalid_tags(parsed: ParsedRecord) -> list[str]:
     `pick_unused_9xx_tag`). FOLIO (like any strict MARC21 importer)
     can't load a non-numeric tag at all, so leaving it in place isn't
     actually safer than discarding it -- this is real content loss
-    (category "unfixed_non_numeric_tag", still FIXED/REQUIRES ATTENTION,
+    (category "unfixed_non_numeric_tag", NEEDS REVIEW,
     POSSIBLE DATA LOSS: this is the one path where the field's own
     content, not just its tag, is gone for good; logged with the full
     removed field so a human can decide whether it needed to go
@@ -3893,11 +3922,17 @@ class LogEntry:
     detail: str
 
     def render(self) -> str:
+        # The category name is deliberately left blank (not omitted --
+        # the tab stays, as a visual indent) here: it's already stated
+        # once in this category's own "=== SECTION: category ==="
+        # header directly above every group of its rows (see
+        # `write_log`), so repeating it on every single row is pure
+        # noise for a human reading the log.
         tag = f"[{_section_for(self)[1]}]"
         rec = f"record {self.record_idx}"
         if self.record_id:
             rec += f" ({self.record_id})"
-        return f"{tag}\t{self.category}\t{self.ts}\t{rec}\t{self.detail}"
+        return f"{tag}\t\t{self.ts}\t{rec}\t{self.detail}"
 
 
 #: There is no plain "FIXED" section -- every category that's ever
@@ -3930,7 +3965,6 @@ _FIXED_REQUIRES_ATTENTION = {
     "added_default_245",
     "added_default_008",
     "padded_indicators",
-    "unfixed_non_numeric_tag",
     "incomplete_852",
     "invalid_bibliographic_level",
 }
@@ -3949,7 +3983,6 @@ _FIXED_REQUIRES_ATTENTION = {
 _INFORMATIONAL = {
     "added_default_holdings_008",
     "added_missing_852c",
-    "doubled_proxy_url",
     "holdings_multiple_004",
     "removed_null_identifier",
     "missing_call_number",
@@ -3960,12 +3993,28 @@ _INFORMATIONAL = {
     "invalid_tag",
     "normalized_smart_characters",
     "transcoded_marc8",
-    "invalid_indicator_value",
     "dangling_880_link",
     "invalid_isbn_issn_checksum",
     "fixed_mojibake",
     "remapped_999_to_945",
     "oversized_sentinel_fixed",
+}
+
+#: NEEDS REVIEW: a detect-only finding that's always listed in full
+#: (never just header+count) because a cataloger would plausibly want
+#: to look at each one individually -- unlike the rest of INFORMATIONAL
+#: (a fix applied via a fixed default, or a lower-priority detect-only
+#: finding not worth a full per-record listing by default). Sits below
+#: FIXED/REQUIRES ATTENTION: nothing was actually touched here, so it's
+#: less urgent than something the tool changed, but still worth
+#: flagging prominently rather than burying at the bottom with
+#: everything else.
+_NEEDS_REVIEW = {
+    "doubled_proxy_url",
+    "invalid_indicator_value",
+    "suspect_marc8_escape",
+    "transcode_marc8_failed",
+    "unfixed_non_numeric_tag",
 }
 
 #: UNFIXABLE, above even NOT FIXED: a record this tool concluded it
@@ -3985,6 +4034,8 @@ _DEDICATED_SECTIONS: dict[str, tuple[int, str]] = {
 }
 for _cat in _FIXED_REQUIRES_ATTENTION:
     _DEDICATED_SECTIONS[_cat] = (1, "FIXED/REQUIRES ATTENTION")
+for _cat in _NEEDS_REVIEW:
+    _DEDICATED_SECTIONS[_cat] = (2, "NEEDS REVIEW")
 for _cat in _INFORMATIONAL:
     _DEDICATED_SECTIONS[_cat] = (4, "INFORMATIONAL")
 del _cat
@@ -3992,13 +4043,13 @@ del _cat
 
 def _section_for(entry: LogEntry) -> tuple[int, str]:
     """(sort_order, section_label) for `entry` -- UNFIXABLE, then NOT
-    FIXED, then FIXED/REQUIRES ATTENTION, then any other dedicated
-    sections (see `_DEDICATED_SECTIONS`) like DUPLICATE RECORDS, then
-    INFORMATIONAL. There is no plain "FIXED" section -- an unrecognized
-    category logged with fixed=True falls back to INFORMATIONAL rather
-    than a generic bucket, so every new fix category must be added to
-    `_FIXED_REQUIRES_ATTENTION` or `_INFORMATIONAL` above to land
-    somewhere deliberate."""
+    FIXED, then FIXED/REQUIRES ATTENTION, then NEEDS REVIEW, then any
+    other dedicated sections (see `_DEDICATED_SECTIONS`) like DUPLICATE
+    RECORDS, then INFORMATIONAL. There is no plain "FIXED" section -- an
+    unrecognized category logged with fixed=True falls back to
+    INFORMATIONAL rather than a generic bucket, so every new fix
+    category must be added to `_FIXED_REQUIRES_ATTENTION` or
+    `_INFORMATIONAL` above to land somewhere deliberate."""
     dedicated = _DEDICATED_SECTIONS.get(entry.category)
     if dedicated is not None:
         return dedicated
@@ -4117,8 +4168,9 @@ _CHECK_DESCRIPTIONS: dict[str, str] = {
     "transcoded_marc8": "A MARC-8/ANSEL-encoded record was converted "
     "to UTF-8 and the leader's encoding byte flipped to match. "
     "NO DATA LOSS.",
-    "fixed_misplaced_subfield_code": "A run of text that looked like a "
-    "missed subfield delimiter was corrected. NO DATA LOSS.",
+    "fixed_misplaced_subfield_code": "A space was detected between the "
+    "subfield delimiter character and the subfield code. Stray space "
+    "removed. NO DATA LOSS.",
     "removed_null_identifier": "A subfield with no data at all (e.g. a "
     "bare $8, or an empty $a immediately followed by another subfield) "
     "was removed. NO DATA LOSS.",
@@ -4223,9 +4275,7 @@ _ALWAYS_FULL_CATEGORIES = {
     "reattached_orphaned_field",
     "holdings_leader_byte_defaulted",
     "holdings_missing_004",
-    "holdings_multiple_004",
     "holdings_852_duplicate_nr_subfield",
-    "added_missing_852c",
     "added_missing_852_location",
     "added_default_245",
     "added_default_008",
@@ -4705,11 +4755,12 @@ def repair_holdings_records(
                 n_unfixable += 1
                 continue
 
-            for tag, spaces_added in parsed.indicator_fixes:
+            for tag, spaces_added, original_indicators, preview in parsed.indicator_fixes:
                 rec_id = record_identifier(parsed)
                 log(
                     "padded_indicators", True, i, rec_id,
-                    f"padded {spaces_added} space(s) into short indicators on ={tag}",
+                    f"padded {spaces_added} space(s) into short indicators on ={tag} "
+                    f"(was {original_indicators!r}, first subfield {preview!r})",
                 )
             if ESCAPE in rec_text:
                 rec_id = record_identifier(parsed)
@@ -5538,11 +5589,12 @@ def main(argv: list[str] | None = None) -> int:
                     )
                 n_unfixable += 1
             else:
-                for tag, spaces_added in parsed.indicator_fixes:
+                for tag, spaces_added, original_indicators, preview in parsed.indicator_fixes:
                     rec_id = record_identifier(parsed)
                     log(
                         "padded_indicators", True, i, rec_id,
-                        f"padded {spaces_added} space(s) into short indicators on ={tag}",
+                        f"padded {spaces_added} space(s) into short indicators on ={tag} "
+                        f"(was {original_indicators!r}, first subfield {preview!r})",
                     )
                 for tag, detail in parsed.reattached_orphaned_fields:
                     rec_id = record_identifier(parsed)

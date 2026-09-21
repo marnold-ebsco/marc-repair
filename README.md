@@ -144,14 +144,14 @@ left in the main holdings output.
 | Typographic "smart" Unicode punctuation (curly quotes, em/en dashes, ellipsis — see table below) | Normalized to plain ASCII by default; `--no-normalize-smart-characters` to leave as-is. Not logged per-record by default (this can be nearly every record in a file with typographic punctuation) — pass `--log-normalized-smart-characters` to log each one as `normalized_smart_characters` (INFORMATIONAL) |
 | Legacy MARC-8/ANSEL encoding | Converted to UTF-8 by default (requires `pymarc`; the run fails loudly if it's missing, rather than silently leaving non-UTF-8 output — install it, or pass `--no-transcode-marc8` if you explicitly want non-UTF-8 records left as-is). Not logged per-record by default (this can be nearly every record in a legacy file) — pass `--log-transcoded-marc8` to log each one as `transcoded_marc8` (INFORMATIONAL) |
 | A tag that isn't 3 numeric digits (e.g. `24A` from directory corruption) | Renamed to an unused tag in the 900-999 locally-defined range by default, picked from tags seen during the normal single pass (no extra full pass — only the rare record needing this gets a second, targeted look afterward); logged as `invalid_tag` (INFORMATIONAL). If every 900-999 tag is already taken elsewhere in the file, there's nowhere left to rename to — the whole field is removed instead (FOLIO can't load a non-numeric tag either way), via a full second pass over the output file since removal changes the record's byte length; logged in full as `unfixed_non_numeric_tag` under **FIXED/REQUIRES ATTENTION**, since real field content is discarded. `--no-fix-invalid-tags` skips the rename attempt entirely, leaving the tag untouched instead of removed (also logged as `unfixed_non_numeric_tag`) — named "unfixed" because neither path actually gives the tag a valid replacement |
-| A URL subfield with a literally duplicated proxy prefix (e.g. an ezproxy wrapper repeated twice) | Always detected and logged as `doubled_proxy_url` (INFORMATIONAL), never auto-fixed — no safe correction to guess |
+| A URL subfield with a literally duplicated proxy prefix (e.g. an ezproxy wrapper repeated twice) | Always detected and logged in full as `doubled_proxy_url` (NEEDS REVIEW), never auto-fixed — no safe correction to guess |
 | Duplicate record identifiers (same `001`, or `907$a` if it looks like a Sierra bib number, on more than one record) | Always detected and logged (DUPLICATE RECORDS), never auto-fixed — no safe correction to guess |
 | A single Hebrew/Arabic/Cyrillic/Greek/CJK character welded directly between two ASCII letters with no word boundary (e.g. real data found: "Schr" + one CJK character + "inger", almost certainly a miskeyed "ö") | Always detected and logged as `suspect_marc8_escape` (NOT FIXED), never auto-fixed — there's no safe way to guess the intended character; flag this to the source system/cataloger to correct |
 | Leader bytes 05/06/08/17 (record status, type of record, type of control, encoding level) outside their valid MARC21 code set | Defaulted (05→`c`, 06→`a`, 08/17→blank) by default; `--no-fix-invalid-leader-bytes` to leave as-is; logged as `leader_byte_defaulted` (INFORMATIONAL) |
 | Double-encoded UTF-8 ("mojibake" — see table below) in a record already declaring UTF-8 | Fixed by default (only when re-decoding as UTF-8 actually succeeds, which is effectively impossible by coincidence for text that wasn't really double-encoded); `--no-fix-mojibake` to leave as-is; logged as `fixed_mojibake` (INFORMATIONAL) |
 | A Not-Repeatable field appears more than once (see `non_repeatable_tags.txt`, editable — e.g. two `245`s; real data found: a second "245" containing only `$a "2nd ed."`, almost certainly a mistagged `250`) | One occurrence is kept, every later one removed by default so the record is loadable — a strict importer like FOLIO can reject or mishandle the duplicate otherwise. Which one is kept is normally the first, with tag-specific exceptions: a duplicated `001` in a Sierra/Symphony record (`003` = "SIRSI", case-insensitive) keeps whichever occurrence starts with `u` (that system's real bib-id convention) rather than a stray OCLC number/barcode; a duplicated `005` or `008` keeps the most recent by date (ties keep the first). `--no-strip-duplicate-non-repeatable-fields` to leave as-is; the exact removed content is logged in full as `removed_non_repeatable_duplicate` under **FIXED/REQUIRES ATTENTION** (see Logging below) since real data was discarded |
 | 008 not exactly 40 characters | Padded with trailing spaces or truncated to 40 by default — a wrong-length 008 can make a record unloadable; `--no-fix-008-length` to leave as-is; the original content is logged in full as `fixed_008_length` under **FIXED/REQUIRES ATTENTION** |
-| A data field indicator character that isn't a digit or blank | Always detected and logged in full as `invalid_indicator_value` (INFORMATIONAL), never auto-fixed — no safe correction to guess |
+| A data field indicator character that isn't a digit or blank | Always detected and logged in full as `invalid_indicator_value` (NEEDS REVIEW), never auto-fixed — no safe correction to guess |
 | Leader byte 07 (bibliographic level) outside its valid MARC21 code set | Defaulted to `m` (Monograph/Item) by default; logged in full as `invalid_bibliographic_level` under **FIXED/REQUIRES ATTENTION**, since overwriting an invalid value is an arbitrary replacement, not a recovery of the original intent |
 | An 880 field's `$6` linking subfield references a tag that doesn't exist elsewhere in the record | Off by default — pass `--check-dangling-880-links` to detect and log it as `dangling_880_link` (INFORMATIONAL); never auto-fixed — breaks the record's own romanized/original-script pairing |
 | A 020 (ISBN) or 022 (ISSN) `$a` whose check digit fails the standard checksum for its length | Off by default — pass `--check-isbn-issn-checksum` to detect and log it as `invalid_isbn_issn_checksum` (INFORMATIONAL); never auto-fixed — no safe way to know which digit was wrong |
@@ -223,19 +223,26 @@ which bucket a given fix fell into:
    is a MARC file that's always loadable, even when that requires
    discarding something — but that loss is always surfaced here, never
    silent.
-3. **DUPLICATE RECORDS** — the same identifier (`001`, or `907$a` if it
+3. **NEEDS REVIEW** — detect-only, never touched, but always listed in
+   full (every matching record, not just header+count) because a
+   cataloger would plausibly want to look at each one individually: a
+   doubled proxy URL prefix (`doubled_proxy_url`), an indicator value
+   outside `[0-9 ]` (`invalid_indicator_value`). Less urgent than FIXED/
+   REQUIRES ATTENTION (nothing was actually changed here), but more
+   prominent than plain INFORMATIONAL below
+4. **DUPLICATE RECORDS** — the same identifier (`001`, or `907$a` if it
    looks like a Sierra bib number) used on more than one record
-4. **INFORMATIONAL** — either fixed via a fixed default/constant rather
+5. **INFORMATIONAL** — either fixed via a fixed default/constant rather
    than recovered from the record itself (a leader byte reset to a
    default code, the leader's entry-map constant restored, `$9`
    promoted to `$0`, typographic punctuation flattened, double-encoded
    UTF-8 corrected, a record transcoded MARC-8 → UTF-8, a non-numeric
    tag renamed to an unused 9XX slot, `999` remapped to `945`, an
-   oversized record's leader sentinel applied), or a detect-only
-   finding not urgent enough for NOT FIXED (a doubled proxy URL prefix,
-   an indicator value outside `[0-9 ]`, a dangling 880 `$6` link, an
-   ISBN/ISSN with a bad check digit). The header + count for every
-   category here always shows; some of the highest-volume ones need
+   oversized record's leader sentinel applied), or a lower-priority
+   detect-only finding (a dangling 880 `$6` link, an ISBN/ISSN with a
+   bad check digit). The header + count for every category here always
+   shows; every category is summary-only by default now (unlike NEEDS
+   REVIEW above) -- some of the highest-volume ones need
    `--log-informational` (or their own `--log-full`) before every
    matching record is also listed — see the flag list right below
 

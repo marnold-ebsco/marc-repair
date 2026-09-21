@@ -15,6 +15,7 @@ extracts exhibiting the three defect classes this tool targets:
 
 import glob
 import os
+import re
 import sys
 
 import pytest
@@ -42,6 +43,23 @@ def _resolve_log(log_path):
     if not matches:
         return log_path
     return type(log_path)(matches[0])
+
+
+def _detail_line_marker(category: str) -> re.Pattern:
+    """Pattern that only matches when `category` has an actual
+    per-record detail line logged in full -- not just its header+count
+    (LogEntry.render() no longer repeats the category name on every
+    row, since it's already stated once in the category's own header
+    right above; see LogEntry.render's own comment). Matches the
+    category's 3-line header followed immediately by a row starting
+    with "[" -- the only thing that can immediately follow the count
+    line when at least one record was actually listed."""
+    return re.compile(
+        rf"=== [^\n]*: {re.escape(category)}(?: \([^)\n]*\))? ===\n"
+        rf"=== [^\n]* ===\n"
+        rf"=== \d+ record\(s\) ===\n"
+        rf"\["
+    )
 
 
 def _read(name: str) -> str:
@@ -698,8 +716,8 @@ class TestCLIHelpers:
         content = _resolve_log(log).read_text(encoding="utf-8")
         assert "FIXED/REQUIRES ATTENTION: added_default_245" in content
         assert "FIXED/REQUIRES ATTENTION: added_default_008" in content
-        assert "[FIXED/REQUIRES ATTENTION]\tadded_default_245" in content
-        assert "[FIXED/REQUIRES ATTENTION]\tadded_default_008" in content
+        assert _detail_line_marker("added_default_245").search(content)
+        assert _detail_line_marker("added_default_008").search(content)
 
 
 # ---------------------------------------------------------------------------
@@ -993,7 +1011,7 @@ class TestLogInformational:
         # always gets one), just not the per-record detail line
         content = _resolve_log(log).read_text(encoding="utf-8")
         assert "INFORMATIONAL: normalized_smart_characters" in content
-        assert "[INFORMATIONAL]\tnormalized_smart_characters" not in content
+        assert not _detail_line_marker("normalized_smart_characters").search(content)
         # the fix itself still ran, even though it's not listed in full
         results = m.repair_text(m._read_text(str(out)))
         field = next(f for f in results[0].fields if f.tag == "520")
@@ -1014,6 +1032,5 @@ class TestLogInformational:
         log = tmp_path / "run.log"
         rc = m.main([str(src), "-o", str(out), "--log-informational", "--log", str(log)])
         assert rc == 0
-        assert "[INFORMATIONAL]\tnormalized_smart_characters" in _resolve_log(log).read_text(
-            encoding="utf-8"
-        )
+        content = _resolve_log(log).read_text(encoding="utf-8")
+        assert _detail_line_marker("normalized_smart_characters").search(content)
