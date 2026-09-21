@@ -4322,6 +4322,7 @@ def write_log(
     entries: list[LogEntry],
     active_categories: set[str] = frozenset(),
     full_categories: set[str] | None = None,
+    count_notes: dict[str, str] | None = None,
 ) -> None:
     """Write `entries` grouped into sections -- NOT FIXED, then FIXED/
     REQUIRES ATTENTION, then DUPLICATE RECORDS, then INFORMATIONAL at
@@ -4357,7 +4358,14 @@ def write_log(
     like), so a header+count is genuinely all there is to say about
     them. A category worth a cataloger's individual attention belongs
     in FIXED/REQUIRES ATTENTION or NEEDS REVIEW instead, not forced
-    full while still sitting in INFORMATIONAL."""
+    full while still sitting in INFORMATIONAL.
+
+    `count_notes` (category -> note text) appends " - <note>" onto
+    that category's own count line, for a category whose per-record
+    entries don't by themselves add up to some other total a reader
+    would want -- e.g. split_holdings_multiple_852's count is the
+    number of *input* records split, not how many holdings records
+    that produced in total."""
     if full_categories is None:
         full_categories = _ALWAYS_FULL_CATEGORIES
     groups: dict[tuple[int, str, str], list[LogEntry]] = {}
@@ -4378,7 +4386,11 @@ def write_log(
             fh.write(f"=== {label}: {display_category} ===\n")
             description = _CHECK_DESCRIPTIONS.get(category, "(no description available)")
             fh.write(f"=== {description} ===\n")
-            fh.write(f"=== {len(group)} record(s) ===\n")
+            count_note = (count_notes or {}).get(category)
+            count_line = f"{len(group)} record(s)"
+            if count_note:
+                count_line += f" - {count_note}"
+            fh.write(f"=== {count_line} ===\n")
             if category in full_categories and label != "INFORMATIONAL":
                 for e in group:
                     fh.write(e.render() + "\n")
@@ -4751,6 +4763,7 @@ def repair_holdings_records(
     n_total = 0
     n_written = 0
     n_unfixable = 0
+    n_new_holdings_records = 0
     bytes_consumed_for_estimate = 0
 
     def log(category: str, fixed: bool, record_idx: int, rec_id: str, detail: str) -> None:
@@ -4869,6 +4882,7 @@ def repair_holdings_records(
             for detail in incomplete_852_details:
                 log("incomplete_852", False, i, rec_id, detail)
             if len(records_to_write) > 1:
+                n_new_holdings_records += len(records_to_write) - 1
                 log(
                     "split_holdings_multiple_852", True, i, rec_id,
                     f"record had {len(records_to_write) + len(incomplete_852_details)} "
@@ -4948,9 +4962,16 @@ def repair_holdings_records(
     if fix_missing_852c:
         active_categories.add("added_missing_852c")
     resolved_full_categories = _ALWAYS_FULL_CATEGORIES | (full_categories or set())
+    count_notes = (
+        {
+            "split_holdings_multiple_852":
+                f"{n_new_holdings_records} new holdings record(s) added",
+        }
+        if n_new_holdings_records else None
+    )
     write_log(
         log_path, log_entries, active_categories=active_categories,
-        full_categories=resolved_full_categories,
+        full_categories=resolved_full_categories, count_notes=count_notes,
     )
     n_not_fixed = sum(1 for e in log_entries if _section_for(e)[1] == "NOT FIXED")
     return {

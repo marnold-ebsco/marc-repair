@@ -57,7 +57,7 @@ def _detail_line_marker(category: str) -> re.Pattern:
     return re.compile(
         rf"=== [^\n]*: {re.escape(category)}(?: \([^)\n]*\))? ===\n"
         rf"=== [^\n]* ===\n"
-        rf"=== \d+ record\(s\) ===\n"
+        rf"=== \d+ record\(s\)(?: - [^\n]*)? ===\n"
         rf"\t"
     )
 

@@ -57,7 +57,7 @@ def _detail_line_marker(category: str) -> re.Pattern:
     return re.compile(
         rf"=== [^\n]*: {re.escape(category)}(?: \([^)\n]*\))? ===\n"
         rf"=== [^\n]* ===\n"
-        rf"=== \d+ record\(s\) ===\n"
+        rf"=== \d+ record\(s\)(?: - [^\n]*)? ===\n"
         rf"\t"
     )
 
@@ -491,6 +491,7 @@ class TestRepairHoldingsRecords:
         assert result["written"] == 2
         content = _resolve_log(log).read_text(encoding="utf-8")
         assert _detail_line_marker("split_holdings_multiple_852").search(content)
+        assert "1 record(s) - 1 new holdings record(s) added" in content
         assert m.count_records(str(out)) == 2
         records = [
             m.read_intact_record(text)
@@ -504,6 +505,30 @@ class TestRepairHoldingsRecords:
             for code, data in f.subfields if code == "b"
         }
         assert b_values == {"Main Library", "Annex"}
+
+    def test_split_count_note_sums_new_records_across_multiple_source_records(self, tmp_path):
+        two_852s = [
+            m.Field_("004", None, None, content="local123"),
+            m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
+            m.Field_("852", "  ", [("b", "Main Library"), ("h", "ABC123")]),
+            m.Field_("852", "  ", [("b", "Annex"), ("h", "XYZ789")]),
+        ]
+        three_852s = [
+            m.Field_("004", None, None, content="local456"),
+            m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
+            m.Field_("852", "  ", [("b", "Main Library"), ("h", "AAA111")]),
+            m.Field_("852", "  ", [("b", "Annex"), ("h", "BBB222")]),
+            m.Field_("852", "  ", [("b", "Storage"), ("h", "CCC333")]),
+        ]
+        result, out, log = self._run(
+            tmp_path,
+            [self._holdings_record(fields=two_852s), self._holdings_record(fields=three_852s)],
+        )
+        assert result["total"] == 2
+        assert result["written"] == 5
+        content = _resolve_log(log).read_text(encoding="utf-8")
+        # 1 new record from the first split + 2 new from the second = 3
+        assert "2 record(s) - 3 new holdings record(s) added" in content
 
     def test_multiple_852_split_copies_get_suffixed_001(self, tmp_path):
         fields = [
