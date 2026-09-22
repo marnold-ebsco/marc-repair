@@ -4003,7 +4003,6 @@ _FIXED_REQUIRES_ATTENTION = {
     "incomplete_852",
     "invalid_bibliographic_level",
     "holdings_852_b_suspect_content",
-    "added_missing_852c",
 }
 
 #: INFORMATIONAL, at the very bottom: a fix applied via a fixed
@@ -4051,6 +4050,7 @@ _NEEDS_REVIEW = {
     "suspect_marc8_escape",
     "transcode_marc8_failed",
     "unfixed_non_numeric_tag",
+    "added_missing_852c",
 }
 
 #: UNFIXABLE, above even NOT FIXED: a record this tool concluded it
@@ -4321,6 +4321,7 @@ _ALWAYS_FULL_CATEGORIES = {
     "unfixed_non_numeric_tag",
     "invalid_bibliographic_level",
     "invalid_indicator_value",
+    "added_missing_852c",
 }
 
 
