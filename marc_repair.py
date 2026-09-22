@@ -5420,7 +5420,7 @@ def main(argv: list[str] | None = None) -> int:
         if counts["holdings"]:
             holdings_repaired_path = f"{base}_holdings_repaired{ext}"
             run_ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-            holdings_log_path = f"{base}_holdings_log_{run_ts}.log"
+            holdings_log_path = f"{base}_holdings_repaired_log_{run_ts}.log"
             holdings_progress = ProgressReporter(total_bytes=os.path.getsize(holdings_path))
             result = repair_holdings_records(
                 holdings_path,
@@ -5470,7 +5470,7 @@ def main(argv: list[str] | None = None) -> int:
         run_ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         log_path = (
             _timestamped_log_path(args.log, run_ts) if args.log
-            else f"{base}_log_{run_ts}.log"
+            else os.path.splitext(out_path)[0] + f"_log_{run_ts}.log"
         )
         repair_start = time.perf_counter()
         progress = ProgressReporter(total_bytes=os.path.getsize(args.input))

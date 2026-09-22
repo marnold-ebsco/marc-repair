@@ -693,7 +693,7 @@ class TestRepairHoldingsRecords:
         out = tmp_path / "holdings_only_repaired.mrc"
         assert out.exists()
         assert m.count_records(str(out)) == 1
-        logs = list(tmp_path.glob("holdings_only_log_*.log"))
+        logs = list(tmp_path.glob("holdings_only_repaired_log_*.log"))
         assert len(logs) == 1
         content = logs[0].read_text(encoding="utf-8")
         assert "added_default_holdings_008" in content

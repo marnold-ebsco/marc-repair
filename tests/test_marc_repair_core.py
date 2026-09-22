@@ -936,7 +936,7 @@ class TestSplitBibHoldings:
         assert "1 bib record(s)" in out
         assert "1 holdings record(s)" in out
         assert "holdings record(s) repaired" in out
-        logs = list(tmp_path.glob("mixed_holdings_log_*.log"))
+        logs = list(tmp_path.glob("mixed_holdings_repaired_log_*.log"))
         assert len(logs) == 1
         content = logs[0].read_text(encoding="utf-8")
         assert "added_default_holdings_008" in content
