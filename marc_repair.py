@@ -4326,6 +4326,41 @@ _ALWAYS_FULL_CATEGORIES = {
 }
 
 
+#: Where each 852 (Location)-related category sits within its own
+#: section's 852 cluster (see `_category_sort_key`) -- whole-field/
+#: whole-record concerns first (no single subfield to blame: either
+#: the field as a whole, or a subfield that varies per record, e.g.
+#: "whichever non-repeatable code got duplicated"), then subfield-
+#: specific ones grouped and ordered by subfield code.
+_852_CATEGORY_ORDER: dict[str, tuple[int, str]] = {
+    "added_missing_852_location": (0, ""),
+    "incomplete_852": (0, ""),
+    "split_holdings_multiple_852": (0, ""),
+    "removed_empty_852_subfield": (0, ""),
+    "holdings_852_duplicate_nr_subfield": (0, ""),
+    "holdings_852_b_suspect_content": (1, "b"),
+    "recoded_852_b_to_i": (1, "b"),
+    "removed_extra_852_b": (1, "b"),
+    "added_missing_852c": (1, "c"),
+    "removed_bad_call_number": (1, "h"),
+    "missing_call_number": (1, "h"),
+}
+
+
+def _category_sort_key(category: str) -> tuple:
+    """Sort key for a category within its section: every non-852
+    category keeps its plain alphabetical order; every 852 category
+    (see `_852_CATEGORY_ORDER`) sorts after all of those, clustered
+    together as one block -- whole-852/whole-record concerns first,
+    then subfield-specific ones in subfield-code order -- rather than
+    scattered wherever its own name happens to fall alphabetically."""
+    order852 = _852_CATEGORY_ORDER.get(category)
+    if order852 is None:
+        return (0, 0, "", category)
+    scope, subfield = order852
+    return (1, scope, subfield, category)
+
+
 def _timestamped_log_path(path: str, run_ts: str) -> str:
     """Insert `run_ts` right before `path`'s extension, so every log this
     tool writes is timestamped -- even one named explicitly via --log --
@@ -4394,8 +4429,12 @@ def write_log(
         order, label = _section_for_category(category)
         groups.setdefault((order, label, category), [])
 
+    def _group_sort_key(key: tuple[int, str, str]) -> tuple:
+        order, label, category = key
+        return (order, label, *_category_sort_key(category))
+
     with open(path, "a", encoding="utf-8") as fh:
-        for section_num, (order, label, category) in enumerate(sorted(groups)):
+        for section_num, (order, label, category) in enumerate(sorted(groups, key=_group_sort_key)):
             group = groups[(order, label, category)]
             if section_num > 0:
                 fh.write("\n")

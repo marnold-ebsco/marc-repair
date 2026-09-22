@@ -1,46 +1,46 @@
 === UNFIXABLE: unfixable ===
 === Record has no consistent directory in either parsing mode (or a field/base address too large for ISO 2709 to represent), or (holdings only) could not be structurally parsed at all, or a split copy's assembled length can't be represented in ISO 2709's fixed-width leader/directory -- written unchanged to the _error file instead of the main output. DATA LOSS. These records cannot be loaded. ===
 === 2 record(s) ===
-	2026-09-22T16:04:01Z	record 21	written to /tmp/ks_bib_repaired_error.mrc unchanged: tag 500: field is 10005 bytes, but the directory's length field is only 4 digits (max 9999) -- can't represent this field in ISO 2709 at all
-	2026-09-22T16:04:01Z	record 50	written to /tmp/ks_bib_repaired_error.mrc unchanged: no consistent directory found for this record at all
+	2026-09-22T21:55:31Z	record 21	written to /tmp/ks_bib_repaired_error.mrc unchanged: tag 500: field is 10005 bytes, but the directory's length field is only 4 digits (max 9999) -- can't represent this field in ISO 2709 at all
+	2026-09-22T21:55:31Z	record 50	written to /tmp/ks_bib_repaired_error.mrc unchanged: no consistent directory found for this record at all
 
 === FIXED/REQUIRES ATTENTION: added_default_008 ===
 === Record had no 008 -- a fixed generic placeholder was inserted. NO DATA LOSS. ===
 === 1 record(s) ===
-	2026-09-22T16:04:01Z	record 16 (ks-no008)	added default 008 (was missing): '780615s19uu    xx a                    d'
+	2026-09-22T21:55:31Z	record 16 (ks-no008)	added default 008 (was missing): '780615s19uu    xx a                    d'
 
 === FIXED/REQUIRES ATTENTION: added_default_245 ===
 === Record had no 245 -- a placeholder ($a "No title") was inserted. NO DATA LOSS. ===
 === 9 record(s) ===
-	2026-09-22T16:04:01Z	record 1 (ks-marc8)	added placeholder 245 (was missing): 00 $aNo title
-	2026-09-22T16:04:01Z	record 2 (ks-marc8fail)	added placeholder 245 (was missing): 00 $aNo title
-	2026-09-22T16:04:01Z	record 13 (ks-no245)	added placeholder 245 (was missing): 00 $aNo title
-	2026-09-22T16:04:01Z	record 14 (ks-245blanka)	added placeholder 245 (was missing): 00 $aNo title
-	2026-09-22T16:04:01Z	record 21 (ks-oversized-bad)	added placeholder 245 (was missing): 00 $aNo title
-	2026-09-22T16:04:01Z	record 22 (ks-suspectescape)	added placeholder 245 (was missing): 00 $aNo title
-	2026-09-22T16:04:01Z	record 36 (u664440)	added placeholder 245 (was missing): 00 $aNo title
-	2026-09-22T16:04:01Z	record 42 (u664440)	added placeholder 245 (was missing): 00 $aNo title
-	2026-09-22T16:04:01Z	record 48 (u664440)	added placeholder 245 (was missing): 00 $aNo title
+	2026-09-22T21:55:31Z	record 1 (ks-marc8)	added placeholder 245 (was missing): 00 $aNo title
+	2026-09-22T21:55:31Z	record 2 (ks-marc8fail)	added placeholder 245 (was missing): 00 $aNo title
+	2026-09-22T21:55:31Z	record 13 (ks-no245)	added placeholder 245 (was missing): 00 $aNo title
+	2026-09-22T21:55:31Z	record 14 (ks-245blanka)	added placeholder 245 (was missing): 00 $aNo title
+	2026-09-22T21:55:31Z	record 21 (ks-oversized-bad)	added placeholder 245 (was missing): 00 $aNo title
+	2026-09-22T21:55:31Z	record 22 (ks-suspectescape)	added placeholder 245 (was missing): 00 $aNo title
+	2026-09-22T21:55:31Z	record 36 (u664440)	added placeholder 245 (was missing): 00 $aNo title
+	2026-09-22T21:55:31Z	record 42 (u664440)	added placeholder 245 (was missing): 00 $aNo title
+	2026-09-22T21:55:31Z	record 48 (u664440)	added placeholder 245 (was missing): 00 $aNo title
 
 === FIXED/REQUIRES ATTENTION: field_removed_because_missing_a ===
 === A heading/added-entry field (or a holdings caption field) lacked a non-empty, non-punctuation-only $a -- the whole field removed. POSSIBLE DATA LOSS. ===
 === 16 record(s) ===
-	2026-09-22T16:04:01Z	record 10 (ks-missinga)	removed =650   0$zUnited States.	(missing required $a; content discarded)
-	2026-09-22T16:04:01Z	record 32 (u57283)	removed =130  0 $tNew Princeton encyclopedia of poetry and poetics.$kSelections.	(missing required $a; content discarded)
-	2026-09-22T16:04:01Z	record 33 (u581107)	removed =650   7$governors.	(missing required $a; content discarded)
-	2026-09-22T16:04:01Z	record 34 (u581759)	removed =650   0$zUnited States.	(missing required $a; content discarded)
-	2026-09-22T16:04:01Z	record 35 (u591049)	removed =650   0$vFiction.	(missing required $a; content discarded)
-	2026-09-22T16:04:01Z	record 35 (u591049)	removed =650   0$zIreland$zDublin.	(missing required $a; content discarded)
-	2026-09-22T16:04:01Z	record 38 (u57283)	removed =130  0 $tNew Princeton encyclopedia of poetry and poetics.$kSelections.	(missing required $a; content discarded)
-	2026-09-22T16:04:01Z	record 39 (u581107)	removed =650   7$governors.	(missing required $a; content discarded)
-	2026-09-22T16:04:01Z	record 40 (u581759)	removed =650   0$zUnited States.	(missing required $a; content discarded)
-	2026-09-22T16:04:01Z	record 41 (u591049)	removed =650   0$vFiction.	(missing required $a; content discarded)
-	2026-09-22T16:04:01Z	record 41 (u591049)	removed =650   0$zIreland$zDublin.	(missing required $a; content discarded)
-	2026-09-22T16:04:01Z	record 44 (u57283)	removed =130  0 $tNew Princeton encyclopedia of poetry and poetics.$kSelections.	(missing required $a; content discarded)
-	2026-09-22T16:04:01Z	record 45 (u581107)	removed =650   7$governors.	(missing required $a; content discarded)
-	2026-09-22T16:04:01Z	record 46 (u581759)	removed =650   0$zUnited States.	(missing required $a; content discarded)
-	2026-09-22T16:04:01Z	record 47 (u591049)	removed =650   0$vFiction.	(missing required $a; content discarded)
-	2026-09-22T16:04:01Z	record 47 (u591049)	removed =650   0$zIreland$zDublin.	(missing required $a; content discarded)
+	2026-09-22T21:55:31Z	record 10 (ks-missinga)	removed =650   0$zUnited States.	(missing required $a; content discarded)
+	2026-09-22T21:55:31Z	record 32 (u57283)	removed =130  0 $tNew Princeton encyclopedia of poetry and poetics.$kSelections.	(missing required $a; content discarded)
+	2026-09-22T21:55:31Z	record 33 (u581107)	removed =650   7$governors.	(missing required $a; content discarded)
+	2026-09-22T21:55:31Z	record 34 (u581759)	removed =650   0$zUnited States.	(missing required $a; content discarded)
+	2026-09-22T21:55:31Z	record 35 (u591049)	removed =650   0$vFiction.	(missing required $a; content discarded)
+	2026-09-22T21:55:31Z	record 35 (u591049)	removed =650   0$zIreland$zDublin.	(missing required $a; content discarded)
+	2026-09-22T21:55:31Z	record 38 (u57283)	removed =130  0 $tNew Princeton encyclopedia of poetry and poetics.$kSelections.	(missing required $a; content discarded)
+	2026-09-22T21:55:31Z	record 39 (u581107)	removed =650   7$governors.	(missing required $a; content discarded)
+	2026-09-22T21:55:31Z	record 40 (u581759)	removed =650   0$zUnited States.	(missing required $a; content discarded)
+	2026-09-22T21:55:31Z	record 41 (u591049)	removed =650   0$vFiction.	(missing required $a; content discarded)
+	2026-09-22T21:55:31Z	record 41 (u591049)	removed =650   0$zIreland$zDublin.	(missing required $a; content discarded)
+	2026-09-22T21:55:31Z	record 44 (u57283)	removed =130  0 $tNew Princeton encyclopedia of poetry and poetics.$kSelections.	(missing required $a; content discarded)
+	2026-09-22T21:55:31Z	record 45 (u581107)	removed =650   7$governors.	(missing required $a; content discarded)
+	2026-09-22T21:55:31Z	record 46 (u581759)	removed =650   0$zUnited States.	(missing required $a; content discarded)
+	2026-09-22T21:55:31Z	record 47 (u591049)	removed =650   0$vFiction.	(missing required $a; content discarded)
+	2026-09-22T21:55:31Z	record 47 (u591049)	removed =650   0$zIreland$zDublin.	(missing required $a; content discarded)
 
 === FIXED/REQUIRES ATTENTION: fixed_008_length ===
 === 008 wasn't exactly 40 characters -- padded or truncated to fit. NO DATA LOSS. ===
@@ -49,47 +49,47 @@
 === FIXED/REQUIRES ATTENTION: invalid_bibliographic_level ===
 === Leader byte 7 (bibliographic level) held a value outside MARC21's defined set -- defaulted to 'm' (Monograph/Item). NO DATA LOSS. ===
 === 1 record(s) ===
-	2026-09-22T16:04:01Z	record 25 (ks-badbiblevel)	leader byte 07 (bibliographic level) was '9', not one of ['a', 'b', 'c', 'd', 'i', 'm', 's']; defaulted to 'm'
+	2026-09-22T21:55:31Z	record 25 (ks-badbiblevel)	leader byte 07 (bibliographic level) was '9', not one of ['a', 'b', 'c', 'd', 'i', 'm', 's']; defaulted to 'm'
 
 === FIXED/REQUIRES ATTENTION: padded_indicators ===
 === A data field had 0 or 1 indicator characters instead of 2 -- padded with spaces. NO DATA LOSS. ===
 === 1 record(s) ===
-	2026-09-22T16:04:01Z	record 0 (ks-padind)	padded 1 space(s) into short indicators on =245 (was '0', first subfield '\x1faPadded in')
+	2026-09-22T21:55:31Z	record 0 (ks-padind)	padded 1 space(s) into short indicators on =245 (was '0', first subfield '\x1faPadded in')
 
 === FIXED/REQUIRES ATTENTION: reattached_orphaned_field ===
 === A field that had drifted outside its record's own boundaries was reattached to the record it actually belongs to. NO DATA LOSS. ===
 === 1 record(s) ===
-	2026-09-22T16:04:01Z	record 31 (ks-orphanhome)	reattached a trailing =700 field, present in the file but missing its own directory entry (so excluded from this record's own declared length): '1 \x1faQuinn, Frances,\x1fd1963-\x1e'
+	2026-09-22T21:55:31Z	record 31 (ks-orphanhome)	reattached a trailing =700 field, present in the file but missing its own directory entry (so excluded from this record's own declared length): '1 \x1faQuinn, Frances,\x1fd1963-\x1e'
 
 === FIXED/REQUIRES ATTENTION: removed_invalid_subfield ===
 === A subfield code that isn't a lowercase letter or digit -- the subfield removed. POSSIBLE DATA LOSS. ===
 === 1 record(s) ===
-	2026-09-22T16:04:01Z	record 8 (ks-badsubfield)	removed invalid subfield(s) '$Zbad code' from =500	(invalid subfield code; content discarded)
+	2026-09-22T21:55:31Z	record 8 (ks-badsubfield)	removed invalid subfield(s) '$Zbad code' from =500	(invalid subfield code; content discarded)
 
 === FIXED/REQUIRES ATTENTION: removed_non_repeatable_duplicate ===
 === A non-repeatable field (e.g. 001/005/008) appeared more than once on one record -- all but one copy removed. POSSIBLE DATA LOSS. ===
 === 1 record(s) ===
-	2026-09-22T16:04:01Z	record 11 (ks-dup245)	removed duplicate =245    $a2nd ed.	(non-repeatable field) -- POSSIBLE DATA LOSS
+	2026-09-22T21:55:31Z	record 11 (ks-dup245)	removed duplicate =245    $a2nd ed.	(non-repeatable field) -- POSSIBLE DATA LOSS
 
 === NEEDS REVIEW: doubled_proxy_url ===
 === A URL subfield (e.g. 856 $u) has a literally duplicated proxy prefix (e.g. an ezproxy wrapper repeated twice). NO DATA LOSS. ===
 === 1 record(s) ===
-	2026-09-22T16:04:01Z	record 23 (ks-doubledproxy)	tag 856 $u has a literally duplicated proxy prefix: 'https://ezproxy.example.edu/login?url=https://ezproxy.example.edu/login?url=http://vendor.example.com/book/123'
+	2026-09-22T21:55:31Z	record 23 (ks-doubledproxy)	tag 856 $u has a literally duplicated proxy prefix: 'https://ezproxy.example.edu/login?url=https://ezproxy.example.edu/login?url=http://vendor.example.com/book/123'
 
 === NEEDS REVIEW: invalid_indicator_value ===
 === An indicator held a value outside MARC21's defined set for that field. NO DATA LOSS. ===
 === 1 record(s) ===
-	2026-09-22T16:04:01Z	record 24 (ks-badindicatorvalue)	tag 245 indicators 'X0': indicator 1 is 'X', not a digit or blank
+	2026-09-22T21:55:31Z	record 24 (ks-badindicatorvalue)	tag 245 indicators 'X0': indicator 1 is 'X', not a digit or blank
 
 === NEEDS REVIEW: suspect_marc8_escape ===
 === A MARC-8 script-switching escape (Hebrew/Arabic/Cyrillic/Greek/CJK) produces only a single character, welded directly between two ASCII letters with no word boundary -- almost certainly a miskeyed accented letter, not real embedded foreign-script text; never auto-fixed, since there's no safe way to guess the intended character. NO DATA LOSS. ===
 === 1 record(s) ===
-	2026-09-22T16:04:01Z	record 22 (ks-suspectescape)	tag 880: single CJK/EACC character embedded mid-word ('r'<escape>'i') -- likely a miskeyed diacritic in the source record, not real CJK/EACC content; suggested fix: likely a miskeyed accented letter (e.g. ö, é, ñ, ü) in "Schr[?]inger" -- compare against another edition or an authority record to confirm the correct spelling; context: 'Schr\x1b$1)36\x1b(Binger'
+	2026-09-22T21:55:31Z	record 22 (ks-suspectescape)	tag 880: single CJK/EACC character embedded mid-word ('r'<escape>'i') -- likely a miskeyed diacritic in the source record, not real CJK/EACC content; suggested fix: likely a miskeyed accented letter (e.g. ö, é, ñ, ü) in "Schr[?]inger" -- compare against another edition or an authority record to confirm the correct spelling; context: 'Schr\x1b$1)36\x1b(Binger'
 
 === NEEDS REVIEW: transcode_marc8_failed ===
 === MARC-8-to-UTF-8 transcoding failed for this record's content -- left as MARC-8, error recorded. POSSIBLE DATA LOSS. ===
 === 1 record(s) ===
-	2026-09-22T16:04:01Z	record 2 (ks-marc8fail)	could not transcode MARC-8 -> UTF-8: tag 500 $a (invalid multibyte character encoding); context: '' >>> 'Truncated escape\x1b' <<< ''
+	2026-09-22T21:55:31Z	record 2 (ks-marc8fail)	could not transcode MARC-8 -> UTF-8: tag 500 $a (invalid multibyte character encoding); context: '' >>> 'Truncated escape\x1b' <<< ''
 
 === NEEDS REVIEW: unfixed_non_numeric_tag ===
 === A field's tag isn't 3 numeric digits -- normally auto-renamed to an unused 9XX slot (see invalid_tag); this fires only when that never happens. Named 'unfixed' because neither path that lands here actually gives the tag a valid replacement: --no-fix-invalid-tags skips the rename attempt entirely, so the invalid tag is left exactly as it was (no loss, but still won't load in FOLIO); every 9XX slot already taken means there's nowhere left to rename to, so the whole field is discarded instead of repaired. This count is 0 unless one of those two conditions actually occurs in this file. POSSIBLE DATA LOSS. ===
@@ -98,26 +98,26 @@
 === DUPLICATE RECORDS: duplicate_identifier ===
 === The same identifier (usually 001, or 907 $a for Sierra records) is used by more than one distinct record in this file. POSSIBLE DATA LOSS. ===
 === 20 record(s) ===
-	2026-09-22T16:04:01Z	record 29 (ks-dupe-id)	identifier used on 2 records total (also records [30]); this record's length (LDR 00-04) = 00149
-	2026-09-22T16:04:01Z	record 30 (ks-dupe-id)	identifier used on 2 records total (also records [29]); this record's length (LDR 00-04) = 00147
-	2026-09-22T16:04:01Z	record 32 (u57283)	identifier used on 3 records total (also records [38, 44]); this record's length (LDR 00-04) = 01035
-	2026-09-22T16:04:01Z	record 38 (u57283)	identifier used on 3 records total (also records [32, 44]); this record's length (LDR 00-04) = 01035
-	2026-09-22T16:04:01Z	record 44 (u57283)	identifier used on 3 records total (also records [32, 38]); this record's length (LDR 00-04) = 01035
-	2026-09-22T16:04:01Z	record 33 (u581107)	identifier used on 3 records total (also records [39, 45]); this record's length (LDR 00-04) = 03941
-	2026-09-22T16:04:01Z	record 39 (u581107)	identifier used on 3 records total (also records [33, 45]); this record's length (LDR 00-04) = 03941
-	2026-09-22T16:04:01Z	record 45 (u581107)	identifier used on 3 records total (also records [33, 39]); this record's length (LDR 00-04) = 03941
-	2026-09-22T16:04:01Z	record 34 (u581759)	identifier used on 3 records total (also records [40, 46]); this record's length (LDR 00-04) = 00847
-	2026-09-22T16:04:01Z	record 40 (u581759)	identifier used on 3 records total (also records [34, 46]); this record's length (LDR 00-04) = 00847
-	2026-09-22T16:04:01Z	record 46 (u581759)	identifier used on 3 records total (also records [34, 40]); this record's length (LDR 00-04) = 00847
-	2026-09-22T16:04:01Z	record 35 (u591049)	identifier used on 3 records total (also records [41, 47]); this record's length (LDR 00-04) = 01417
-	2026-09-22T16:04:01Z	record 41 (u591049)	identifier used on 3 records total (also records [35, 47]); this record's length (LDR 00-04) = 01417
-	2026-09-22T16:04:01Z	record 47 (u591049)	identifier used on 3 records total (also records [35, 41]); this record's length (LDR 00-04) = 01417
-	2026-09-22T16:04:01Z	record 36 (u664440)	identifier used on 3 records total (also records [42, 48]); this record's length (LDR 00-04) = 00244
-	2026-09-22T16:04:01Z	record 42 (u664440)	identifier used on 3 records total (also records [36, 48]); this record's length (LDR 00-04) = 00244
-	2026-09-22T16:04:01Z	record 48 (u664440)	identifier used on 3 records total (also records [36, 42]); this record's length (LDR 00-04) = 00244
-	2026-09-22T16:04:01Z	record 37 (u701774)	identifier used on 3 records total (also records [43, 49]); this record's length (LDR 00-04) = 02233
-	2026-09-22T16:04:01Z	record 43 (u701774)	identifier used on 3 records total (also records [37, 49]); this record's length (LDR 00-04) = 02233
-	2026-09-22T16:04:01Z	record 49 (u701774)	identifier used on 3 records total (also records [37, 43]); this record's length (LDR 00-04) = 02233
+	2026-09-22T21:55:31Z	record 29 (ks-dupe-id)	identifier used on 2 records total (also records [30]); this record's length (LDR 00-04) = 00149
+	2026-09-22T21:55:31Z	record 30 (ks-dupe-id)	identifier used on 2 records total (also records [29]); this record's length (LDR 00-04) = 00147
+	2026-09-22T21:55:31Z	record 32 (u57283)	identifier used on 3 records total (also records [38, 44]); this record's length (LDR 00-04) = 01035
+	2026-09-22T21:55:31Z	record 38 (u57283)	identifier used on 3 records total (also records [32, 44]); this record's length (LDR 00-04) = 01035
+	2026-09-22T21:55:31Z	record 44 (u57283)	identifier used on 3 records total (also records [32, 38]); this record's length (LDR 00-04) = 01035
+	2026-09-22T21:55:31Z	record 33 (u581107)	identifier used on 3 records total (also records [39, 45]); this record's length (LDR 00-04) = 03941
+	2026-09-22T21:55:31Z	record 39 (u581107)	identifier used on 3 records total (also records [33, 45]); this record's length (LDR 00-04) = 03941
+	2026-09-22T21:55:31Z	record 45 (u581107)	identifier used on 3 records total (also records [33, 39]); this record's length (LDR 00-04) = 03941
+	2026-09-22T21:55:31Z	record 34 (u581759)	identifier used on 3 records total (also records [40, 46]); this record's length (LDR 00-04) = 00847
+	2026-09-22T21:55:31Z	record 40 (u581759)	identifier used on 3 records total (also records [34, 46]); this record's length (LDR 00-04) = 00847
+	2026-09-22T21:55:31Z	record 46 (u581759)	identifier used on 3 records total (also records [34, 40]); this record's length (LDR 00-04) = 00847
+	2026-09-22T21:55:31Z	record 35 (u591049)	identifier used on 3 records total (also records [41, 47]); this record's length (LDR 00-04) = 01417
+	2026-09-22T21:55:31Z	record 41 (u591049)	identifier used on 3 records total (also records [35, 47]); this record's length (LDR 00-04) = 01417
+	2026-09-22T21:55:31Z	record 47 (u591049)	identifier used on 3 records total (also records [35, 41]); this record's length (LDR 00-04) = 01417
+	2026-09-22T21:55:31Z	record 36 (u664440)	identifier used on 3 records total (also records [42, 48]); this record's length (LDR 00-04) = 00244
+	2026-09-22T21:55:31Z	record 42 (u664440)	identifier used on 3 records total (also records [36, 48]); this record's length (LDR 00-04) = 00244
+	2026-09-22T21:55:31Z	record 48 (u664440)	identifier used on 3 records total (also records [36, 42]); this record's length (LDR 00-04) = 00244
+	2026-09-22T21:55:31Z	record 37 (u701774)	identifier used on 3 records total (also records [43, 49]); this record's length (LDR 00-04) = 02233
+	2026-09-22T21:55:31Z	record 43 (u701774)	identifier used on 3 records total (also records [37, 49]); this record's length (LDR 00-04) = 02233
+	2026-09-22T21:55:31Z	record 49 (u701774)	identifier used on 3 records total (also records [37, 43]); this record's length (LDR 00-04) = 02233
 
 === INFORMATIONAL: fixed_misplaced_subfield_code ===
 === A space was detected between the subfield delimiter character and the subfield code. Stray space removed. NO DATA LOSS. ===
