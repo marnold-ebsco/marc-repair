@@ -499,8 +499,9 @@ HOLDINGS_ROWS = [
     CategoryRow(
         '852 $c placeholder ("Migration") added', "Added subfield",
         "**Yes** (`--no-fix-missing-852c` to disable)", "`added_missing_852c`",
-        "INFORMATIONAL", "No -- INFORMATIONAL categories are never listed in full, "
-        "not even via --log-full",
+        "FIXED/REQUIRES ATTENTION",
+        "No (header + count always shown; full per-record list via "
+        "--log-full added_missing_852c)",
         "`--no-fix-missing-852c`",
     ),
     CategoryRow(

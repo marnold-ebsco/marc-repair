@@ -647,7 +647,7 @@ class TestRepairHoldingsRecords:
             str(src), str(out), str(log), fix_missing_852c=True,
         )
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert "=== INFORMATIONAL: added_missing_852c ===" in content
+        assert "=== FIXED/REQUIRES ATTENTION: added_missing_852c ===" in content
         parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
         field852 = next(f for f in parsed.fields if f.tag == "852")
         assert ("c", "Migration") in field852.subfields

@@ -3987,6 +3987,7 @@ _FIXED_REQUIRES_ATTENTION = {
     "incomplete_852",
     "invalid_bibliographic_level",
     "holdings_852_b_suspect_content",
+    "added_missing_852c",
 }
 
 #: INFORMATIONAL, at the very bottom: a fix applied via a fixed
@@ -4002,7 +4003,6 @@ _FIXED_REQUIRES_ATTENTION = {
 #: FIXED.
 _INFORMATIONAL = {
     "added_default_holdings_008",
-    "added_missing_852c",
     "holdings_multiple_004",
     "removed_null_identifier",
     "missing_call_number",
@@ -4180,7 +4180,7 @@ _CHECK_DESCRIPTIONS: dict[str, str] = {
     "($a \"No title\") was inserted. NO DATA LOSS.",
     "added_missing_852c": "852 (Location) had no $c (Shelving "
     "location) -- a placeholder was inserted (disable with "
-    "--no-fix-missing-852c). NO DATA LOSS.",
+    "--no-fix-missing-852c). POSSIBLE DATA LOSS.",
     "normalized_subfield_9_to_0": "A $9 subfield was rewritten to $0 "
     "(MARC21's standard authority-control-number code). NO DATA LOSS.",
     "normalized_smart_characters": "Typographic (\"smart\") quotes/"
