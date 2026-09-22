@@ -3280,11 +3280,27 @@ def strip_duplicate_non_repeatable_fields(
                     body = f.content or ""
                 else:
                     body = f.indicators + "".join(f"${c}{d}" for c, d in f.subfields)
-                details.append(f"removed duplicate ={f.tag}  {body}\t(non-repeatable field)")
+                detail = f"removed duplicate ={f.tag}  {body}\t(non-repeatable field)"
+                original = duplicates[0]
+                if f is not original and _fields_content_equal(f, original):
+                    detail += " -- NO DATA LOSS - fields are exact duplicates"
+                else:
+                    detail += " -- POSSIBLE DATA LOSS"
+                details.append(detail)
             continue
         kept_fields.append(f)
     parsed.fields = kept_fields
     return details
+
+
+def _fields_content_equal(a: Field_, b: Field_) -> bool:
+    """True if `a` and `b` carry identical content -- same control
+    content, or same indicators and subfields for a data field. Used
+    by `strip_duplicate_non_repeatable_fields` to tell a real duplicate
+    (safe to drop) from a removed field that merely shares a tag."""
+    if a.is_control() or b.is_control():
+        return a.is_control() == b.is_control() and (a.content or "") == (b.content or "")
+    return a.indicators == b.indicators and a.subfields == b.subfields
 
 
 def load_tag_list(path: str) -> set[str]:

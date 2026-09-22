@@ -2275,9 +2275,37 @@ class TestStripDuplicateNonRepeatableFields:
         details = m.strip_duplicate_non_repeatable_fields(parsed, {"245"})
         assert len(details) == 1
         assert "2nd ed." in details[0]
+        assert "POSSIBLE DATA LOSS" in details[0]
+        assert "NO DATA LOSS" not in details[0]
         remaining = [f for f in parsed.fields if f.tag == "245"]
         assert len(remaining) == 1
         assert remaining[0].subfields == [("a", "The geology of Nashville /")]
+
+    def test_exact_duplicate_field_flagged_no_data_loss(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[
+                m.Field_("245", "14", [("a", "The geology of Nashville /")]),
+                m.Field_("245", "14", [("a", "The geology of Nashville /")]),
+            ],
+        )
+        details = m.strip_duplicate_non_repeatable_fields(parsed, {"245"})
+        assert len(details) == 1
+        assert "NO DATA LOSS - fields are exact duplicates" in details[0]
+
+    def test_exact_duplicate_control_field_flagged_no_data_loss(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[
+                m.Field_("005", None, None, content="20200101120000.0"),
+                m.Field_("005", None, None, content="20200101120000.0"),
+            ],
+        )
+        details = m.strip_duplicate_non_repeatable_fields(parsed, {"005"})
+        assert len(details) == 1
+        assert "NO DATA LOSS - fields are exact duplicates" in details[0]
 
     def test_leaves_single_occurrence_alone(self):
         parsed = m.ParsedRecord(
