@@ -466,7 +466,7 @@ HOLDINGS_ROWS = [
         "856 (Electronic Location and Access) missing $u (URI) -- same "
         "real-world validation, same reasoning",
         "Flagged only, no change", "detect-only",
-        "`holdings_856_missing_u`", "NOT FIXED", "**Yes**",
+        "`holdings_856_missing_u`", "NEEDS REVIEW", "**Yes**",
         "-- (detect-only, no switch)",
     ),
     CategoryRow(

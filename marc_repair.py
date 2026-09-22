@@ -4051,6 +4051,7 @@ _NEEDS_REVIEW = {
     "transcode_marc8_failed",
     "unfixed_non_numeric_tag",
     "added_missing_852c",
+    "holdings_856_missing_u",
 }
 
 #: UNFIXABLE, above even NOT FIXED: a record this tool concluded it

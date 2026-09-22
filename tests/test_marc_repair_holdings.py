@@ -1201,7 +1201,7 @@ class TestRepairHoldingsRecords:
         f853 = next(f for f in parsed.fields if f.tag == "853")
         assert ("a", "2nd 1997") in f853.subfields
 
-    def test_856_missing_u_flagged_not_fixed(self, tmp_path):
+    def test_856_missing_u_flagged_needs_review(self, tmp_path):
         fields = [
             m.Field_("004", None, None, content="ocm123"),
             m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
@@ -1210,8 +1210,7 @@ class TestRepairHoldingsRecords:
         ]
         result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert "holdings_856_missing_u" in content
-        assert "=== NOT FIXED:" in content
+        assert "=== NEEDS REVIEW: holdings_856_missing_u ===" in content
         parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
         f856 = next(f for f in parsed.fields if f.tag == "856")
         assert ("a", "Fulltext Ebsco OA database 1911-2013") in f856.subfields

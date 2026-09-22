@@ -1,38 +1,33 @@
 === UNFIXABLE: unfixable ===
 === Record has no consistent directory in either parsing mode (or a field/base address too large for ISO 2709 to represent), or (holdings only) could not be structurally parsed at all, or a split copy's assembled length can't be represented in ISO 2709's fixed-width leader/directory -- written unchanged to the _error file instead of the main output. DATA LOSS. These records cannot be loaded. ===
 === 2 record(s) ===
-	2026-09-22T21:31:00Z	record 17	written to /tmp/ks_holdings_repaired_error.mrc unchanged: tag 500: field is 10005 bytes, but the directory's length field is only 4 digits (max 9999) -- can't represent this field in ISO 2709 at all
-	2026-09-22T21:31:00Z	record 50	written to /tmp/ks_holdings_repaired_error.mrc unchanged: no consistent directory found for this record at all
+	2026-09-22T21:40:44Z	record 17	written to /tmp/ks_holdings_repaired_error.mrc unchanged: tag 500: field is 10005 bytes, but the directory's length field is only 4 digits (max 9999) -- can't represent this field in ISO 2709 at all
+	2026-09-22T21:40:44Z	record 50	written to /tmp/ks_holdings_repaired_error.mrc unchanged: no consistent directory found for this record at all
 
 === NOT FIXED: holdings_853_missing_8 ===
 === An 853 (Captions and Pattern) field has no $8 (Field link and sequence number) -- the 863/864/865 enumeration fields that should reference it can't be linked. POSSIBLE DATA LOSS. ===
 === 1 record(s) ===
-	2026-09-22T21:31:00Z	record 19	=853    $av. has no $8 subfield
-
-=== NOT FIXED: holdings_856_missing_u ===
-=== An 856 (Electronic Location and Access) field has no $u (URI) -- the field exists but has no actual link. NO DATA LOSS. ===
-=== 1 record(s) ===
-	2026-09-22T21:31:00Z	record 20	=856  4 $zAvailable online has no $u subfield
+	2026-09-22T21:40:44Z	record 19	=853    $av. has no $8 subfield
 
 === NOT FIXED: holdings_escape_sequence ===
 === A holdings record contains a raw ESC (0x1B) byte -- likely an un-transcoded MARC-8 escape sequence (MARC-8-to-UTF-8 conversion is currently skipped for holdings). NO DATA LOSS. ===
 === 1 record(s) ===
-	2026-09-22T21:31:00Z	record 10	contains an ESC (0x1B) byte -- possible unconverted MARC-8 escape sequence (not transcoded -- MARC-8-to-UTF-8 conversion is skipped for holdings records for now)
+	2026-09-22T21:40:44Z	record 10	contains an ESC (0x1B) byte -- possible unconverted MARC-8 escape sequence (not transcoded -- MARC-8-to-UTF-8 conversion is skipped for holdings records for now)
 
 === NOT FIXED: holdings_missing_004 ===
 === Holdings record has no 004 (link to its bib record) at all. POSSIBLE DATA LOSS. ===
 === 1 record(s) ===
-	2026-09-22T21:31:00Z	record 15	record has no 004 field (Control Number linking to the bibliographic record)
+	2026-09-22T21:40:44Z	record 15	record has no 004 field (Control Number linking to the bibliographic record)
 
 === FIXED/REQUIRES ATTENTION: added_missing_852_location ===
 === 852 (Location) had none of $a/$b/$c -- a placeholder was inserted so the field means something. NO DATA LOSS. ===
 === 1 record(s) ===
-	2026-09-22T21:31:00Z	record 21	added missing 852 $b: 'Migration'
+	2026-09-22T21:40:44Z	record 21	added missing 852 $b: 'Migration'
 
 === FIXED/REQUIRES ATTENTION: field_removed_because_missing_a ===
 === A heading/added-entry field (or a holdings caption field) lacked a non-empty, non-punctuation-only $a -- the whole field removed. POSSIBLE DATA LOSS. ===
 === 1 record(s) ===
-	2026-09-22T21:31:00Z	record 22	removed =866    $zNote only, no statement	(missing required $a; content discarded)
+	2026-09-22T21:40:44Z	record 22	removed =866    $zNote only, no statement	(missing required $a; content discarded)
 
 === FIXED/REQUIRES ATTENTION: fixed_holdings_008_length ===
 === Holdings 008 wasn't exactly 32 characters -- padded or truncated to fit. NO DATA LOSS. ===
@@ -41,57 +36,57 @@
 === FIXED/REQUIRES ATTENTION: holdings_852_b_suspect_content ===
 === An 852 $b (Sublocation) looks like data that migrated into the wrong subfield -- purely numeric, or containing flattened subfield-delimiter markers -- and is replaced wholesale with 'Migration'. POSSIBLE DATA LOSS. ===
 === 1 record(s) ===
-	2026-09-22T21:31:00Z	record 18	=852    $b0 is purely numeric, not a location code -- replaced with placeholder 'Migration'
+	2026-09-22T21:40:44Z	record 18	=852    $b0 is purely numeric, not a location code -- replaced with placeholder 'Migration'
 
 === FIXED/REQUIRES ATTENTION: holdings_852_duplicate_nr_subfield ===
 === 852 (Location) had a Not-Repeatable subfield (e.g. $h) more than once -- every occurrence after the first removed. POSSIBLE DATA LOSS. ===
 === 1 record(s) ===
-	2026-09-22T21:31:00Z	record 23	removed duplicate Not-Repeatable subfield(s) $hA2 1983 from =852    $aMain Library$hZ678.9$hA2 1983$cStacks
+	2026-09-22T21:40:44Z	record 23	removed duplicate Not-Repeatable subfield(s) $hA2 1983 from =852    $aMain Library$hZ678.9$hA2 1983$cStacks
 
 === FIXED/REQUIRES ATTENTION: holdings_leader_byte_defaulted ===
 === Same as leader_byte_defaulted, using holdings' own valid-value set. NO DATA LOSS. ===
 === 31 record(s) ===
-	2026-09-22T21:31:00Z	record 0	leader byte 17 (encoding level) was ' ', defaulted to 'u'
-	2026-09-22T21:31:00Z	record 1	leader byte 17 (encoding level) was ' ', defaulted to 'u'
-	2026-09-22T21:31:00Z	record 2	leader byte 06 (type of record) was '!', defaulted to 'u'
-	2026-09-22T21:31:00Z	record 2	leader byte 17 (encoding level) was ' ', defaulted to 'u'
-	2026-09-22T21:31:00Z	record 3	leader byte 17 (encoding level) was ' ', defaulted to 'u'
-	2026-09-22T21:31:00Z	record 4	leader byte 17 (encoding level) was ' ', defaulted to 'u'
-	2026-09-22T21:31:00Z	record 5	leader byte 17 (encoding level) was ' ', defaulted to 'u'
-	2026-09-22T21:31:00Z	record 6	leader byte 17 (encoding level) was ' ', defaulted to 'u'
-	2026-09-22T21:31:00Z	record 7	leader byte 17 (encoding level) was ' ', defaulted to 'u'
-	2026-09-22T21:31:00Z	record 8	leader byte 17 (encoding level) was ' ', defaulted to 'u'
-	2026-09-22T21:31:00Z	record 9	leader byte 17 (encoding level) was ' ', defaulted to 'u'
-	2026-09-22T21:31:00Z	record 10	leader byte 17 (encoding level) was ' ', defaulted to 'u'
-	2026-09-22T21:31:00Z	record 11	leader byte 17 (encoding level) was ' ', defaulted to 'u'
-	2026-09-22T21:31:00Z	record 12	leader byte 17 (encoding level) was ' ', defaulted to 'u'
-	2026-09-22T21:31:00Z	record 13	leader byte 17 (encoding level) was ' ', defaulted to 'u'
-	2026-09-22T21:31:00Z	record 14	leader byte 17 (encoding level) was ' ', defaulted to 'u'
-	2026-09-22T21:31:00Z	record 15	leader byte 17 (encoding level) was ' ', defaulted to 'u'
-	2026-09-22T21:31:00Z	record 16	leader byte 17 (encoding level) was ' ', defaulted to 'u'
-	2026-09-22T21:31:00Z	record 17	leader byte 17 (encoding level) was ' ', defaulted to 'u'
-	2026-09-22T21:31:00Z	record 18	leader byte 17 (encoding level) was ' ', defaulted to 'u'
-	2026-09-22T21:31:00Z	record 19	leader byte 17 (encoding level) was ' ', defaulted to 'u'
-	2026-09-22T21:31:00Z	record 20	leader byte 17 (encoding level) was ' ', defaulted to 'u'
-	2026-09-22T21:31:00Z	record 21	leader byte 17 (encoding level) was ' ', defaulted to 'u'
-	2026-09-22T21:31:00Z	record 22	leader byte 17 (encoding level) was ' ', defaulted to 'u'
-	2026-09-22T21:31:00Z	record 23	leader byte 17 (encoding level) was ' ', defaulted to 'u'
-	2026-09-22T21:31:00Z	record 24	leader byte 17 (encoding level) was ' ', defaulted to 'u'
-	2026-09-22T21:31:00Z	record 25	leader byte 17 (encoding level) was ' ', defaulted to 'u'
-	2026-09-22T21:31:00Z	record 26 (ks-hol-dupe-id)	leader byte 17 (encoding level) was ' ', defaulted to 'u'
-	2026-09-22T21:31:00Z	record 27 (ks-hol-dupe-id)	leader byte 17 (encoding level) was ' ', defaulted to 'u'
-	2026-09-22T21:31:00Z	record 28	leader byte 17 (encoding level) was ' ', defaulted to 'u'
-	2026-09-22T21:31:00Z	record 29	leader byte 17 (encoding level) was ' ', defaulted to 'u'
+	2026-09-22T21:40:44Z	record 0	leader byte 17 (encoding level) was ' ', defaulted to 'u'
+	2026-09-22T21:40:44Z	record 1	leader byte 17 (encoding level) was ' ', defaulted to 'u'
+	2026-09-22T21:40:44Z	record 2	leader byte 06 (type of record) was '!', defaulted to 'u'
+	2026-09-22T21:40:44Z	record 2	leader byte 17 (encoding level) was ' ', defaulted to 'u'
+	2026-09-22T21:40:44Z	record 3	leader byte 17 (encoding level) was ' ', defaulted to 'u'
+	2026-09-22T21:40:44Z	record 4	leader byte 17 (encoding level) was ' ', defaulted to 'u'
+	2026-09-22T21:40:44Z	record 5	leader byte 17 (encoding level) was ' ', defaulted to 'u'
+	2026-09-22T21:40:44Z	record 6	leader byte 17 (encoding level) was ' ', defaulted to 'u'
+	2026-09-22T21:40:44Z	record 7	leader byte 17 (encoding level) was ' ', defaulted to 'u'
+	2026-09-22T21:40:44Z	record 8	leader byte 17 (encoding level) was ' ', defaulted to 'u'
+	2026-09-22T21:40:44Z	record 9	leader byte 17 (encoding level) was ' ', defaulted to 'u'
+	2026-09-22T21:40:44Z	record 10	leader byte 17 (encoding level) was ' ', defaulted to 'u'
+	2026-09-22T21:40:44Z	record 11	leader byte 17 (encoding level) was ' ', defaulted to 'u'
+	2026-09-22T21:40:44Z	record 12	leader byte 17 (encoding level) was ' ', defaulted to 'u'
+	2026-09-22T21:40:44Z	record 13	leader byte 17 (encoding level) was ' ', defaulted to 'u'
+	2026-09-22T21:40:44Z	record 14	leader byte 17 (encoding level) was ' ', defaulted to 'u'
+	2026-09-22T21:40:44Z	record 15	leader byte 17 (encoding level) was ' ', defaulted to 'u'
+	2026-09-22T21:40:44Z	record 16	leader byte 17 (encoding level) was ' ', defaulted to 'u'
+	2026-09-22T21:40:44Z	record 17	leader byte 17 (encoding level) was ' ', defaulted to 'u'
+	2026-09-22T21:40:44Z	record 18	leader byte 17 (encoding level) was ' ', defaulted to 'u'
+	2026-09-22T21:40:44Z	record 19	leader byte 17 (encoding level) was ' ', defaulted to 'u'
+	2026-09-22T21:40:44Z	record 20	leader byte 17 (encoding level) was ' ', defaulted to 'u'
+	2026-09-22T21:40:44Z	record 21	leader byte 17 (encoding level) was ' ', defaulted to 'u'
+	2026-09-22T21:40:44Z	record 22	leader byte 17 (encoding level) was ' ', defaulted to 'u'
+	2026-09-22T21:40:44Z	record 23	leader byte 17 (encoding level) was ' ', defaulted to 'u'
+	2026-09-22T21:40:44Z	record 24	leader byte 17 (encoding level) was ' ', defaulted to 'u'
+	2026-09-22T21:40:44Z	record 25	leader byte 17 (encoding level) was ' ', defaulted to 'u'
+	2026-09-22T21:40:44Z	record 26 (ks-hol-dupe-id)	leader byte 17 (encoding level) was ' ', defaulted to 'u'
+	2026-09-22T21:40:44Z	record 27 (ks-hol-dupe-id)	leader byte 17 (encoding level) was ' ', defaulted to 'u'
+	2026-09-22T21:40:44Z	record 28	leader byte 17 (encoding level) was ' ', defaulted to 'u'
+	2026-09-22T21:40:44Z	record 29	leader byte 17 (encoding level) was ' ', defaulted to 'u'
 
 === FIXED/REQUIRES ATTENTION: incomplete_852 ===
 === One 852 (Location) among several on a holdings record had no $b at all -- dropped entirely rather than becoming its own split record. POSSIBLE DATA LOSS. ===
 === 1 record(s) ===
-	2026-09-22T21:31:00Z	record 24	removed 852 with no $b (Sublocation): =852    $aNo sublocation on this one$hGHI789$cMigration
+	2026-09-22T21:40:44Z	record 24	removed 852 with no $b (Sublocation): =852    $aNo sublocation on this one$hGHI789$cMigration
 
 === FIXED/REQUIRES ATTENTION: padded_indicators ===
 === A data field had 0 or 1 indicator characters instead of 2 -- padded with spaces. NO DATA LOSS. ===
 === 1 record(s) ===
-	2026-09-22T21:31:00Z	record 0	padded 1 space(s) into short indicators on =852 (was ' ', first subfield '\x1faMain Libr')
+	2026-09-22T21:40:44Z	record 0	padded 1 space(s) into short indicators on =852 (was ' ', first subfield '\x1faMain Libr')
 
 === FIXED/REQUIRES ATTENTION: recoded_852_b_to_i ===
 === 852 had a second $b positioned after $h -- recoded to $i (it's the cutter/copy number that goes with $h, just miscoded). NO DATA LOSS. ===
@@ -100,7 +95,7 @@
 === FIXED/REQUIRES ATTENTION: removed_bad_call_number ===
 === An 852 $h (call number) that was unusable (e.g. punctuation-only) -- removed. POSSIBLE DATA LOSS. ===
 === 1 record(s) ===
-	2026-09-22T21:31:00Z	record 25	=852 $h. -- removed unusable $h subfield(s) '$h.' (empty or punctuation-only; rest of the field left as-is)
+	2026-09-22T21:40:44Z	record 25	=852 $h. -- removed unusable $h subfield(s) '$h.' (empty or punctuation-only; rest of the field left as-is)
 
 === FIXED/REQUIRES ATTENTION: removed_empty_852_subfield ===
 === An 852 (Location) subfield (other than $h) was present but held no data -- removed. NO DATA LOSS. ===
@@ -109,66 +104,71 @@
 === FIXED/REQUIRES ATTENTION: removed_extra_852_b ===
 === An 852 had more than one $b (Sublocation) after the first was already recoded to $i -- the extras removed. POSSIBLE DATA LOSS. ===
 === 1 record(s) ===
-	2026-09-22T21:31:00Z	record 14	removed duplicate 852 $b 'Main Library' from =852    $bMain Library$bMain Library$hABC123 (identical to another $b already in this field)
+	2026-09-22T21:40:44Z	record 14	removed duplicate 852 $b 'Main Library' from =852    $bMain Library$bMain Library$hABC123 (identical to another $b already in this field)
 
 === FIXED/REQUIRES ATTENTION: removed_invalid_subfield ===
 === A subfield code that isn't a lowercase letter or digit -- the subfield removed. POSSIBLE DATA LOSS. ===
 === 1 record(s) ===
-	2026-09-22T21:31:00Z	record 5	removed invalid subfield(s) '$Zbad code' from =852	(invalid subfield code; content discarded)
+	2026-09-22T21:40:44Z	record 5	removed invalid subfield(s) '$Zbad code' from =852	(invalid subfield code; content discarded)
 
 === FIXED/REQUIRES ATTENTION: split_holdings_multiple_852 ===
 === A holdings record had more than one usable 852 (Location) -- split into one record per 852, with "-2", "-3", etc. appended to each additional copy's 001. NO DATA LOSS. ===
 === 1 record(s) - 1 new holdings record(s) added ===
-	2026-09-22T21:31:00Z	record 24	record had 3 852 (Location) fields; split into 2 holdings records, one per usable 852
+	2026-09-22T21:40:44Z	record 24	record had 3 852 (Location) fields; split into 2 holdings records, one per usable 852
 
 === NEEDS REVIEW: added_missing_852c ===
 === 852 (Location) had no $c (Shelving location) -- a placeholder was inserted (disable with --no-fix-missing-852c). POSSIBLE DATA LOSS. ===
 === 39 record(s) ===
-	2026-09-22T21:31:00Z	record 0	added missing 852 $c: 'Migration'
-	2026-09-22T21:31:00Z	record 1	added missing 852 $c: 'Migration'
-	2026-09-22T21:31:00Z	record 2	added missing 852 $c: 'Migration'
-	2026-09-22T21:31:00Z	record 3	added missing 852 $c: 'Migration'
-	2026-09-22T21:31:00Z	record 4	added missing 852 $c: 'Migration'
-	2026-09-22T21:31:00Z	record 5	added missing 852 $c: 'Migration'
-	2026-09-22T21:31:00Z	record 6	added missing 852 $c: 'Migration'
-	2026-09-22T21:31:00Z	record 7	added missing 852 $c: 'Migration'
-	2026-09-22T21:31:00Z	record 8	added missing 852 $c: 'Migration'
-	2026-09-22T21:31:00Z	record 9	added missing 852 $c: 'Migration'
-	2026-09-22T21:31:00Z	record 10	added missing 852 $c: 'Migration'
-	2026-09-22T21:31:00Z	record 11	added missing 852 $c: 'Migration'
-	2026-09-22T21:31:00Z	record 12	added missing 852 $c: 'Migration'
-	2026-09-22T21:31:00Z	record 13	added missing 852 $c: 'Migration'
-	2026-09-22T21:31:00Z	record 14	added missing 852 $c: 'Migration'
-	2026-09-22T21:31:00Z	record 15	added missing 852 $c: 'Migration'
-	2026-09-22T21:31:00Z	record 16	added missing 852 $c: 'Migration'
-	2026-09-22T21:31:00Z	record 21	added missing 852 $c: 'Migration'
-	2026-09-22T21:31:00Z	record 24	added missing 852 $c: 'Migration'
-	2026-09-22T21:31:00Z	record 30 (2)	added missing 852 $c: 'Migration'
-	2026-09-22T21:31:00Z	record 31 (3)	added missing 852 $c: 'Migration'
-	2026-09-22T21:31:00Z	record 32 (5)	added missing 852 $c: 'Migration'
-	2026-09-22T21:31:00Z	record 33 (6)	added missing 852 $c: 'Migration'
-	2026-09-22T21:31:00Z	record 34 (7)	added missing 852 $c: 'Migration'
-	2026-09-22T21:31:00Z	record 35 (8)	added missing 852 $c: 'Migration'
-	2026-09-22T21:31:00Z	record 36 (9)	added missing 852 $c: 'Migration'
-	2026-09-22T21:31:00Z	record 37 (10)	added missing 852 $c: 'Migration'
-	2026-09-22T21:31:00Z	record 38 (11)	added missing 852 $c: 'Migration'
-	2026-09-22T21:31:00Z	record 39 (12)	added missing 852 $c: 'Migration'
-	2026-09-22T21:31:00Z	record 40 (13)	added missing 852 $c: 'Migration'
-	2026-09-22T21:31:00Z	record 41 (14)	added missing 852 $c: 'Migration'
-	2026-09-22T21:31:00Z	record 42 (15)	added missing 852 $c: 'Migration'
-	2026-09-22T21:31:00Z	record 43 (16)	added missing 852 $c: 'Migration'
-	2026-09-22T21:31:00Z	record 44 (17)	added missing 852 $c: 'Migration'
-	2026-09-22T21:31:00Z	record 45 (18)	added missing 852 $c: 'Migration'
-	2026-09-22T21:31:00Z	record 46 (19)	added missing 852 $c: 'Migration'
-	2026-09-22T21:31:00Z	record 47 (20)	added missing 852 $c: 'Migration'
-	2026-09-22T21:31:00Z	record 48 (21)	added missing 852 $c: 'Migration'
-	2026-09-22T21:31:00Z	record 49 (22)	added missing 852 $c: 'Migration'
+	2026-09-22T21:40:44Z	record 0	added missing 852 $c: 'Migration'
+	2026-09-22T21:40:44Z	record 1	added missing 852 $c: 'Migration'
+	2026-09-22T21:40:44Z	record 2	added missing 852 $c: 'Migration'
+	2026-09-22T21:40:44Z	record 3	added missing 852 $c: 'Migration'
+	2026-09-22T21:40:44Z	record 4	added missing 852 $c: 'Migration'
+	2026-09-22T21:40:44Z	record 5	added missing 852 $c: 'Migration'
+	2026-09-22T21:40:44Z	record 6	added missing 852 $c: 'Migration'
+	2026-09-22T21:40:44Z	record 7	added missing 852 $c: 'Migration'
+	2026-09-22T21:40:44Z	record 8	added missing 852 $c: 'Migration'
+	2026-09-22T21:40:44Z	record 9	added missing 852 $c: 'Migration'
+	2026-09-22T21:40:44Z	record 10	added missing 852 $c: 'Migration'
+	2026-09-22T21:40:44Z	record 11	added missing 852 $c: 'Migration'
+	2026-09-22T21:40:44Z	record 12	added missing 852 $c: 'Migration'
+	2026-09-22T21:40:44Z	record 13	added missing 852 $c: 'Migration'
+	2026-09-22T21:40:44Z	record 14	added missing 852 $c: 'Migration'
+	2026-09-22T21:40:44Z	record 15	added missing 852 $c: 'Migration'
+	2026-09-22T21:40:44Z	record 16	added missing 852 $c: 'Migration'
+	2026-09-22T21:40:44Z	record 21	added missing 852 $c: 'Migration'
+	2026-09-22T21:40:44Z	record 24	added missing 852 $c: 'Migration'
+	2026-09-22T21:40:44Z	record 30 (2)	added missing 852 $c: 'Migration'
+	2026-09-22T21:40:44Z	record 31 (3)	added missing 852 $c: 'Migration'
+	2026-09-22T21:40:44Z	record 32 (5)	added missing 852 $c: 'Migration'
+	2026-09-22T21:40:44Z	record 33 (6)	added missing 852 $c: 'Migration'
+	2026-09-22T21:40:44Z	record 34 (7)	added missing 852 $c: 'Migration'
+	2026-09-22T21:40:44Z	record 35 (8)	added missing 852 $c: 'Migration'
+	2026-09-22T21:40:44Z	record 36 (9)	added missing 852 $c: 'Migration'
+	2026-09-22T21:40:44Z	record 37 (10)	added missing 852 $c: 'Migration'
+	2026-09-22T21:40:44Z	record 38 (11)	added missing 852 $c: 'Migration'
+	2026-09-22T21:40:44Z	record 39 (12)	added missing 852 $c: 'Migration'
+	2026-09-22T21:40:44Z	record 40 (13)	added missing 852 $c: 'Migration'
+	2026-09-22T21:40:44Z	record 41 (14)	added missing 852 $c: 'Migration'
+	2026-09-22T21:40:44Z	record 42 (15)	added missing 852 $c: 'Migration'
+	2026-09-22T21:40:44Z	record 43 (16)	added missing 852 $c: 'Migration'
+	2026-09-22T21:40:44Z	record 44 (17)	added missing 852 $c: 'Migration'
+	2026-09-22T21:40:44Z	record 45 (18)	added missing 852 $c: 'Migration'
+	2026-09-22T21:40:44Z	record 46 (19)	added missing 852 $c: 'Migration'
+	2026-09-22T21:40:44Z	record 47 (20)	added missing 852 $c: 'Migration'
+	2026-09-22T21:40:44Z	record 48 (21)	added missing 852 $c: 'Migration'
+	2026-09-22T21:40:44Z	record 49 (22)	added missing 852 $c: 'Migration'
+
+=== NEEDS REVIEW: holdings_856_missing_u ===
+=== An 856 (Electronic Location and Access) field has no $u (URI) -- the field exists but has no actual link. NO DATA LOSS. ===
+=== 1 record(s) ===
+	2026-09-22T21:40:44Z	record 20	=856  4 $zAvailable online has no $u subfield
 
 === DUPLICATE RECORDS: duplicate_identifier ===
 === The same identifier (usually 001, or 907 $a for Sierra records) is used by more than one distinct record in this file. POSSIBLE DATA LOSS. ===
 === 2 record(s) ===
-	2026-09-22T21:31:00Z	record 26 (ks-hol-dupe-id)	identifier used on 2 records total (also records [27]); this record's length (LDR 00-04) = 00160
-	2026-09-22T21:31:00Z	record 27 (ks-hol-dupe-id)	identifier used on 2 records total (also records [26]); this record's length (LDR 00-04) = 00154
+	2026-09-22T21:40:44Z	record 26 (ks-hol-dupe-id)	identifier used on 2 records total (also records [27]); this record's length (LDR 00-04) = 00160
+	2026-09-22T21:40:44Z	record 27 (ks-hol-dupe-id)	identifier used on 2 records total (also records [26]); this record's length (LDR 00-04) = 00154
 
 === INFORMATIONAL: added_default_holdings_008 ===
 === Holdings record had no 008 -- a fixed generic 32-byte placeholder was inserted. NO DATA LOSS. ===
