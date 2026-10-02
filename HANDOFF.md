@@ -151,6 +151,34 @@ an unambiguous "Tübingen" fragment, returns `None` on no match, returns
 `None` on an ambiguous two-word fragment, and returns empty indexes when
 `encoding_used="utf-8"`.
 
+## NEXT TASK: run against WTS_bibs_2026-10-01.out on EC2 -- "no output"
+
+Not started. User wants to run marc_repair against `WTS_bibs_2026-10-01.out`
+(421MB / 263,595 bib records -- same file used for the
+`suspect_marc8_escape` analysis above and the MARC-8 truncation
+investigation; two known real problem records in it: `.b11165406` and
+`.b11227394`, both genuine multi-byte-truncated 880 fields, see
+`transcode_marc8_failed` in a full `--log` run) on the EC2 box, but is
+getting no output there.
+
+Locally (WSL, this repo, venv activated) this file runs fine, e.g.:
+
+    python3 marc_repair.py WTS_bibs_2026-10-01.out -o /tmp/wts_repaired.mrc --log /tmp/wts_report.log
+
+-- takes ~100-110s, prints progress lines to stderr (record counts/rate/ETA)
+and a final summary line to stdout, produces `/tmp/wts_report.log` (or
+similar) with `transcode_marc8_failed: 2 record(s)` among the findings.
+
+EC2 install is managed by `install.sh` (see the EC2 deploy note elsewhere
+in past handoffs/git history -- `/working/migration/scripts/marc_repair`,
+no `.git`, `venv/bin/marc_repair` on PATH directly). "No output" needs
+triage: is the process actually running (check for a hung/killed process,
+disk space for the repaired output + log on a 421MB input), is it an old
+pre-fix install (re-run `install.sh --dir .` -- it self-updates on first
+run and asks for a second run to apply), is output being redirected/lost
+rather than genuinely absent, or is this a different failure mode
+entirely (crash with no traceback, permissions, etc.)?
+
 ## Context usage at handoff (from `/context`)
 
 - Model: claude-sonnet-5
