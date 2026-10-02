@@ -303,15 +303,19 @@ fixtures.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/marnold-ebsco/marc-repair/main/install.sh \
-  | bash -s -- --dir ~/marc_repair            # add --interpreter pypy for PyPy instead
+  | bash -s --            # installs to ./marc_repair; add --interpreter pypy for PyPy instead
 ```
+
+This creates `marc_repair` in whatever directory you ran the command
+from. Pass `--dir PATH` to install somewhere else instead (e.g. `--dir
+~/marc_repair`).
 
 Re-run the same command later to update in place (the venv is reused
 unless the interpreter choice changes), or check without changing
 anything:
 
 ```bash
-~/marc_repair/install.sh --dir ~/marc_repair --check
+./marc_repair/install.sh --check
 ```
 
 Run `install.sh --help` for all options.
