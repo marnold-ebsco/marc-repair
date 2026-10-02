@@ -710,7 +710,14 @@ class TestPromptsForMissingInput:
 class TestCLIHelpers:
     def test_default_output_path_appends_repaired_before_extension(self):
         assert m._default_output_path("/tmp/foo.mrc") == "/tmp/foo_repaired.mrc"
-        assert m._default_output_path("/tmp/foo") == "/tmp/foo_repaired"
+
+    def test_default_output_path_always_uses_mrc_extension(self):
+        # Repaired output is always valid binary MARC, regardless of the
+        # input's own extension (or lack of one) -- e.g. .marc, .dat, or
+        # a pasted-text .txt file should still get a .mrc sibling.
+        assert m._default_output_path("/tmp/foo") == "/tmp/foo_repaired.mrc"
+        assert m._default_output_path("/tmp/foo.marc") == "/tmp/foo_repaired.mrc"
+        assert m._default_output_path("/tmp/foo.txt") == "/tmp/foo_repaired.mrc"
 
     def test_main_writes_repaired_file_next_to_input(self, tmp_path):
         src = tmp_path / "bad_length.mrc"

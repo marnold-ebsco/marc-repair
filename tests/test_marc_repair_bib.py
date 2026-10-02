@@ -2294,6 +2294,37 @@ class TestStripDuplicateNonRepeatableFields:
         assert len(details) == 1
         assert "NO DATA LOSS - fields are exact duplicates" in details[0]
 
+    def test_long_title_body_truncated_in_detail(self):
+        long_title = (
+            "The geology of Nashville and surrounding Davidson "
+            "County, a very long subtitle that goes on and on /"
+        )
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[
+                m.Field_("245", "14", [("a", long_title)]),
+                m.Field_("245", "14", [("a", long_title)]),
+            ],
+        )
+        details = m.strip_duplicate_non_repeatable_fields(parsed, {"245"})
+        assert len(details) == 1
+        assert long_title not in details[0]
+        assert "The geology of Nashvi..." in details[0]
+
+    def test_short_body_not_truncated(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[
+                m.Field_("245", "14", [("a", "The geology of Nashville /")]),
+                m.Field_("245", "  ", [("a", "2nd ed.")]),
+            ],
+        )
+        details = m.strip_duplicate_non_repeatable_fields(parsed, {"245"})
+        assert "2nd ed." in details[0]
+        assert "..." not in details[0]
+
     def test_exact_duplicate_control_field_flagged_no_data_loss(self):
         parsed = m.ParsedRecord(
             leader="0" * 24,

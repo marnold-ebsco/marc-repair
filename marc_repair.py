@@ -149,12 +149,13 @@ from __future__ import annotations
 
 import argparse
 import codecs
+import io
 import json
 import os
 import re
 import sys
 import time
-from contextlib import contextmanager
+from contextlib import contextmanager, redirect_stderr
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from typing import Callable, Iterator
@@ -2123,6 +2124,29 @@ _MARC8_SCRIPT_ESCAPE = re.compile(
     r"\x1b([($])(" + "|".join(re.escape(k) for k in _MARC8_SCRIPT_CHARSETS) + r")"
 )
 
+#: pymarc's marc8_to_unicode() doesn't raise on a truncated multi-byte
+#: (CJK/EACC) character -- it writes this warning straight to stderr
+#: and silently substitutes a blank space, so the defect would
+#: otherwise vanish into the console with no record/field attribution
+#: at all. `transcode_marc8_to_utf8` captures stderr around the call
+#: and matches this pattern to turn it into a proper, logged failure
+#: instead (see `_Marc8MultibyteTruncated`).
+_MARC8_MULTIBYTE_TRUNCATED_RE = re.compile(
+    r"Multi-byte position (\d+) exceeds length of marc8 string (\d+)"
+)
+
+
+class _Marc8MultibyteTruncated(Exception):
+    """Raised by `transcode_marc8_to_utf8.convert` when pymarc reports
+    (via stderr, not an exception -- see `_MARC8_MULTIBYTE_TRUNCATED_RE`)
+    that a multi-byte MARC-8 character ran off the end of the field.
+    `byte_pos` is the offset into the latin-1-encoded field bytes where
+    the truncated character starts, for building a context snippet."""
+
+    def __init__(self, message: str, byte_pos: int) -> None:
+        super().__init__(message)
+        self.byte_pos = byte_pos
+
 
 def find_suspect_marc8_escapes(parsed: ParsedRecord) -> list[tuple[str, str]]:
     """Flag a MARC-8 script-switching escape (Hebrew/Arabic/Cyrillic/
@@ -2229,10 +2253,11 @@ def transcode_marc8_to_utf8(parsed: ParsedRecord) -> bool:
     Raises RuntimeError if pymarc isn't installed -- run `pip install -r
     requirements.txt` first -- or if any field's MARC-8 content fails to
     transcode (genuinely malformed bytes, e.g. a truncated escape
-    sequence); that message names the specific tag/subfield and shows
-    ~10 characters of context on each side of the actual error position,
-    so a human reviewing the log has enough to actually find and judge
-    the defect, not just a bare byte offset.
+    sequence or a multi-byte CJK/EACC character cut off at the end of a
+    field); that message names the specific tag/subfield and shows ~10
+    characters of context on each side of the actual error position, so
+    a human reviewing the log has enough to actually find and judge the
+    defect, not just a bare byte offset.
     """
     if parsed.leader[9:10] == UNICODE_ENCODING_BYTE:
         return False
@@ -2270,7 +2295,23 @@ def transcode_marc8_to_utf8(parsed: ParsedRecord) -> bool:
         # always latin-1-decoded 1:1 from the original bytes (see
         # `_read_text_with_encoding`), so re-encoding with latin-1
         # here recovers those exact original bytes losslessly.
-        return marc8_to_unicode(text.encode("latin-1"), hide_utf8_warnings=True)
+        #
+        # pymarc doesn't raise for a truncated multi-byte (CJK/EACC)
+        # character -- it writes a warning to stderr and substitutes a
+        # blank space, which would otherwise discard this defect
+        # silently (see `_MARC8_MULTIBYTE_TRUNCATED_RE`). Capture
+        # stderr around the call so that warning can be turned into a
+        # proper logged failure instead.
+        captured_stderr = io.StringIO()
+        with redirect_stderr(captured_stderr):
+            result = marc8_to_unicode(text.encode("latin-1"), hide_utf8_warnings=True)
+        warning = captured_stderr.getvalue()
+        if warning:
+            match = _MARC8_MULTIBYTE_TRUNCATED_RE.search(warning)
+            if match:
+                raise _Marc8MultibyteTruncated(warning.strip(), int(match.group(1)))
+            raise RuntimeError(warning.strip())
+        return result
 
     def convert_labeled(text: str, label: str) -> str:
         # Wraps `convert` to re-raise with `label` (e.g. "tag 500 $a")
@@ -2287,6 +2328,19 @@ def transcode_marc8_to_utf8(parsed: ParsedRecord) -> bool:
             after = text[exc.end:exc.end + 10]
             raise RuntimeError(
                 f"{label} ({exc.reason}); context: {before!r} >>> {bad!r} <<< {after!r}"
+            ) from exc
+        except _Marc8MultibyteTruncated as exc:
+            raw = text.encode("latin-1")
+            start = max(0, exc.byte_pos - 10)
+            end = min(len(raw), exc.byte_pos + 10)
+            # decode defensively -- this is a byte-offset window into
+            # raw MARC-8, which may not land on a clean latin-1
+            # boundary around a multi-byte escape, but latin-1 maps
+            # every byte value so this never actually raises.
+            context = raw[start:end].decode("latin-1")
+            raise RuntimeError(
+                f"{label} (truncated multi-byte MARC-8 character); "
+                f"context: {context!r}"
             ) from exc
 
     # Compute every field's converted value BEFORE mutating `parsed` at
@@ -3227,6 +3281,15 @@ _DUPLICATE_FIELD_RESOLVERS = {
     "008": _choose_kept_008,
 }
 
+#: How much of a removed duplicate field's own content (indicators +
+#: subfields, or control content) `strip_duplicate_non_repeatable_fields`
+#: shows in its log detail -- a duplicate 245 can carry a full title
+#: statement, and the log only needs enough of it to recognize the
+#: field, not the whole thing (real example: a record with the same
+#: 245 $a repeated verbatim produced a single log line over 150
+#: characters long for what is, by definition, an exact duplicate).
+_DUPLICATE_FIELD_BODY_TRUNCATE_LEN = 25
+
 
 def strip_duplicate_non_repeatable_fields(
     parsed: ParsedRecord, non_repeatable_tags: set[str]
@@ -3280,6 +3343,8 @@ def strip_duplicate_non_repeatable_fields(
                     body = f.content or ""
                 else:
                     body = f.indicators + "".join(f"${c}{d}" for c, d in f.subfields)
+                if len(body) > _DUPLICATE_FIELD_BODY_TRUNCATE_LEN:
+                    body = body[:_DUPLICATE_FIELD_BODY_TRUNCATE_LEN] + "..."
                 detail = f"removed duplicate ={f.tag}  {body}\t(non-repeatable field)"
                 original = duplicates[0]
                 if f is not original and _fields_content_equal(f, original):
@@ -3840,8 +3905,12 @@ def find_and_fix_mojibake(parsed: ParsedRecord) -> list[str]:
 # ---------------------------------------------------------------------------
 
 def _default_output_path(input_path: str) -> str:
-    base, ext = os.path.splitext(input_path)
-    return f"{base}_repaired{ext}"
+    # Always .mrc regardless of the input's own extension (e.g. .marc,
+    # .dat, pasted-text .txt) -- the repaired output is always valid
+    # binary MARC, so it should always get the extension that implies
+    # that, not whatever the (possibly misleading) input happened to use.
+    base, _ext = os.path.splitext(input_path)
+    return f"{base}_repaired.mrc"
 
 
 def _load_overrides(path: str) -> dict[int, dict[int, list[tuple[str, list[tuple[str, str]]]]]]:
@@ -5237,6 +5306,28 @@ def main(argv: list[str] | None = None) -> int:
         "listed in full",
     )
     parser.add_argument(
+        "--sample-problems",
+        metavar="PATH",
+        help="write the raw, original bytes of up to --sample-limit "
+        "records that triggered at least one not-fixed finding (e.g. "
+        "unfixable, transcode_marc8_failed, suspect_marc8_escape -- "
+        "anything that would show up under REQUIRES ATTENTION in --log) "
+        "to PATH as a small standalone .mrc file -- meant for handing a "
+        "compact, representative sample of a file's actual problems to "
+        "someone (or something) else for analysis, without sending the "
+        "whole file. Records with only auto-fixed findings (e.g. "
+        "padded_indicators) don't count -- those aren't problems "
+        "needing a second look",
+    )
+    parser.add_argument(
+        "--sample-limit",
+        type=int,
+        default=25,
+        metavar="N",
+        help="max number of records to write to --sample-problems "
+        "(default: 25); has no effect without --sample-problems",
+    )
+    parser.add_argument(
         "--no-fix-misplaced-subfield-codes",
         dest="fix_misplaced_subfield_codes",
         action="store_false",
@@ -5459,7 +5550,7 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
         if counts["holdings"]:
-            holdings_repaired_path = f"{base}_holdings_repaired{ext}"
+            holdings_repaired_path = f"{base}_holdings_repaired.mrc"
             run_ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
             holdings_log_path = f"{base}_holdings_repaired_log_{run_ts}.log"
             holdings_progress = ProgressReporter(total_bytes=os.path.getsize(holdings_path))
@@ -5491,7 +5582,7 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
         if counts["bib"]:
-            bib_repaired_path = f"{base}_bib_repaired{ext}"
+            bib_repaired_path = f"{base}_bib_repaired.mrc"
             # Recurses into this same function for the bib side, exactly
             # as if the user separately ran `marc_repair.py bib_path -o
             # bib_repaired_path` -- reuses the whole default bib pipeline
@@ -5506,8 +5597,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.repair_holdings:
-        base, ext = os.path.splitext(args.input)
-        out_path = args.out or f"{base}_repaired{ext}"
+        base, _ext = os.path.splitext(args.input)
+        out_path = args.out or f"{base}_repaired.mrc"
         run_ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         log_path = (
             _timestamped_log_path(args.log, run_ts) if args.log
@@ -5665,6 +5756,7 @@ def main(argv: list[str] | None = None) -> int:
     # per record, not the parsed record data.
     id_records: list[tuple[int, str, str]] = []
     progress = ProgressReporter(total_bytes=os.path.getsize(args.input))
+    n_sampled = 0
 
     def log(category: str, fixed: bool, record_idx: int, rec_id: str, detail: str) -> None:
         log_entries.append(LogEntry(category, fixed, ts, record_idx, rec_id, detail))
@@ -5674,7 +5766,11 @@ def main(argv: list[str] | None = None) -> int:
                 open(mrk_path, "w", encoding="utf-8", errors="surrogateescape")
                 if mrk_path else _null_writer()
             ) as mrk_fh, \
-            _LazyBinaryWriter(error_path) as error_fh:
+            _LazyBinaryWriter(error_path) as error_fh, \
+            (
+                _LazyBinaryWriter(args.sample_problems)
+                if args.sample_problems else _null_writer()
+            ) as sample_fh:
         record_stream = iter_repair_stream(
             args.input,
             normalized_overrides,
@@ -5698,6 +5794,7 @@ def main(argv: list[str] | None = None) -> int:
                 progress.maybe_print_estimate(n_total, bytes_consumed_for_estimate)
             progress.maybe_print(n_total)
             ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            log_entries_before_record = len(log_entries)
 
             if parsed.unresolved:
                 reason = parsed.unresolved[0][3]
@@ -5885,6 +5982,27 @@ def main(argv: list[str] | None = None) -> int:
                             rec_encoding = "utf-8" if parsed.leader[9:10] == "a" else "latin-1"
                             pending_tag_fixes.append((i, offset, len(assembled), rec_encoding))
 
+            # --sample-problems: this record counts as a "problem" if
+            # anything logged for it above was NOT auto-fixed -- the same
+            # set of findings that'd show up under REQUIRES ATTENTION in
+            # --log. Checked against log_entries_before_record rather than
+            # a running per-record flag so nothing above needs to know
+            # this feature exists. Misses the rare case where a tag gets
+            # renamed instead of stripped (pending_tag_fixes, logged only
+            # after this whole loop ends) or a duplicate identifier
+            # (found only after a full pass) -- both acceptable gaps for
+            # a best-effort sample, not a guaranteed-complete one.
+            if (
+                args.sample_problems
+                and n_sampled < args.sample_limit
+                and any(
+                    not entry.fixed
+                    for entry in log_entries[log_entries_before_record:]
+                )
+            ):
+                sample_fh.write(rec_text.encode(encoding_used, errors="surrogateescape"))
+                n_sampled += 1
+
     progress.finish()
 
     if pending_tag_fixes:
@@ -6004,6 +6122,8 @@ def main(argv: list[str] | None = None) -> int:
     elapsed = time.perf_counter() - start_time
     n_clean = n_total - n_unfixable
     print(f"Wrote {n_clean}/{n_total} record(s) to {out_path} in {elapsed:.2f}s")
+    if args.sample_problems:
+        print(f"{n_sampled} problem record(s) sampled to {args.sample_problems}")
     if n_unfixable:
         print(
             f"{n_unfixable} record(s) could not be auto-repaired at all -- written, "
