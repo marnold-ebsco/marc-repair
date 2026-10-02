@@ -82,6 +82,30 @@ echo "Resolving latest commit for ${REPO}@${REF}..."
 REMOTE_SHA="$(resolve_sha)"
 echo "Latest commit: ${REMOTE_SHA}"
 
+# install.sh isn't in FILES below -- it can't safely rewrite itself
+# mid-loop the way those files get rewritten -- so a stale local copy
+# would otherwise silently keep running old install.sh logic forever,
+# even once its downloaded files report "up to date". Check and
+# refresh it separately, here, before anything else runs.
+if [[ "$0" == *install.sh && -f "$0" ]]; then
+  TMP_INSTALL_SH="$(mktemp)"
+  curl -fsSL "https://raw.githubusercontent.com/${REPO}/${REMOTE_SHA}/install.sh" -o "$TMP_INSTALL_SH"
+  if ! cmp -s "$TMP_INSTALL_SH" "$0"; then
+    if [[ "$CHECK_ONLY" -eq 1 ]]; then
+      echo "install.sh itself has an update available upstream (in addition to any shown below)."
+      rm -f "$TMP_INSTALL_SH"
+    else
+      echo "install.sh itself changed upstream -- updating it now; re-run the same command to pick up the fix."
+      cp "$TMP_INSTALL_SH" "$0"
+      chmod +x "$0"
+      rm -f "$TMP_INSTALL_SH"
+      exit 0
+    fi
+  else
+    rm -f "$TMP_INSTALL_SH"
+  fi
+fi
+
 LOCAL_SHA=""
 if [[ -f "${INSTALL_DIR}/${VERSION_MARKER}" ]]; then
   LOCAL_SHA="$(cat "${INSTALL_DIR}/${VERSION_MARKER}")"
