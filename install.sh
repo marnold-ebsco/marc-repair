@@ -50,11 +50,21 @@ usage() {
   sed -n '/^# Usage:/,/^set -euo/p' "$0" | sed '$d; s/^# \{0,1\}//'
 }
 
+# `set -u` turns a missing $2 (e.g. a bare trailing "--dir") into an
+# "unbound variable" crash with no context -- this checks for it up
+# front so a dropped value gets a clear error instead.
+need_value() {
+  if [[ $# -lt 2 ]]; then
+    echo "Error: $1 requires a value" >&2
+    exit 1
+  fi
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --dir) INSTALL_DIR="$2"; DIR_EXPLICIT=1; shift 2 ;;
-    --interpreter) INTERPRETER="$2"; shift 2 ;;
-    --ref) REF="$2"; shift 2 ;;
+    --dir) need_value "$@"; INSTALL_DIR="$2"; DIR_EXPLICIT=1; shift 2 ;;
+    --interpreter) need_value "$@"; INTERPRETER="$2"; shift 2 ;;
+    --ref) need_value "$@"; REF="$2"; shift 2 ;;
     --recreate-venv) RECREATE_VENV=1; shift ;;
     --no-link) NO_LINK=1; shift ;;
     --check) CHECK_ONLY=1; shift ;;
