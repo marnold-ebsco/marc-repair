@@ -16,6 +16,7 @@
 #   --interpreter NAME   cpython (default) or pypy
 #   --ref REF            Branch or tag to install from (default: main)
 #   --recreate-venv      Delete and rebuild the venv even if one exists
+#   --no-link            Don't symlink marc_repair onto PATH (see below)
 #   --check              Only report whether an update is available; change nothing
 #   -h, --help           Show this help
 
@@ -27,6 +28,7 @@ INTERPRETER="cpython"
 REF="main"
 RECREATE_VENV=0
 CHECK_ONLY=0
+NO_LINK=0
 
 # Files needed to run marc_repair.py, relative to repo root. Deliberately
 # excludes tests/, fixtures, and generated data -- see docs/REPAIR_CATEGORIES.md
@@ -53,6 +55,7 @@ while [[ $# -gt 0 ]]; do
     --interpreter) INTERPRETER="$2"; shift 2 ;;
     --ref) REF="$2"; shift 2 ;;
     --recreate-venv) RECREATE_VENV=1; shift ;;
+    --no-link) NO_LINK=1; shift ;;
     --check) CHECK_ONLY=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage; exit 1 ;;
@@ -142,6 +145,19 @@ echo "Installing marc_repair and its dependencies (incl. pymarc)..."
 "${VENV_DIR}/bin/pip" install --quiet --upgrade pip
 "${VENV_DIR}/bin/pip" install --quiet "${INSTALL_DIR}"
 
+# Symlink the venv's marc_repair onto PATH so it runs bare, without
+# activating the venv first -- only into ~/.local/bin, and only if
+# that's already on PATH, since guessing at a system-wide location
+# (e.g. /usr/local/bin) could silently require sudo or fail.
+LINKED_PATH=""
+if [[ "$NO_LINK" -eq 0 ]]; then
+  if [[ ":$PATH:" == *":$HOME/.local/bin:"* ]]; then
+    mkdir -p "$HOME/.local/bin"
+    ln -sf "$(cd "${VENV_DIR}/bin" && pwd)/marc_repair" "$HOME/.local/bin/marc_repair"
+    LINKED_PATH="$HOME/.local/bin/marc_repair"
+  fi
+fi
+
 # $0 is "bash" when run via `curl | bash -s --`, so it's not a usable
 # path to re-invoke -- fall back to re-fetching via curl in that case.
 case "$0" in
@@ -153,13 +169,28 @@ cat <<EOF
 
 Done. marc_repair (${INTERPRETER}, commit ${REMOTE_SHA:0:12}) is ready at:
   ${INSTALL_DIR}
+EOF
 
-Activate and run:
+if [[ -n "$LINKED_PATH" ]]; then
+  cat <<EOF
+
+Linked to ${LINKED_PATH} -- just run:
+  marc_repair --help
+EOF
+else
+  cat <<EOF
+
+Could not symlink onto PATH (~/.local/bin isn't on it, or --no-link was
+passed). Activate and run:
   source "${VENV_DIR}/bin/activate"
   marc_repair --help
 
 Or without activating:
   "${VENV_DIR}/bin/marc_repair" --help
+EOF
+fi
+
+cat <<EOF
 
 Check for updates later without changing anything:
   ${RERUN_CMD} --dir "${INSTALL_DIR}" --interpreter ${INTERPRETER} --check

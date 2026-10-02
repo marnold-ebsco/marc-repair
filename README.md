@@ -300,7 +300,9 @@ cd marc_repair
 `pyproject.toml`, `requirements.txt`, the two tag files, and the docs)
 pinned to one commit, and builds a ready-to-use venv with the `marc_repair`
 command installed into it — no `git clone`, no repo history, no test
-fixtures.
+fixtures. If `~/.local/bin` is already on your `PATH`, it also symlinks
+`marc_repair` there so you can run it bare, with no venv activation step
+(pass `--no-link` to skip this).
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/marnold-ebsco/marc-repair/main/install.sh \
