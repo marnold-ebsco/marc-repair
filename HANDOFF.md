@@ -151,33 +151,59 @@ an unambiguous "Tübingen" fragment, returns `None` on no match, returns
 `None` on an ambiguous two-word fragment, and returns empty indexes when
 `encoding_used="utf-8"`.
 
-## NEXT TASK: run against WTS_bibs_2026-10-01.out on EC2 -- "no output"
+## RESOLVED: WTS_bibs_2026-10-01.out "no output" -- O(n^2) corpus-index bug
 
-Not started. User wants to run marc_repair against `WTS_bibs_2026-10-01.out`
-(421MB / 263,595 bib records -- same file used for the
-`suspect_marc8_escape` analysis above and the MARC-8 truncation
-investigation; two known real problem records in it: `.b11165406` and
-`.b11227394`, both genuine multi-byte-truncated 880 fields, see
-`transcode_marc8_failed` in a full `--log` run) on the EC2 box, but is
-getting no output there.
+Root cause found and fixed (2026-10-02). It was never a buffering or
+EC2-specific issue -- `build_marc8_corpus_index` (added in `2a69437`,
+the same-file corpus lookup for `suspect_marc8_escape`) decoded the
+*whole* input file to one string, then for every `_MARC8_DIACRITIC_BYTE_RE`
+match did `text[:pos]` and `text[pos + 2:]` -- unbounded slices copying
+an ever-larger chunk of the whole file on every single match. On
+`WTS_bibs_2026-10-01.out` (421MB) there are 149,138 such matches, so
+this was genuinely O(n^2): hundreds of MB copied per match, ~150k times
+over. The process pegged one core at ~100% CPU (mostly *sys* time from
+the huge repeated allocations, confirmed via `/proc/<pid>/fd` showing
+no open fd for the input/output files at all -- it had already
+`read()` the whole file once and was stuck purely in-memory) and never
+produced output or finished, locally or on EC2 -- it would have run
+effectively forever on a file this size.
 
-Locally (WSL, this repo, venv activated) this file runs fine, e.g.:
+Fix in `marc_repair.py` (`build_marc8_corpus_index`): bound both
+slices to a short window (`_MAX_WORD_FRAGMENT_WINDOW = 100` chars) --
+`text[max(0, pos - 100):pos]` / `text[pos + 2:pos + 2 + 100]` -- since
+the surrounding word fragment it's trying to capture is never longer
+than that. Turns the whole index build back into O(n). All 345 tests
+pass; a full local re-run of `WTS_bibs_2026-10-01.out` now completes in
+107.53s (matches the ~100-110s originally expected) and reports
+`transcode_marc8_failed: 2 record(s)` (`.b11165406`, `.b11227394`) as
+expected. Not yet re-verified on the EC2 box -- next session should
+re-run `install.sh --dir .` there (self-updates on first run, needs a
+second run to apply) and confirm the real run also completes.
 
-    python3 marc_repair.py WTS_bibs_2026-10-01.out -o /tmp/wts_repaired.mrc --log /tmp/wts_report.log
+## NEXT TASK (deferred until the above is confirmed on EC2): log start/finish/elapsed time
 
--- takes ~100-110s, prints progress lines to stderr (record counts/rate/ETA)
-and a final summary line to stdout, produces `/tmp/wts_report.log` (or
-similar) with `transcode_marc8_failed: 2 record(s)` among the findings.
+User wants the end-of-run `--log` file to record wall-clock start time,
+finish time, and elapsed duration (not just the stdout summary line's
+elapsed seconds, which doesn't persist in the log file itself). Not
+started -- explicitly deferred until the O(n^2) corpus-index fix above
+is confirmed working on EC2.
 
-EC2 install is managed by `install.sh` (see the EC2 deploy note elsewhere
-in past handoffs/git history -- `/working/migration/scripts/marc_repair`,
-no `.git`, `venv/bin/marc_repair` on PATH directly). "No output" needs
-triage: is the process actually running (check for a hung/killed process,
-disk space for the repaired output + log on a 421MB input), is it an old
-pre-fix install (re-run `install.sh --dir .` -- it self-updates on first
-run and asks for a second run to apply), is output being redirected/lost
-rather than genuinely absent, or is this a different failure mode
-entirely (crash with no traceback, permissions, etc.)?
+## TODO: check whether ProgressReporter/estimator needs updating for the corpus-index fix
+
+Checked at a glance (2026-10-02): `ProgressReporter` (and its
+`maybe_print_estimate` rate/ETA calc) is constructed at line ~6079,
+*after* `build_marc8_corpus_index` already ran (~6026) -- so its own
+`start_time` doesn't include corpus-index-build time, and the O(n^2)
+bug didn't corrupt the rate/ETA math. No estimator code change made.
+
+Still worth a closer look next session: `build_marc8_corpus_index` is
+now O(n) instead of O(n^2), but it's still a full pass over the whole
+input file that happens *before* the first progress line prints --
+on a big enough file this could again look like a multi-second "no
+output" stall right at startup, just a bounded one now instead of an
+unbounded hang. Consider whether it needs its own "scanning file for
+corpus lookup..." progress indicator, or whether `maybe_print_estimate`
+needs to account for that upfront cost at all.
 
 ## Context usage at handoff (from `/context`)
 

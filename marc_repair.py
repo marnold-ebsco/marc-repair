@@ -2330,11 +2330,24 @@ def build_marc8_corpus_index(input_path: str, encoding_used: str) -> _Marc8Corpu
     with open(input_path, "rb") as fh:
         text = fh.read().decode("latin-1")
 
+    # Bound the before/after slices to a short window -- a real word
+    # fragment is never more than a few dozen letters long, but
+    # `text[:pos]`/`text[pos + 2:]` would otherwise copy an ever-growing
+    # chunk of the *whole file* on every single match. On a real
+    # 421MB/149k-match file this turned a one-pass scan into O(n^2)
+    # copying (hundreds of MB copied per match, ~150k times over) and
+    # the process never finished -- see HANDOFF.md.
+    _MAX_WORD_FRAGMENT_WINDOW = 100
+
     captured_stderr = io.StringIO()
     for match in _MARC8_DIACRITIC_BYTE_RE.finditer(text):
         pos = match.start()
-        before_match = re.search(r"[A-Za-z]+$", text[:pos])
-        after_match = re.match(r"[A-Za-z]+", text[pos + 2:])
+        before_match = re.search(
+            r"[A-Za-z]+$", text[max(0, pos - _MAX_WORD_FRAGMENT_WINDOW):pos]
+        )
+        after_match = re.match(
+            r"[A-Za-z]+", text[pos + 2:pos + 2 + _MAX_WORD_FRAGMENT_WINDOW]
+        )
         before = before_match.group() if before_match else ""
         after = after_match.group() if after_match else ""
         try:
