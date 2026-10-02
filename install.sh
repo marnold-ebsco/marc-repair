@@ -29,6 +29,7 @@ REF="main"
 RECREATE_VENV=0
 CHECK_ONLY=0
 NO_LINK=0
+DIR_EXPLICIT=0
 
 # Files needed to run marc_repair.py, relative to repo root. Deliberately
 # excludes tests/, fixtures, and generated data -- see docs/REPAIR_CATEGORIES.md
@@ -51,7 +52,7 @@ usage() {
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --dir) INSTALL_DIR="$2"; shift 2 ;;
+    --dir) INSTALL_DIR="$2"; DIR_EXPLICIT=1; shift 2 ;;
     --interpreter) INTERPRETER="$2"; shift 2 ;;
     --ref) REF="$2"; shift 2 ;;
     --recreate-venv) RECREATE_VENV=1; shift ;;
@@ -64,6 +65,26 @@ done
 
 if [[ "$INTERPRETER" != "cpython" && "$INTERPRETER" != "pypy" ]]; then
   echo "Error: --interpreter must be 'cpython' or 'pypy', got '$INTERPRETER'" >&2
+  exit 1
+fi
+
+# Catch the easy-to-make mistake of running install.sh (with no --dir)
+# from *inside* an existing install -- with the default "./marc_repair",
+# that creates a nested marc_repair/marc_repair/ instead of updating the
+# one you're standing in, and the only sign something's wrong is that
+# the outer VERSION_MARKER silently never changes. Only fires when
+# --dir was left at its default, since an explicit "--dir ./marc_repair"
+# from here is unambiguous -- the person clearly meant to nest it.
+if [[ "$DIR_EXPLICIT" -eq 0 && -f "./${VERSION_MARKER}" ]]; then
+  echo "Error: the current directory already looks like a marc_repair install" >&2
+  echo "(found ./${VERSION_MARKER} here). Running with no --dir would create a" >&2
+  echo "nested ${INSTALL_DIR} inside it instead of updating this one in place." >&2
+  echo >&2
+  echo "Did you mean:" >&2
+  echo "  ./install.sh --dir ." >&2
+  echo >&2
+  echo "Or, if you really do want a nested install here, pass --dir explicitly:" >&2
+  echo "  ./install.sh --dir ${INSTALL_DIR}" >&2
   exit 1
 fi
 
