@@ -176,17 +176,49 @@ than that. Turns the whole index build back into O(n). All 345 tests
 pass; a full local re-run of `WTS_bibs_2026-10-01.out` now completes in
 107.53s (matches the ~100-110s originally expected) and reports
 `transcode_marc8_failed: 2 record(s)` (`.b11165406`, `.b11227394`) as
-expected. Not yet re-verified on the EC2 box -- next session should
-re-run `install.sh --dir .` there (self-updates on first run, needs a
-second run to apply) and confirm the real run also completes.
+expected. Re-confirmed again (2026-10-02, 95.21s this time) after the
+start/finish/elapsed logging change below -- same 2-record result, so
+that change didn't regress anything. Still not re-verified on the EC2
+box itself -- next session there should re-run `install.sh --dir .`
+(self-updates on first run, needs a second run to apply) and confirm
+the real run also completes.
 
-## NEXT TASK (deferred until the above is confirmed on EC2): log start/finish/elapsed time
+## DONE: log start/finish/elapsed time
 
-User wants the end-of-run `--log` file to record wall-clock start time,
-finish time, and elapsed duration (not just the stdout summary line's
-elapsed seconds, which doesn't persist in the log file itself). Not
-started -- explicitly deferred until the O(n^2) corpus-index fix above
-is confirmed working on EC2.
+User wanted the end-of-run `--log` file to record wall-clock start
+time, finish time, and elapsed duration (not just the stdout summary
+line's elapsed seconds, which doesn't persist in the log file itself).
+
+Added `_write_run_timing_header` (`marc_repair.py`, near `write_log`):
+writes a single `=== RUN: started <ts>, finished <ts>, elapsed <N>s ===`
+line as the first line of the log file, elapsed to .01s (wall-clock
+`finished - started`, not `time.perf_counter()`, so it matches the
+timestamps on the same line). Wired into both `main()` and
+`repair_holdings_records` right before their respective `write_log`
+calls, each capturing its own `run_started` at function/run entry.
+`check_holdings_records` (the detect-only helper behind
+`--split-bib-holdings`'s check path) was not touched -- it's dead code,
+not called anywhere in `marc_repair.py` outside tests.
+
+Verified manually on `tests/fixtures/kitchen_sink_bib.mrc` and
+`kitchen_sink_holdings.mrc` (both pipelines) and on the full
+`WTS_bibs_2026-10-01.out` run above. All 345 tests pass, flake8 clean.
+Committed and pushed as `13d017c`.
+
+## DONE: gitignore WTS_bibs_*.out
+
+Added to `.gitignore` -- these are large EC2-pulled real-world test
+files, never meant to be committed. Committed alongside the logging
+change above (`13d017c`).
+
+## Checked: install.sh was not actually broken
+
+The modified-install.sh seen in git status at the start of a session
+turned out to be a stale snapshot artifact, not a real uncommitted
+change -- `git diff` against HEAD was empty, `bash -n install.sh`
+passed, and it already contains every fix from recent commits (clear
+error for a missing flag value, executable bit, the nesting guard,
+self-update). No revert or fix was needed or made.
 
 ## TODO: check whether ProgressReporter/estimator needs updating for the corpus-index fix
 
