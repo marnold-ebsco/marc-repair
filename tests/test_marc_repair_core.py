@@ -729,6 +729,26 @@ class TestCLIHelpers:
         expected_out = tmp_path / "bad_length_repaired.mrc"
         assert expected_out.exists()
 
+    def test_main_sample_problems_bare_flag_defaults_path_next_to_output(self, tmp_path):
+        # kitchen_sink_bib.mrc deliberately contains a couple of
+        # genuinely unfixable records, so main() here returns 1 -- not
+        # what this test is checking; it's only verifying where the
+        # sample file lands when --sample-problems is given bare.
+        src = tmp_path / "kitchen_sink_bib.mrc"
+        src.write_bytes(_read("kitchen_sink_bib.mrc").encode("utf-8"))
+        m.main([str(src), "--sample-problems"])
+        expected_sample = tmp_path / "sampled_problems.mrc"
+        assert expected_sample.exists()
+        assert expected_sample.stat().st_size > 0
+
+    def test_main_sample_problems_explicit_path_still_honored(self, tmp_path):
+        src = tmp_path / "kitchen_sink_bib.mrc"
+        src.write_bytes(_read("kitchen_sink_bib.mrc").encode("utf-8"))
+        sample_path = tmp_path / "my_sample.mrc"
+        m.main([str(src), "--sample-problems", str(sample_path)])
+        assert sample_path.exists()
+        assert not (tmp_path / "sampled_problems.mrc").exists()
+
     def test_main_ensure_field_end_to_end(self, tmp_path):
         src = tmp_path / "missing245.mrc"
         src.write_bytes(

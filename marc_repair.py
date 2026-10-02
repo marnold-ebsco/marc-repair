@@ -5307,6 +5307,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--sample-problems",
+        nargs="?",
+        const="",
+        default=None,
         metavar="PATH",
         help="write the raw, original bytes of up to --sample-limit "
         "records that triggered at least one not-fixed finding (e.g. "
@@ -5317,7 +5320,8 @@ def main(argv: list[str] | None = None) -> int:
         "someone (or something) else for analysis, without sending the "
         "whole file. Records with only auto-fixed findings (e.g. "
         "padded_indicators) don't count -- those aren't problems "
-        "needing a second look",
+        "needing a second look. PATH is optional -- bare --sample-problems "
+        "defaults to sampled_problems.mrc next to the output file",
     )
     parser.add_argument(
         "--sample-limit",
@@ -5714,6 +5718,11 @@ def main(argv: list[str] | None = None) -> int:
     mrk_path = None
     if args.mrk is not None:
         mrk_path = args.mrk or os.path.splitext(out_path)[0] + ".mrk"
+    sample_problems_path = None
+    if args.sample_problems is not None:
+        sample_problems_path = args.sample_problems or os.path.join(
+            os.path.dirname(out_path), "sampled_problems.mrc"
+        )
 
     # Invalid-tag fixing (see fix_invalid_tags) needs to know every tag
     # used anywhere in the file before it can safely pick a 9XX
@@ -5768,8 +5777,8 @@ def main(argv: list[str] | None = None) -> int:
             ) as mrk_fh, \
             _LazyBinaryWriter(error_path) as error_fh, \
             (
-                _LazyBinaryWriter(args.sample_problems)
-                if args.sample_problems else _null_writer()
+                _LazyBinaryWriter(sample_problems_path)
+                if sample_problems_path else _null_writer()
             ) as sample_fh:
         record_stream = iter_repair_stream(
             args.input,
@@ -5993,7 +6002,7 @@ def main(argv: list[str] | None = None) -> int:
             # (found only after a full pass) -- both acceptable gaps for
             # a best-effort sample, not a guaranteed-complete one.
             if (
-                args.sample_problems
+                sample_problems_path
                 and n_sampled < args.sample_limit
                 and any(
                     not entry.fixed
@@ -6122,8 +6131,8 @@ def main(argv: list[str] | None = None) -> int:
     elapsed = time.perf_counter() - start_time
     n_clean = n_total - n_unfixable
     print(f"Wrote {n_clean}/{n_total} record(s) to {out_path} in {elapsed:.2f}s")
-    if args.sample_problems:
-        print(f"{n_sampled} problem record(s) sampled to {args.sample_problems}")
+    if sample_problems_path:
+        print(f"{n_sampled} problem record(s) sampled to {sample_problems_path}")
     if n_unfixable:
         print(
             f"{n_unfixable} record(s) could not be auto-repaired at all -- written, "
