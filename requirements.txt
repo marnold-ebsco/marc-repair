@@ -1,3 +1,5 @@
-# Only needed for --transcode-marc8 (MARC-8/ANSEL -> UTF-8 conversion).
-# Everything else in marc_repair.py is pure Python / stdlib only.
+# Standard dependency -- used by --transcode-marc8 (MARC-8/ANSEL -> UTF-8
+# conversion); everything else in marc_repair.py is pure Python / stdlib
+# only. Kept here for installs that use `pip install -r requirements.txt`
+# directly instead of `pip install .` (see pyproject.toml).
 pymarc>=5,<6

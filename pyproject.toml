@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "marc-repair"
+version = "0.1.0"
+description = "Repair broken MARC21 (ISO 2709) records and patch missing/required fields."
+requires-python = ">=3.12"
+dependencies = [
+    "pymarc>=5,<6",
+]
+
+[project.scripts]
+marc_repair = "marc_repair:main"
+
+[tool.setuptools]
+py-modules = ["marc_repair"]

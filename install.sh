@@ -33,6 +33,7 @@ CHECK_ONLY=0
 # in the repo for what those are.
 FILES=(
   "marc_repair.py"
+  "pyproject.toml"
   "requirements.txt"
   "required_a_tags.txt"
   "non_repeatable_tags.txt"
@@ -137,9 +138,9 @@ fi
 
 echo "${INTERPRETER}" > "$INTERPRETER_MARKER"
 
-echo "Installing dependencies..."
+echo "Installing marc_repair and its dependencies (incl. pymarc)..."
 "${VENV_DIR}/bin/pip" install --quiet --upgrade pip
-"${VENV_DIR}/bin/pip" install --quiet -r "${INSTALL_DIR}/requirements.txt"
+"${VENV_DIR}/bin/pip" install --quiet "${INSTALL_DIR}"
 
 # $0 is "bash" when run via `curl | bash -s --`, so it's not a usable
 # path to re-invoke -- fall back to re-fetching via curl in that case.
@@ -155,7 +156,10 @@ Done. marc_repair (${INTERPRETER}, commit ${REMOTE_SHA:0:12}) is ready at:
 
 Activate and run:
   source "${VENV_DIR}/bin/activate"
-  python "${INSTALL_DIR}/marc_repair.py" --help
+  marc_repair --help
+
+Or without activating:
+  "${VENV_DIR}/bin/marc_repair" --help
 
 Check for updates later without changing anything:
   ${RERUN_CMD} --dir "${INSTALL_DIR}" --interpreter ${INTERPRETER} --check

@@ -297,8 +297,9 @@ cd marc_repair
 ### Quick install (no full clone)
 
 `install.sh` fetches only the files needed to run the tool (the script,
-`requirements.txt`, the two tag files, and the docs) pinned to one commit,
-and builds a ready-to-use venv — no `git clone`, no repo history, no test
+`pyproject.toml`, `requirements.txt`, the two tag files, and the docs)
+pinned to one commit, and builds a ready-to-use venv with the `marc_repair`
+command installed into it — no `git clone`, no repo history, no test
 fixtures.
 
 ```bash
@@ -332,19 +333,19 @@ sudo apt install -y python3 python3-venv python3-pip
 python3 --version   # confirm 3.12 or higher
 
 python3 -m venv venv
+./venv/bin/pip install .
 ```
 
-Only `--transcode-marc8` (converting legacy MARC-8/ANSEL to UTF-8) needs a
-dependency, since accurately reimplementing MARC-8's full character-set
-mapping tables from scratch would be error-prone — this defers to
-`pymarc`'s LC-authoritative tables instead:
+This installs `pymarc` (used for `--transcode-marc8`'s MARC-8/ANSEL ->
+UTF-8 conversion, deferring to its LC-authoritative tables rather than
+reimplementing them from scratch) and everything else is pure Python /
+stdlib, plus puts a `marc_repair` command on the venv. Activate the venv
+(`source ./venv/bin/activate`) and run `marc_repair ...` directly, or call
+it unactivated via `./venv/bin/marc_repair ...`.
 
-```bash
-./venv/bin/pip install -r requirements.txt   # only needed for --transcode-marc8
-```
-
-Everything else runs with a plain `python3 marc_repair.py ...` — no venv
-or install step required.
+Prefer not to install anything? Everything except `--transcode-marc8`
+still runs straight from the script with no venv at all:
+`marc_repair ...`.
 
 ### PyPy (optional, faster on large files)
 
@@ -360,14 +361,14 @@ sudo apt install -y pypy3 pypy3-venv
 pypy3 --version
 
 pypy3 -m venv pypy_venv
-./pypy_venv/bin/pip install -r requirements.txt   # pymarc, for --transcode-marc8
+./pypy_venv/bin/pip install .
 ```
 
 Then run the tool exactly the same way, just pointing at the PyPy venv's
-interpreter instead:
+`marc_repair` instead:
 
 ```bash
-./pypy_venv/bin/python marc_repair.py bad_length_bib.mrc
+./pypy_venv/bin/marc_repair bad_length_bib.mrc
 ```
 
 ### CPython vs. PyPy: which to use
@@ -401,14 +402,14 @@ interpreter version, re-create the venv (`python3 -m venv venv` /
 `pypy3 -m venv pypy_venv`) rather than expecting the existing one to
 pick it up.
 
-For dependencies (currently just `pymarc`, in `requirements.txt`, plus
-`pytest`/`flake8` for development), re-run the same install command to
-pick up newer versions — `pip` always installs the latest release
-satisfying `requirements.txt` unless a version is pinned there:
+For dependencies (currently just `pymarc`, declared in `pyproject.toml`,
+plus `pytest`/`flake8` for development), re-run the same install command
+to pick up newer versions — `pip` always installs the latest release
+satisfying the version constraint unless pinned tighter:
 
 ```bash
-./venv/bin/pip install --upgrade -r requirements.txt
-./pypy_venv/bin/pip install --upgrade -r requirements.txt   # if using PyPy
+./venv/bin/pip install --upgrade .
+./pypy_venv/bin/pip install --upgrade .   # if using PyPy
 ```
 
 After upgrading either an interpreter or a dependency, re-run the test
@@ -423,24 +424,24 @@ repeated whenever a version changes.
 ```bash
 # Fix a file with a corrupted leader/directory. Output defaults to
 # INPUT_repaired.mrc next to the input.
-python3 marc_repair.py bad_length_bib.mrc
+marc_repair bad_length_bib.mrc
 
 # Pick the output path explicitly and also dump a human-readable .mrk
 # version for review.
-python3 marc_repair.py bad_length_bib.mrc -o out.mrc --mrk out.mrk
+marc_repair bad_length_bib.mrc -o out.mrc --mrk out.mrk
 
 # Just count the records in a file and exit -- no parsing/repair, no
 # output file, as fast as possible (counts raw record-terminator bytes
 # in big binary chunks; a 91 MB/48,017-record file counts in ~0.3s).
-python3 marc_repair.py huge_export.mrc --count
+marc_repair huge_export.mrc --count
 
 # A record missing 245 or 008 gets a placeholder by default (245: 00
 # $aNo title; 008: a fixed generic default), logged either way. Supply
 # real content per-record instead with --ensure-field (which takes
 # priority over the placeholder); each spec is TAG:INDICATORS:CODE=VALUE,
 # or TAG:CONTENT for a control field.
-python3 marc_repair.py bad_missing245_bib.mrc --ensure-field "245:00:a=Real title"
-python3 marc_repair.py bad_bib.mrc \
+marc_repair bad_missing245_bib.mrc --ensure-field "245:00:a=Real title"
+marc_repair bad_bib.mrc \
     --ensure-field "008:780615s19uu    xx a                    d"
 
 # Some fields require a non-empty $a to mean anything (e.g. 650 with no $a
@@ -452,31 +453,31 @@ python3 marc_repair.py bad_bib.mrc \
 # instead of 2, and a field with no non-empty subfields at all are also
 # fixed by default. All of the above run automatically -- nothing extra
 # to pass:
-python3 marc_repair.py bad_bib_mandatoryfields.mrc
+marc_repair bad_bib_mandatoryfields.mrc
 
 # Turn most of the above off if you'd rather see them flagged (or left
 # alone) instead of fixed -- invalid subfield codes have no --no- switch,
 # since there's no safe way to guess what an unusable code should have
 # been:
-python3 marc_repair.py bad_bib.mrc \
+marc_repair bad_bib.mrc \
     --no-strip-missing-required-a \
     --no-fix-bad-indicators \
     --no-strip-empty-fields
 
 # A record legitimately declares legacy MARC-8/ANSEL encoding. Convert it
 # to UTF-8 and flip the leader byte accordingly. Requires pymarc.
-python3 marc_repair.py bad_bib_badescape.mrc --transcode-marc8
+marc_repair bad_bib_badescape.mrc --transcode-marc8
 
 # Repair text that lost ALL its delimiters (Mode 2), and supply an
 # override for a field the automatic solver flagged as ambiguous.
-python3 marc_repair.py pasted_records.txt --overrides overrides.json
+marc_repair pasted_records.txt --overrides overrides.json
 
 # A file too large to comfortably hold in memory as a single string (many
 # millions of records) -- streamed automatically, no flag needed.
-python3 marc_repair.py huge_export.mrc
+marc_repair huge_export.mrc
 ```
 
-Run `python3 marc_repair.py --help` for the full flag reference — the
+Run `marc_repair --help` for the full flag reference — the
 module docstring at the top of `marc_repair.py` has the same content plus
 more detail on each mode.
 
@@ -503,9 +504,10 @@ re-run with `--overrides overrides.json`.
 | File | Purpose |
 |---|---|
 | `marc_repair.py` | The tool |
+| `pyproject.toml` | Packaging metadata — `pip install .` installs `pymarc` and the `marc_repair` command |
 | `required_a_tags.txt` | Editable tag list for `--strip-missing-required-a` — deliberately external, since which fields truly require `$a` is a cataloging-practice judgment call, not something to hardcode |
 | `non_repeatable_tags.txt` | Editable tag list for `--strip-duplicate-non-repeatable-fields` — deliberately conservative (only tags whose Not-Repeatable status is well-established); extend it if you find more in your own data |
-| `requirements.txt` | Only `pymarc`, only needed for `--transcode-marc8` |
+| `requirements.txt` | `pymarc`, for installs that skip `pyproject.toml` (e.g. `pip install -r requirements.txt`) |
 | `tests/test_marc_repair_core.py` | pytest suite — parsing/assembly, splitting, logging, and other tests not specific to bib or holdings content |
 | `tests/test_marc_repair_bib.py` | pytest suite — bib-only repair categories |
 | `tests/test_marc_repair_holdings.py` | pytest suite — holdings-only repair categories |
@@ -516,7 +518,7 @@ re-run with `--overrides overrides.json`.
 
 ```bash
 python3 -m venv venv
-./venv/bin/pip install pytest flake8 pymarc
+./venv/bin/pip install . pytest flake8
 ./venv/bin/python -m pytest tests/ -v
 ./venv/bin/python -m flake8 --max-line-length=100 marc_repair.py
 ```
