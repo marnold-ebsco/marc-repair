@@ -374,6 +374,86 @@ class TestFindSuspectMarc8Escapes:
         assert m.find_suspect_marc8_escapes(parsed) == []
 
 
+class TestFindSuspectHexEncodedMarc8:
+    def _record(self, raw_a, tag="880"):
+        leader = list(_SYNTHETIC_LEADER)
+        leader[9] = " "  # declare MARC-8
+        return m.ParsedRecord(
+            leader="".join(leader),
+            entries=[],
+            fields=[m.Field_(tag, "10", [("a", raw_a)])],
+        )
+
+    def test_flags_double_encoded_run_and_recovers_escape_sequence(self):
+        # Real production example (WTS_bibs export, Sierra bib
+        # .b11165406, 880 occurrence 246-02): the record's own real
+        # MARC-8/EACC bytes were hex-encoded and brace-wrapped TWICE.
+        # Decoding both layers recovers a well-formed MARC-8 escape
+        # sequence: "\x1b(B \x1b$1oOfoH_oQFoVf\x1b(B".
+        raw = (
+            "\x1b$1oOfoZz"
+            "{7b6138}{316232}{387d7b}{343232}{303162}{7d7b32}{343331}"
+            "{36667d}{7b3466}{363636}{667d7b}{343835}{663666}{7d7b35}"
+            "{313436}{36667d}{7b3536}{363631}{627d7b}{323834}{323030}"
+            "{7d1b28}{420053}"
+            "\x1b(B"
+        )
+        parsed = self._record(raw)
+        findings = m.find_suspect_hex_encoded_marc8(parsed)
+        assert len(findings) == 1
+        category, detail = findings[0]
+        assert category == "suspect_hex_encoded_marc8"
+        assert "tag 880 $a" in detail
+        assert "2 layer(s) deep" in detail
+        assert "\\x1b(B" in detail or "\x1b(B" in detail
+        assert "context:" in detail
+
+    def test_flags_single_encoded_run_and_recovers_readable_text(self):
+        # Real production example (Sierra bib .b11227394, 880 $c):
+        # decoding just ONE layer recovers literal readable English --
+        # "(Ian M. Duguid)", a romanized editor's name.
+        raw = (
+            "\x1b$1!0}!>C"
+            "{a82143}{742135}{2e213d}{751b28}{422028}{49616e}{204d2e}"
+            "{204475}{677569}{642920}{1b2431}"
+            "!UN\x1b(B ; \x1b$1!\\l!Iw!:g!YF\x1b(B."
+        )
+        parsed = self._record(raw)
+        findings = m.find_suspect_hex_encoded_marc8(parsed)
+        assert len(findings) == 1
+        detail = findings[0][1]
+        assert "1 layer(s) deep" in detail
+        assert "Ian M. Duguid" in detail
+        assert "NO DATA LOSS" in detail
+
+    def test_does_not_flag_plain_text_without_brace_hex_pattern(self):
+        parsed = self._record("\x1b$1oWIoKOoLp\x1b(B plain text, no braces")
+        assert m.find_suspect_hex_encoded_marc8(parsed) == []
+
+    def test_does_not_flag_short_isolated_brace_content(self):
+        # A single non-hex-shaped brace group (not exactly 6 lowercase
+        # hex digits) should never match -- this is a narrow, specific
+        # pattern, not a general "any curly braces" heuristic.
+        parsed = self._record("see note {ABC} for details")
+        assert m.find_suspect_hex_encoded_marc8(parsed) == []
+
+    def test_flags_control_field_content_too(self):
+        leader = list(_SYNTHETIC_LEADER)
+        leader[9] = " "
+        parsed = m.ParsedRecord(
+            leader="".join(leader),
+            entries=[],
+            fields=[m.Field_(
+                "007", None, None,
+                content="{7b6138}{316232}{387d7b}{343232}{303162}{7d}",
+            )],
+        )
+        findings = m.find_suspect_hex_encoded_marc8(parsed)
+        assert len(findings) == 1
+        assert "tag 007" in findings[0][1]
+        assert "$" not in findings[0][1].split("tag 007", 1)[1].split(":")[0]
+
+
 class TestTranscodeMarc8:
     def test_converts_combining_diacritics_and_flips_leader_byte(self):
         pytest.importorskip("pymarc")

@@ -286,6 +286,14 @@ BIB_ROWS = [
         "-- (detect-only, no switch)",
     ),
     CategoryRow(
+        "Suspect hex-encoded MARC-8 (a run of \"{xxxxxx}\" hex-digit "
+        "groups in curly braces, found in real 880 fields -- real "
+        "MARC-8 content hex-encoded and brace-wrapped, sometimes twice)",
+        "Flagged only, no change", "detect-only",
+        "`suspect_hex_encoded_marc8`", "NEEDS REVIEW", "**Yes**",
+        "-- (detect-only, no switch)",
+    ),
+    CategoryRow(
         "Invalid indicator *value* (present but not digit/blank)",
         "Flagged only, no change", "detect-only",
         "`invalid_indicator_value`", "NEEDS REVIEW", "**Yes**",
