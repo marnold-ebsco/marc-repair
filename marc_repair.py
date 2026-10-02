@@ -2379,6 +2379,137 @@ def lookup_marc8_corpus_word(
     return None
 
 
+#: Detects a different, much rarer MARC-8 corruption than
+#: `find_suspect_marc8_escapes`: a run of one or more "{xxxxxx}" groups
+#: -- 6 ASCII hex-digit characters wrapped in a literal pair of curly
+#: braces, e.g. "{7b6138}{316232}{387d7b}..." -- found in real
+#: production data inside 880 (Alternate Graphic Representation)
+#: fields. Confirmed against 5 real examples (the only 5 records out
+#: of 263,595 in one real export that had this at all): the record's
+#: own real MARC-8/EACC bytes got hex-encoded (each byte -> 2 ASCII
+#: hex chars) and wrapped in braces every 3 bytes, and in some cases
+#: that SAME hex+brace transform was applied a second time to the
+#: already-encoded text. Reversing it (strip the braces, concatenate
+#: the hex digits, `bytes.fromhex()`, then repeat once more if the
+#: result is still plain ASCII and still matches the same brace
+#: pattern) recovered either well-formed MARC-8 escape sequences or,
+#: in two of the five real cases, literal readable English text (e.g.
+#: "= J. Gresham Machen", "(Ian M. Duguid)" -- a romanized name in a
+#: linking field).
+#:
+#: Never auto-fixed: decoding is boundary-sensitive (a stray byte or
+#: an incomplete trailing hex digit commonly survives at a chunk's
+#: edge in the real examples), so an automatic rewrite risks silently
+#: replacing one corruption with a different, equally-wrong one.
+#: Category "suspect_hex_encoded_marc8" is for a human to review --
+#: see `_decode_hex_brace_run`'s docstring for how the decoded preview
+#: in each finding is produced, and how its own DATA LOSS/NO DATA LOSS
+#: call is made.
+_HEX_BRACE_GROUP_RE = re.compile(r"\{([0-9a-f]{6})\}")
+_HEX_BRACE_RUN_RE = re.compile(r"(?:\{[0-9a-f]{6}\}){1,}")
+
+
+def _decode_hex_brace_run(run: str) -> tuple[bytes, int, bool]:
+    """Decode one contiguous run of "{xxxxxx}" groups (as matched by
+    `_HEX_BRACE_RUN_RE`) back to raw bytes. Strips the braces,
+    concatenates the hex digits, and hex-decodes; if that result is
+    itself a plain-ASCII string that still matches the same brace
+    pattern, decodes it a second time (see
+    `find_suspect_hex_encoded_marc8`'s docstring for why the real
+    examples that produced this needed anywhere from one to two
+    passes). Never raises: an odd number of leftover hex digits (half
+    a byte with nowhere to go) is simply dropped and reported back via
+    the `clean` flag, since that itself is evidence of boundary damage
+    rather than a reason to give up on the rest.
+
+    Returns (decoded_bytes, layers_decoded, clean) -- `layers_decoded`
+    is 1 or 2, and `clean` is False if any layer had to drop a
+    leftover odd hex digit to decode at all.
+    """
+    groups = _HEX_BRACE_GROUP_RE.findall(run)
+    hexstr = "".join(groups)
+    clean = len(hexstr) % 2 == 0
+    if not clean:
+        hexstr = hexstr[:-1]
+    layer1 = bytes.fromhex(hexstr)
+    try:
+        layer1_text = layer1.decode("ascii")
+    except UnicodeDecodeError:
+        return layer1, 1, clean
+    if not _HEX_BRACE_RUN_RE.search(layer1_text):
+        return layer1, 1, clean
+    groups2 = _HEX_BRACE_GROUP_RE.findall(layer1_text)
+    hexstr2 = "".join(groups2)
+    if len(hexstr2) % 2:
+        hexstr2 = hexstr2[:-1]
+        clean = False
+    return bytes.fromhex(hexstr2), 2, clean
+
+
+def _hex_brace_decode_looks_recoverable(decoded: bytes, clean: bool) -> bool:
+    """True if `decoded` (from `_decode_hex_brace_run`) looks like
+    genuine MARC-8/plain-text content rather than noise -- i.e. this
+    finding's "NO DATA LOSS" vs. "POSSIBLE DATA LOSS" call. A dropped
+    leftover hex digit (`clean` False) is itself proof at least one
+    byte couldn't be reconstructed, so that alone forces "POSSIBLE
+    DATA LOSS" regardless of how the rest decodes."""
+    if not clean or not decoded:
+        return False
+    text = decoded.decode("latin-1")
+    if "\x1b" in text:
+        return True  # a MARC-8 escape sequence survived the decode
+    printable = sum(1 for c in text if c.isprintable() or c in "\t\n")
+    return printable / len(text) >= 0.9
+
+
+def find_suspect_hex_encoded_marc8(parsed: ParsedRecord) -> list[tuple[str, str]]:
+    """Flag a run of "{xxxxxx}" (6 hex-digit characters in literal
+    curly braces) in any field's content -- see the module-level
+    comment above `_HEX_BRACE_GROUP_RE` for what actually produces
+    this and how it's confirmed to decode. Each finding includes the
+    decoded preview and an explicit data-loss call (see
+    `_hex_brace_decode_looks_recoverable`), plus 10-25 characters of
+    surrounding context so a reviewer can see where in the field the
+    run sits without hunting through the whole (often very long)
+    880 value. Detect-only -- never auto-fixed.
+    """
+    findings: list[tuple[str, str]] = []
+    _CONTEXT_CHARS = 20
+    for f in parsed.fields:
+        texts = [("", f.content)] if f.is_control() else list(f.subfields)
+        for code, text in texts:
+            if not text or "{" not in text:
+                continue
+            for match in _HEX_BRACE_RUN_RE.finditer(text):
+                run = match.group()
+                n_groups = len(_HEX_BRACE_GROUP_RE.findall(run))
+                decoded, layers, clean = _decode_hex_brace_run(run)
+                recoverable = _hex_brace_decode_looks_recoverable(decoded, clean)
+                data_loss = (
+                    "NO DATA LOSS (apparent) -- decoded content looks like "
+                    "valid MARC-8/plain text, but exact byte alignment "
+                    "isn't guaranteed; verify before trusting it"
+                    if recoverable else
+                    "POSSIBLE DATA LOSS -- decoded bytes don't look like "
+                    "valid MARC-8 or plain text (may be truncated or "
+                    "boundary-shifted)"
+                )
+                preview = decoded.decode("latin-1")
+                window_start = max(0, match.start() - _CONTEXT_CHARS)
+                window_end = min(len(text), match.end() + _CONTEXT_CHARS)
+                context = text[window_start:window_end]
+                subfield_label = f" ${code}" if code else ""
+                findings.append((
+                    "suspect_hex_encoded_marc8",
+                    f"tag {f.tag}{subfield_label}: {n_groups} \"{{xxxxxx}}\" "
+                    "hex-digit group(s) in curly braces -- looks like real "
+                    "MARC-8 content that was hex-encoded and brace-wrapped "
+                    f"({layers} layer(s) deep); decoding recovers {preview!r}; "
+                    f"{data_loss}; context: {context!r}",
+                ))
+    return findings
+
+
 def transcode_marc8_to_utf8(parsed: ParsedRecord) -> bool:
     """Convert every field's text from MARC-8 to Unicode in place and flip
     the leader's encoding byte to "a". Returns False (no-op) if the record
@@ -4251,6 +4382,7 @@ _NEEDS_REVIEW = {
     "doubled_proxy_url",
     "invalid_indicator_value",
     "suspect_marc8_escape",
+    "suspect_hex_encoded_marc8",
     "transcode_marc8_failed",
     "unfixed_non_numeric_tag",
     "added_missing_852c",
@@ -4353,6 +4485,15 @@ _CHECK_DESCRIPTIONS: dict[str, str] = {
     "boundary -- almost certainly a miskeyed accented letter, not real "
     "embedded foreign-script text; never auto-fixed, since there's no "
     "safe way to guess the intended character. NO DATA LOSS.",
+    "suspect_hex_encoded_marc8": "A field (in practice, always an 880) "
+    "contains one or more \"{xxxxxx}\" runs -- 6 ASCII hex-digit "
+    "characters wrapped in literal curly braces -- consistent with "
+    "real MARC-8 content that got hex-encoded and brace-wrapped "
+    "(sometimes twice) somewhere upstream of this file; never "
+    "auto-fixed, since the decode is boundary-sensitive and there's no "
+    "safe way to guarantee exact byte alignment automatically. Each "
+    "finding names whether its own decoded preview looks recoverable "
+    "or not. POSSIBLE DATA LOSS.",
     "holdings_852_b_suspect_content": "An 852 $b (Sublocation) looks "
     "like data that migrated into the wrong subfield -- purely "
     "numeric, or containing flattened subfield-delimiter markers -- "
@@ -4508,6 +4649,7 @@ _ALWAYS_FULL_CATEGORIES = {
     "incomplete_852",
     "doubled_proxy_url",
     "suspect_marc8_escape",
+    "suspect_hex_encoded_marc8",
     "holdings_852_b_suspect_content",
     "holdings_853_missing_8",
     "holdings_856_missing_u",
@@ -5447,7 +5589,8 @@ def main(argv: list[str] | None = None) -> int:
         metavar="PATH",
         help="write the raw, original bytes of up to --sample-limit "
         "records that triggered at least one not-fixed finding (e.g. "
-        "unfixable, transcode_marc8_failed, suspect_marc8_escape -- "
+        "unfixable, transcode_marc8_failed, suspect_marc8_escape, "
+        "suspect_hex_encoded_marc8 -- "
         "anything that would show up under REQUIRES ATTENTION in --log) "
         "to PATH as a small standalone .mrc file -- meant for handing a "
         "compact, representative sample of a file's actual problems to "
@@ -5990,6 +6133,9 @@ def main(argv: list[str] | None = None) -> int:
                 ):
                     rec_id = record_identifier(parsed)
                     log(category, False, i, rec_id, detail)
+                for category, detail in find_suspect_hex_encoded_marc8(parsed):
+                    rec_id = record_identifier(parsed)
+                    log(category, False, i, rec_id, detail)
                 if args.transcode_marc8:
                     try:
                         transcoded = transcode_marc8_to_utf8(parsed)
@@ -6216,7 +6362,7 @@ def main(argv: list[str] | None = None) -> int:
         "unfixable", "added_default_008", "doubled_proxy_url", "removed_invalid_subfield",
         "unfixed_non_numeric_tag", "invalid_indicator_value", "invalid_bibliographic_level",
         "leader_entry_map_fixed", "oversized_sentinel_fixed", "duplicate_identifier",
-        "removed_null_identifier", "suspect_marc8_escape",
+        "removed_null_identifier", "suspect_marc8_escape", "suspect_hex_encoded_marc8",
     }
     if args.fix_bad_indicators:
         active_categories.add("padded_indicators")
