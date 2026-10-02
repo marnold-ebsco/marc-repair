@@ -339,8 +339,23 @@ class TestFindSuspectMarc8Escapes:
         category, detail = findings[0]
         assert category == "suspect_marc8_escape"
         assert "CJK" in detail
-        assert "suggested fix: likely a miskeyed accented letter" in detail
+        assert (
+            "suggested fix: likely an accented letter and the letter "
+            "right after it" in detail
+        )
         assert "Schr[?]inger" in detail
+
+    def test_flags_single_greek_char_welded_to_ascii_letters_single_byte_wording(self):
+        # 1-byte charset (not CJK/EACC) hitting the generic branch --
+        # wording stays the original single-character framing, since
+        # that case wasn't part of the validated 3-byte mechanism.
+        parsed = self._record("Le\x1b(SA\x1b(Bonidas")
+        findings = m.find_suspect_marc8_escapes(parsed)
+        assert len(findings) == 1
+        detail = findings[0][1]
+        assert "Greek" in detail
+        assert "suggested fix: likely a miskeyed accented letter" in detail
+        assert "Le[?]onidas" in detail
 
     def test_flags_single_cyrillic_char_welded_to_ascii_letters(self):
         # Real production example: "who" + <Cyrillic escape, 1 char> +
@@ -365,6 +380,46 @@ class TestFindSuspectMarc8Escapes:
         parsed = self._record("see also \x1b(2k\x1b(B (in Hebrew)")
         assert m.find_suspect_marc8_escapes(parsed) == []
 
+    def test_corpus_match_names_specific_word_for_cjk_finding(self):
+        # "T" + <CJK escape> + "ingen" is missing the swallowed "ub" --
+        # if the corpus index (built elsewhere in this same file) has
+        # already resolved that exact fragment to "Tübingen"
+        # unambiguously, the suggestion should name it specifically
+        # instead of the generic "could be ö, é, ñ, ü" hint.
+        corpus_index = ({}, {("T", "ingen"): {"Tübingen"}})
+        parsed = self._record("T\x1b$1abc\x1b(Bingen")
+        findings = m.find_suspect_marc8_escapes(parsed, corpus_index=corpus_index)
+        assert len(findings) == 1
+        detail = findings[0][1]
+        assert "suggested fix: likely 'Tübingen'" in detail
+        assert "found spelled correctly elsewhere in this file" in detail
+
+    def test_corpus_no_match_keeps_generic_hint(self):
+        # The index exists but has nothing for this fragment -- falls
+        # back to the unchanged generic hint, not a guess.
+        corpus_index = ({}, {("T", "xyz"): {"Something"}})
+        parsed = self._record("T\x1b$1abc\x1b(Bingen")
+        findings = m.find_suspect_marc8_escapes(parsed, corpus_index=corpus_index)
+        detail = findings[0][1]
+        assert (
+            "suggested fix: likely an accented letter and the letter "
+            "right after it" in detail
+        )
+        assert "found spelled correctly elsewhere" not in detail
+
+    def test_corpus_ambiguous_match_keeps_generic_hint(self):
+        # More than one distinct resolved word for the same fragment --
+        # must fall back to the generic hint rather than guess which.
+        corpus_index = ({}, {("T", "ingen"): {"Tübingen", "Tobingen"}})
+        parsed = self._record("T\x1b$1abc\x1b(Bingen")
+        findings = m.find_suspect_marc8_escapes(parsed, corpus_index=corpus_index)
+        detail = findings[0][1]
+        assert (
+            "suggested fix: likely an accented letter and the letter "
+            "right after it" in detail
+        )
+        assert "found spelled correctly elsewhere" not in detail
+
     def test_no_op_when_already_unicode(self):
         parsed = m.ParsedRecord(
             leader=_SYNTHETIC_LEADER,  # leader[9] == "a" already
@@ -372,6 +427,101 @@ class TestFindSuspectMarc8Escapes:
             fields=[m.Field_("880", "10", [("a", "Schr\x1b$1)36\x1b(Binger")])],
         )
         assert m.find_suspect_marc8_escapes(parsed) == []
+
+
+class TestMarc8CorpusIndex:
+    def test_build_and_lookup_resolves_unambiguous_cjk_fragment(self, tmp_path):
+        corpus_path = tmp_path / "corpus.mrc"
+        corpus_path.write_bytes(
+            b"various text T\xe8ubingen is a city near T\xe8ubingen university."
+        )
+        index = m.build_marc8_corpus_index(str(corpus_path), "latin-1")
+        assert m.lookup_marc8_corpus_word(index, "CJK/EACC", "T", "ingen") == "Tübingen"
+
+    def test_lookup_returns_none_when_no_match(self, tmp_path):
+        corpus_path = tmp_path / "corpus.mrc"
+        corpus_path.write_bytes(b"various text T\xe8ubingen is a city.")
+        index = m.build_marc8_corpus_index(str(corpus_path), "latin-1")
+        assert m.lookup_marc8_corpus_word(index, "CJK/EACC", "Munic", "pal") is None
+
+    def test_lookup_returns_none_when_ambiguous(self, tmp_path):
+        corpus_path = tmp_path / "corpus.mrc"
+        # Same (before, after) fragment -- "na"/"ve" -- resolves to two
+        # different words depending on which diacritic byte precedes
+        # the base letter "i": not trustworthy, must not guess.
+        corpus_path.write_bytes(b"na\xe1ive journal and na\xe8ive paper")
+        index = m.build_marc8_corpus_index(str(corpus_path), "latin-1")
+        assert m.lookup_marc8_corpus_word(index, "Basic Hebrew", "na", "ve") is None
+
+    def test_returns_empty_index_when_file_already_utf8(self, tmp_path):
+        corpus_path = tmp_path / "corpus.mrc"
+        corpus_path.write_bytes(b"Tubingen with no diacritics at all")
+        index_exact, index_minus_one = m.build_marc8_corpus_index(str(corpus_path), "utf-8")
+        assert index_exact == {} and index_minus_one == {}
+
+
+class TestMarc8CorpusLookupCli:
+    def _two_record_file(self, tmp_path):
+        leader = list(_SYNTHETIC_LEADER)
+        leader[9] = " "  # declare MARC-8
+        leader = "".join(leader)
+        # Record 1: the CJK-escape finding -- "T" + <escape> + "ingen",
+        # missing "ub" (per docs/MARC8_ESCAPE_ANALYSIS.md's "swallows an
+        # extra letter" mechanism), intending "Tübingen".
+        rec1 = m.ParsedRecord(
+            leader=leader,
+            entries=[],
+            fields=[
+                m.Field_("008", None, None, content="x" * 40),
+                m.Field_("880", "10", [("a", "T\x1b$1abc\x1b(Bingen")]),
+            ],
+        )
+        # Record 2: "Tübingen" spelled correctly elsewhere in the same
+        # file, via the plain ANSEL diaeresis byte (no escape needed) --
+        # the corroborating occurrence the corpus lookup relies on.
+        rec2 = m.ParsedRecord(
+            leader=leader,
+            entries=[],
+            fields=[
+                m.Field_("008", None, None, content="x" * 40),
+                m.Field_("500", "  ", [("a", "A map of T\xe8ubingen.")]),
+            ],
+        )
+        src = tmp_path / "marc8.mrc"
+        src.write_bytes(m.assemble_marc(rec1) + m.assemble_marc(rec2))
+        return src
+
+    def test_corpus_lookup_on_by_default_names_specific_word(self, tmp_path):
+        pytest.importorskip("pymarc")
+        src = self._two_record_file(tmp_path)
+        out = tmp_path / "out.mrc"
+        log = tmp_path / "run.log"
+        rc = m.main([
+            str(src), "-o", str(out), "--no-transcode-marc8",
+            "--log-full", "suspect_marc8_escape", "--log", str(log),
+        ])
+        assert rc == 0
+        content = _resolve_log(log).read_text(encoding="utf-8")
+        assert "suggested fix: likely 'Tübingen'" in content
+        assert "found spelled correctly elsewhere in this file" in content
+
+    def test_no_marc8_corpus_lookup_flag_keeps_generic_hint(self, tmp_path):
+        pytest.importorskip("pymarc")
+        src = self._two_record_file(tmp_path)
+        out = tmp_path / "out.mrc"
+        log = tmp_path / "run.log"
+        rc = m.main([
+            str(src), "-o", str(out), "--no-transcode-marc8",
+            "--no-marc8-corpus-lookup",
+            "--log-full", "suspect_marc8_escape", "--log", str(log),
+        ])
+        assert rc == 0
+        content = _resolve_log(log).read_text(encoding="utf-8")
+        assert "found spelled correctly elsewhere" not in content
+        assert (
+            "suggested fix: likely an accented letter and the letter "
+            "right after it" in content
+        )
 
 
 class TestTranscodeMarc8:

@@ -2148,7 +2148,10 @@ class _Marc8MultibyteTruncated(Exception):
         self.byte_pos = byte_pos
 
 
-def find_suspect_marc8_escapes(parsed: ParsedRecord) -> list[tuple[str, str]]:
+def find_suspect_marc8_escapes(
+    parsed: ParsedRecord,
+    corpus_index: "_Marc8CorpusIndex | None" = None,
+) -> list[tuple[str, str]]:
     """Flag a MARC-8 script-switching escape (Hebrew/Arabic/Cyrillic/
     Greek/CJK) that produces only a single character, immediately
     embedded between two plain ASCII letters with no word boundary --
@@ -2171,7 +2174,10 @@ def find_suspect_marc8_escapes(parsed: ParsedRecord) -> list[tuple[str, str]]:
     "who's"); anything else is framed as a likely lost accented letter
     in the surrounding word (e.g. "Schrodinger", "Leonidas"), with a
     prompt to verify against another edition or an authority record
-    rather than an invented replacement.
+    rather than an invented replacement -- unless `corpus_index` (see
+    `build_marc8_corpus_index`) resolves the surrounding fragment to
+    exactly one word already spelled correctly elsewhere in this same
+    file, in which case the suggestion names that word specifically.
     """
     findings: list[tuple[str, str]] = []
     if parsed.leader[9:10] == UNICODE_ENCODING_BYTE:
@@ -2211,19 +2217,38 @@ def find_suspect_marc8_escapes(parsed: ParsedRecord) -> list[tuple[str, str]]:
                     # accented letter would -- e.g. "who's", "it's".
                     # Anything else is more likely an accented vowel
                     # lost from a proper noun (Schrodinger, Leonidas).
+                    resolved_word = None
                     if word_after == "s" and not next_char.isalpha():
                         suggestion = (
                             f"suggested fix: likely a miskeyed apostrophe -- "
                             f"probably \"{word_before}'s\""
                         )
                     else:
-                        suggestion = (
-                            "suggested fix: likely a miskeyed accented letter "
-                            "(e.g. ö, é, ñ, ü) in "
-                            f"\"{word_before}[?]{word_after}\" -- compare "
-                            "against another edition or an authority record "
-                            "to confirm the correct spelling"
-                        )
+                        if corpus_index is not None:
+                            resolved_word = lookup_marc8_corpus_word(
+                                corpus_index, charset_name, word_before, word_after,
+                            )
+                        if resolved_word is not None:
+                            suggestion = (
+                                f"suggested fix: likely {resolved_word!r} -- "
+                                "found spelled correctly elsewhere in this file"
+                            )
+                        elif charset_name == "CJK/EACC":
+                            suggestion = (
+                                "suggested fix: likely an accented letter and "
+                                "the letter right after it (e.g. ö, é, ñ, ü) "
+                                f"in \"{word_before}[?]{word_after}\" -- compare "
+                                "against another edition or an authority record "
+                                "to confirm the correct spelling"
+                            )
+                        else:
+                            suggestion = (
+                                "suggested fix: likely a miskeyed accented letter "
+                                "(e.g. ö, é, ñ, ü) in "
+                                f"\"{word_before}[?]{word_after}\" -- compare "
+                                "against another edition or an authority record "
+                                "to confirm the correct spelling"
+                            )
                     problem_start = match.start() - 1
                     problem_end = close + 4
                     window_start = max(0, problem_start - _CONTEXT_CHARS)
@@ -2243,6 +2268,115 @@ def find_suspect_marc8_escapes(parsed: ParsedRecord) -> list[tuple[str, str]]:
                     f"context: {context_preview!r}",
                 ))
     return findings
+
+
+#: (ascii_before, ascii_after) -> set of resolved words, where
+#: ascii_before/ascii_after are the plain-ASCII letter runs immediately
+#: surrounding one correctly-encoded ANSEL diacritic+base-letter pair
+#: found anywhere in this input file. Built once by
+#: `build_marc8_corpus_index` and consulted by
+#: `find_suspect_marc8_escapes` to upgrade its generic "could be ö, é,
+#: ñ, ü" suggestion into a specific word when the surrounding
+#: fragment resolves unambiguously. A second index
+#: (`minus_one_letter`) is keyed the same way but with the leading
+#: letter of `ascii_after` dropped, since the validated CJK/EACC
+#: mechanism (see docs/MARC8_ESCAPE_ANALYSIS.md) swallows the
+#: diacritic byte, its base letter, AND one more plain ASCII letter --
+#: so a CJK/EACC finding's own `word_after` is always missing that
+#: extra leading letter relative to the real, correctly-encoded word.
+_Marc8CorpusIndex = tuple[dict[tuple[str, str], set[str]], dict[tuple[str, str], set[str]]]
+
+#: Combined length of a finding's word_before + word_after below which
+#: a corpus lookup is skipped entirely (falls back to the generic
+#: hint) -- a 1-2 letter fragment matches too many unrelated words to
+#: trust an "unambiguous" hit.
+_MIN_CORPUS_MATCH_FRAGMENT_LEN = 3
+
+#: Any MARC-8/ANSEL single-byte combining diacritic (grave, acute,
+#: circumflex, tilde, macron, umlaut, etc.) sits in this range and is
+#: always followed immediately by the plain ASCII base letter it
+#: modifies -- see the real example in docs/MARC8_ESCAPE_ANALYSIS.md
+#: ("T" + 0xE8 (diaeresis) + "u" + "bingen" == "Tübingen").
+_MARC8_DIACRITIC_BYTE_RE = re.compile("[\xe0-\xfe][A-Za-z]")
+
+
+def build_marc8_corpus_index(input_path: str, encoding_used: str) -> _Marc8CorpusIndex:
+    """Scan the raw bytes of `input_path` once, up front, for every
+    correctly-encoded ANSEL diacritic+letter pair (plain MARC-8, no
+    escape needed) anywhere in the file, and index each one by the
+    plain-ASCII letter runs immediately before/after it. This is the
+    "opportunistic same-file corpus lookup" `find_suspect_marc8_escapes`
+    uses to turn a generic "could be ö, é, ñ, ü" suggestion into a
+    specific word (e.g. "Tübingen") when this same batch already spells
+    that word correctly somewhere else -- common in institutional
+    cataloging data (place names, publisher cities, repeated subject
+    vocabulary), per docs/MARC8_ESCAPE_ANALYSIS.md.
+
+    Degrades gracefully to two empty indexes -- callers then just get
+    `None` back from every `lookup_marc8_corpus_word` call, identical
+    to not having an index at all -- when `encoding_used` isn't
+    "latin-1" (a file already read as UTF-8 has no raw MARC-8 bytes to
+    scan) or when pymarc isn't installed (no new hard dependency).
+    """
+    index_exact: dict[tuple[str, str], set[str]] = {}
+    index_minus_one: dict[tuple[str, str], set[str]] = {}
+    if encoding_used != "latin-1":
+        return index_exact, index_minus_one
+    try:
+        from pymarc.marc8 import marc8_to_unicode
+    except ImportError:
+        return index_exact, index_minus_one
+
+    with open(input_path, "rb") as fh:
+        text = fh.read().decode("latin-1")
+
+    captured_stderr = io.StringIO()
+    for match in _MARC8_DIACRITIC_BYTE_RE.finditer(text):
+        pos = match.start()
+        before_match = re.search(r"[A-Za-z]+$", text[:pos])
+        after_match = re.match(r"[A-Za-z]+", text[pos + 2:])
+        before = before_match.group() if before_match else ""
+        after = after_match.group() if after_match else ""
+        try:
+            with redirect_stderr(captured_stderr):
+                accented = marc8_to_unicode(
+                    text[pos:pos + 2].encode("latin-1"), hide_utf8_warnings=True,
+                )
+        except Exception:
+            continue
+        if len(accented) != 1:
+            continue  # not a clean single accented character -- skip
+        word = before + accented + after
+        index_exact.setdefault((before, after), set()).add(word)
+        index_minus_one.setdefault((before, after[1:]), set()).add(word)
+    return index_exact, index_minus_one
+
+
+def lookup_marc8_corpus_word(
+    corpus_index: _Marc8CorpusIndex, charset_name: str, word_before: str, word_after: str,
+) -> str | None:
+    """Resolve a `find_suspect_marc8_escapes` finding's surrounding
+    fragment against `corpus_index` (see `build_marc8_corpus_index`).
+    Returns the resolved word only when exactly one word, correctly
+    encoded elsewhere in this file, matches -- `None` (never a guess)
+    on no match, an ambiguous match (more than one distinct resolved
+    word for the same fragment), or too short a fragment to trust.
+
+    CJK/EACC findings are looked up against `index_minus_one` instead
+    of the direct fragment: the validated 3-byte mechanism (see
+    docs/MARC8_ESCAPE_ANALYSIS.md) swallows one extra plain-ASCII
+    letter beyond the diacritic+base-letter pair, so a CJK/EACC
+    finding's own `word_after` is always short that one leading letter
+    relative to how the word is correctly spelled elsewhere.
+    """
+    if len(word_before) + len(word_after) < _MIN_CORPUS_MATCH_FRAGMENT_LEN:
+        return None
+    index_exact, index_minus_one = corpus_index
+    key_index = index_minus_one if charset_name == "CJK/EACC" else index_exact
+    candidates = key_index.get((word_before, word_after))
+    if candidates and len(candidates) == 1:
+        return next(iter(candidates))
+    return None
 
 
 def transcode_marc8_to_utf8(parsed: ParsedRecord) -> bool:
@@ -5510,6 +5644,23 @@ def main(argv: list[str] | None = None) -> int:
         "immediately rather than silently producing non-UTF-8 output; "
         "pass this flag to skip transcoding deliberately instead",
     )
+    parser.add_argument(
+        "--no-marc8-corpus-lookup",
+        dest="marc8_corpus_lookup",
+        action="store_false",
+        default=True,
+        help="do NOT build the same-file MARC-8 corpus index used to "
+        "sharpen suspect_marc8_escape suggestions (see "
+        "build_marc8_corpus_index) -- looks up a finding's surrounding "
+        "text against every correctly-encoded accented word elsewhere "
+        "in this same file, naming the specific word (e.g. "
+        "\"Tubingen\") instead of a generic \"could be accented\" hint "
+        "when exactly one match is found. On by default; on a large "
+        "legacy MARC-8 file this costs one extra full read of the "
+        "input, held in memory as a single decoded string, on top of "
+        "this tool's normal streaming pass -- pass this flag to skip "
+        "that and keep the generic hint for every finding instead",
+    )
     args = parser.parse_args(argv)
 
     while not args.input:
@@ -5715,6 +5866,11 @@ def main(argv: list[str] | None = None) -> int:
     }
 
     encoding_used = detect_encoding(args.input)
+    marc8_corpus_index = (
+        build_marc8_corpus_index(args.input, encoding_used)
+        if args.marc8_corpus_lookup
+        else ({}, {})
+    )
     mrk_path = None
     if args.mrk is not None:
         mrk_path = args.mrk or os.path.splitext(out_path)[0] + ".mrk"
@@ -5829,7 +5985,9 @@ def main(argv: list[str] | None = None) -> int:
                 for tag, detail in parsed.reattached_orphaned_fields:
                     rec_id = record_identifier(parsed)
                     log("reattached_orphaned_field", True, i, rec_id, detail)
-                for category, detail in find_suspect_marc8_escapes(parsed):
+                for category, detail in find_suspect_marc8_escapes(
+                    parsed, corpus_index=marc8_corpus_index,
+                ):
                     rec_id = record_identifier(parsed)
                     log(category, False, i, rec_id, detail)
                 if args.transcode_marc8:

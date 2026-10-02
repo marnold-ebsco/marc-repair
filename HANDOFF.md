@@ -62,6 +62,95 @@ New tests: `test_long_title_body_truncated_in_detail`,
 
 All 328 tests passing (1 skipped), flake8 clean.
 
+## DONE: analyzed `suspect_marc8_escape` findings for a recurring pattern
+
+Ran `marc_repair.py` with `--log-full suspect_marc8_escape` against
+`WTS_bibs_2026-10-01.out` (421MB / 263,595 bib records) to pull all 255
+findings and look for a reliable escape-payload -> intended-letter mapping
+that could upgrade the category's generic "ö, é, ñ, ü" suggestion into a
+specific one.
+
+Full writeup: [docs/MARC8_ESCAPE_ANALYSIS.md](docs/MARC8_ESCAPE_ANALYSIS.md).
+Short version: the pattern is real (virtually all findings are real German/
+French words missing a diacritic, corroborated against thousands of
+correctly-encoded instances of the same words elsewhere in this file) but
+**does not support a static payload -> letter table** -- many different
+3-byte escape payloads resolve to the same letter, so the mapping is
+mediated by recognizing words, not by decoding bytes. Also found that the
+CJK/EACC escape (3 raw bytes) typically swallows the diacritic + base
+letter + one more plain letter, not just one character, which the
+category's current suggestion text doesn't account for.
+
+No code changes made -- `find_suspect_marc8_escapes` stays detect-only.
+
+**Rejected approach:** a static payload -> letter lookup table. Confirmed
+unreliable (many different 3-byte payloads resolve to the same letter) and
+specific to this one file's own copy-cataloged vocabulary -- won't
+generalize to other libraries' files, which won't have the same recurring
+words. Do not build one.
+
+## DONE: two concrete, generalizable improvements to `suspect_marc8_escape`
+
+Both implemented, both still detect-only. All 340 tests passing (1 skipped),
+flake8 clean (`--max-line-length=100`, per README.md).
+
+Follow-up: added `--no-marc8-corpus-lookup` (store_false onto
+`args.marc8_corpus_lookup`, default `True`) to skip item 2's corpus-index
+build entirely -- it costs one extra full read of the input file, held in
+memory as a single decoded string, on a large legacy MARC-8 file. Wired in
+`main()` right where `marc8_corpus_index` is built: calls
+`build_marc8_corpus_index` only when the flag allows it, otherwise uses
+`({}, {})` (same as the function's own graceful-fallback empty indexes).
+Stays on by default. New `TestMarc8CorpusLookupCli` class
+(`tests/test_marc_repair_bib.py`) exercises this end-to-end via `m.main()`
+on a real 2-record file (one with the CJK-escape finding, one with
+"Tübingen" spelled correctly elsewhere in the same file): default run
+names the word specifically, `--no-marc8-corpus-lookup` keeps the generic
+hint.
+
+**1. Fixed the suggestion text's character-count claim.** The CJK/EACC
+branch of `find_suspect_marc8_escapes`'s suggestion (marc_repair.py) now
+reads "likely an accented letter and the letter right after it" instead of
+"likely a miskeyed accented letter"; the 1-byte-charset branch (Hebrew/
+Arabic/Cyrillic/Greek) keeps the original single-character wording
+unchanged. New/updated tests in `TestFindSuspectMarc8Escapes`
+(`tests/test_marc_repair_bib.py`): `test_flags_single_cjk_char_welded_to_ascii_letters`
+updated for the new wording; added
+`test_flags_single_greek_char_welded_to_ascii_letters_single_byte_wording`
+to pin the unchanged 1-byte wording.
+
+**2. Added the opportunistic same-file corpus lookup.** New
+`build_marc8_corpus_index(input_path, encoding_used)` does a single regex
+pre-pass over the raw input bytes for every correctly-encoded ANSEL
+diacritic+letter pair, building two indexes keyed by the surrounding
+ASCII runs: `index_exact` (direct fragment match, for 1-byte charsets) and
+`index_minus_one` (fragment match with the trailing letter of
+`ascii_after` dropped, for CJK/EACC -- accounts for the extra swallowed
+letter from improvement #1). New `lookup_marc8_corpus_word(corpus_index,
+charset_name, word_before, word_after)` resolves a finding's fragment
+against it, returning a word only on an unambiguous single match (a
+`_MIN_CORPUS_MATCH_FRAGMENT_LEN = 3` floor skips too-short fragments).
+`find_suspect_marc8_escapes` takes an optional `corpus_index` parameter
+(default `None`, so existing callers/tests are unaffected) and, when a
+fragment resolves, swaps in "likely 'Tübingen' -- found spelled correctly
+elsewhere in this file" instead of the generic hint. Degrades to two empty
+indexes (and thus always falls back to the generic hint) when the file was
+read as UTF-8 or pymarc isn't installed -- no new failure mode or hard
+dependency.
+
+Wired into `main()`: built once via `build_marc8_corpus_index(args.input,
+encoding_used)` right after `encoding_used` is determined, then passed into
+the existing `find_suspect_marc8_escapes(parsed, ...)` call inside the main
+per-record loop. Not wired into `repair_holdings_records` (MARC-8 escape
+detection isn't run there at all, same as before). New tests in
+`TestFindSuspectMarc8Escapes` (hand-built `corpus_index` tuples, no file
+I/O): match found, no match found, ambiguous match. New
+`TestMarc8CorpusIndex` class (writes real bytes to `tmp_path`, exercises
+`build_marc8_corpus_index` + `lookup_marc8_corpus_word` together): resolves
+an unambiguous "Tübingen" fragment, returns `None` on no match, returns
+`None` on an ambiguous two-word fragment, and returns empty indexes when
+`encoding_used="utf-8"`.
+
 ## Context usage at handoff (from `/context`)
 
 - Model: claude-sonnet-5
