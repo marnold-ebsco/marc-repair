@@ -37,6 +37,10 @@ venv2/
 archive/
 split/
 
+# Real-world run input/output pulled from EC2 for local testing -- large,
+# not source, specific to one person's workstation.
+WTS_bibs_*.out
+
 # Personal editor config -- not shared project config
 *.code-workspace
 .vscode/

@@ -4728,6 +4728,21 @@ def _timestamped_log_path(path: str, run_ts: str) -> str:
     return f"{base}_{run_ts}{ext}"
 
 
+def _write_run_timing_header(log_path: str, started: datetime, finished: datetime) -> None:
+    """Write a run-level started/finished/elapsed line as the very first
+    line of the log file -- the stdout summary's elapsed-seconds line
+    doesn't persist once the terminal scrolls away, so the log file
+    needs its own record of when the run ran and how long it took.
+    Elapsed is wall-clock `finished - started`, to .01s."""
+    elapsed = (finished - started).total_seconds()
+    with open(log_path, "w", encoding="utf-8") as fh:
+        fh.write(
+            f"=== RUN: started {started.strftime('%Y-%m-%dT%H:%M:%SZ')}, "
+            f"finished {finished.strftime('%Y-%m-%dT%H:%M:%SZ')}, "
+            f"elapsed {elapsed:.2f}s ===\n"
+        )
+
+
 def write_log(
     path: str,
     entries: list[LogEntry],
@@ -5168,6 +5183,7 @@ def repair_holdings_records(
     anything diverted to the "_error" file; equal to "total" -
     "unfixable" unless a split also happened).
     """
+    run_started = datetime.now(timezone.utc)
     encoding_used = detect_encoding(input_path)
     holdings_required_a_tags = load_tag_list(DEFAULT_HOLDINGS_REQUIRED_A_TAGS_FILE)
     error_path = _error_output_path(output_path)
@@ -5384,6 +5400,7 @@ def repair_holdings_records(
         }
         if n_new_holdings_records else None
     )
+    _write_run_timing_header(log_path, run_started, datetime.now(timezone.utc))
     write_log(
         log_path, log_entries, active_categories=active_categories,
         full_categories=resolved_full_categories, count_notes=count_notes,
@@ -5998,6 +6015,7 @@ def main(argv: list[str] | None = None) -> int:
             return 1
 
     start_time = time.perf_counter()
+    run_started = datetime.now(timezone.utc)
 
     out_path = args.out or _default_output_path(args.input)
     run_ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -6422,6 +6440,7 @@ def main(argv: list[str] | None = None) -> int:
         _timestamped_log_path(args.log, run_ts) if args.log
         else os.path.splitext(out_path)[0] + f"_log_{run_ts}.log"
     )
+    _write_run_timing_header(log_path, run_started, datetime.now(timezone.utc))
     write_log(
         log_path, log_entries, active_categories=active_categories,
         full_categories=resolved_full_categories,
