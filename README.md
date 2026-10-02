@@ -340,14 +340,18 @@ python3 -m venv venv
 
 This installs `pymarc` (used for `--transcode-marc8`'s MARC-8/ANSEL ->
 UTF-8 conversion, deferring to its LC-authoritative tables rather than
-reimplementing them from scratch) and everything else is pure Python /
-stdlib, plus puts a `marc_repair` command on the venv. Activate the venv
-(`source ./venv/bin/activate`) and run `marc_repair ...` directly, or call
-it unactivated via `./venv/bin/marc_repair ...`.
+reimplementing them from scratch) — everything else is pure Python /
+stdlib. Run the tool against this venv's interpreter:
 
-Prefer not to install anything? Everything except `--transcode-marc8`
-still runs straight from the script with no venv at all:
-`marc_repair ...`.
+```bash
+./venv/bin/python marc_repair.py bad_length_bib.mrc
+```
+
+For a bare `marc_repair` command instead (no venv activation, no
+`python`/`.py` to type), use [Quick install](#quick-install-no-full-clone)'s
+`install.sh` — it sets up the venv the same way *and* writes that
+wrapper for you (deliberately not something `pip install .` does on its
+own: see `pyproject.toml`'s comment on why).
 
 ### PyPy (optional, faster on large files)
 
@@ -367,10 +371,10 @@ pypy3 -m venv pypy_venv
 ```
 
 Then run the tool exactly the same way, just pointing at the PyPy venv's
-`marc_repair` instead:
+interpreter instead:
 
 ```bash
-./pypy_venv/bin/marc_repair bad_length_bib.mrc
+./pypy_venv/bin/python marc_repair.py bad_length_bib.mrc
 ```
 
 ### CPython vs. PyPy: which to use
@@ -506,7 +510,7 @@ re-run with `--overrides overrides.json`.
 | File | Purpose |
 |---|---|
 | `marc_repair.py` | The tool |
-| `pyproject.toml` | Packaging metadata — `pip install .` installs `pymarc` and the `marc_repair` command |
+| `pyproject.toml` | Packaging metadata — `pip install .` installs the `pymarc` dependency (deliberately no console-script entry point; see its comment, and `install.sh`'s wrapper, for why) |
 | `required_a_tags.txt` | Editable tag list for `--strip-missing-required-a` — deliberately external, since which fields truly require `$a` is a cataloging-practice judgment call, not something to hardcode |
 | `non_repeatable_tags.txt` | Editable tag list for `--strip-duplicate-non-repeatable-fields` — deliberately conservative (only tags whose Not-Repeatable status is well-established); extend it if you find more in your own data |
 | `requirements.txt` | `pymarc`, for installs that skip `pyproject.toml` (e.g. `pip install -r requirements.txt`) |

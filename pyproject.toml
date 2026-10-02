@@ -11,8 +11,11 @@ dependencies = [
     "pymarc>=5,<6",
 ]
 
-[project.scripts]
-marc_repair = "marc_repair:main"
-
+# No [project.scripts] entry point on purpose: setuptools would copy
+# marc_repair.py into site-packages, away from required_a_tags.txt /
+# non_repeatable_tags.txt / holdings_required_a_tags.txt, which it
+# locates by path relative to itself -- breaking those defaults.
+# install.sh instead writes a venv/bin/marc_repair wrapper that runs
+# the script in place, alongside its data files.
 [tool.setuptools]
-py-modules = ["marc_repair"]
+py-modules = []

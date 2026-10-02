@@ -141,19 +141,32 @@ fi
 
 echo "${INTERPRETER}" > "$INTERPRETER_MARKER"
 
-echo "Installing marc_repair and its dependencies (incl. pymarc)..."
+echo "Installing dependencies (incl. pymarc)..."
 "${VENV_DIR}/bin/pip" install --quiet --upgrade pip
 "${VENV_DIR}/bin/pip" install --quiet "${INSTALL_DIR}"
 
-# Symlink the venv's marc_repair onto PATH so it runs bare, without
-# activating the venv first -- only into ~/.local/bin, and only if
-# that's already on PATH, since guessing at a system-wide location
-# (e.g. /usr/local/bin) could silently require sudo or fail.
+# Write a marc_repair wrapper that runs marc_repair.py in place, rather
+# than relying on a pip-generated entry point -- pip would copy the
+# script into site-packages, away from required_a_tags.txt /
+# non_repeatable_tags.txt / holdings_required_a_tags.txt, which it
+# locates by path relative to itself, breaking those defaults.
+ABS_INSTALL_DIR="$(cd "${INSTALL_DIR}" && pwd)"
+ABS_VENV_DIR="${ABS_INSTALL_DIR}/venv"
+cat > "${VENV_DIR}/bin/marc_repair" <<WRAPPER
+#!/usr/bin/env bash
+exec "${ABS_VENV_DIR}/bin/python3" "${ABS_INSTALL_DIR}/marc_repair.py" "\$@"
+WRAPPER
+chmod +x "${VENV_DIR}/bin/marc_repair"
+
+# Symlink the wrapper onto PATH so it runs bare, without activating
+# the venv first -- only into ~/.local/bin, and only if that's already
+# on PATH, since guessing at a system-wide location (e.g.
+# /usr/local/bin) could silently require sudo or fail.
 LINKED_PATH=""
 if [[ "$NO_LINK" -eq 0 ]]; then
   if [[ ":$PATH:" == *":$HOME/.local/bin:"* ]]; then
     mkdir -p "$HOME/.local/bin"
-    ln -sf "$(cd "${VENV_DIR}/bin" && pwd)/marc_repair" "$HOME/.local/bin/marc_repair"
+    ln -sf "${ABS_VENV_DIR}/bin/marc_repair" "$HOME/.local/bin/marc_repair"
     LINKED_PATH="$HOME/.local/bin/marc_repair"
   fi
 fi
