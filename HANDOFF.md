@@ -1,5 +1,27 @@
 # Handoff Notes
 
+## TODO (later): re-examine `install.sh`'s self-update/re-run story
+
+A user ran `./install.sh --dir .` from inside an EC2 checkout at
+`/working/migration/scripts/marc_repair` and got `bash: ./install.sh: No
+such file or directory`. Likely cause: that directory was created by
+`install.sh`'s minimal-fetch mode, and `install.sh` deliberately never
+copies itself into the install dir -- `FILES` (`install.sh:37-45`)
+doesn't include `install.sh`, per the comment at `install.sh:116-120`
+("it can't safely rewrite itself mid-loop the way those files get
+rewritten"). So a dir populated by `curl ... | bash -s -- --dir .` has
+no local `install.sh` to re-run, and the only documented recovery is to
+re-fetch it by hand or always invoke via the `curl | bash` form.
+
+Worth a look: should the installed dir get its own copy of `install.sh`
+(added to `FILES`, with the self-rewrite logic guarded some other way),
+or should the "Apply an update in place" hint printed at the end of a
+successful install (`install.sh:261-268`) say more explicitly that the
+`curl | bash` form is the one to keep using if you don't already have a
+local `install.sh`? Confirm first whether the EC2 directory in question
+was actually a minimal install vs. a full git clone missing the file for
+some other reason -- wasn't confirmed either way in that conversation.
+
 ## TODO (later): `build_marc8_corpus_index` reads the whole input file into memory at once
 
 Unlike the rest of the pipeline (which streams one record at a time and
