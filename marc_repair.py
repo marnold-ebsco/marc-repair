@@ -4542,7 +4542,10 @@ _CHECK_DESCRIPTIONS: dict[str, str] = {
     "auto-fixed, since the decode is boundary-sensitive and there's no "
     "safe way to guarantee exact byte alignment automatically. Each "
     "finding names whether its own decoded preview looks recoverable "
-    "or not. POSSIBLE DATA LOSS.",
+    "or not -- see each finding's own NO DATA LOSS/POSSIBLE DATA LOSS "
+    "call. POSSIBLE DATA LOSS. Detect-only, though, so this tool never "
+    "makes it worse: it's reporting damage that already happened "
+    "upstream, before the file ever reached this tool.",
     "holdings_852_b_suspect_content": "An 852 $b (Sublocation) looks "
     "like data that migrated into the wrong subfield -- purely "
     "numeric, or containing flattened subfield-delimiter markers -- "
@@ -4590,7 +4593,8 @@ _CHECK_DESCRIPTIONS: dict[str, str] = {
     "($a \"No title\") was inserted. NO DATA LOSS.",
     "added_missing_852c": "852 (Location) had no $c (Shelving "
     "location) -- a placeholder was inserted (disable with "
-    "--no-fix-missing-852c). POSSIBLE DATA LOSS.",
+    "--no-fix-missing-852c). NO DATA LOSS -- only fills a gap that was "
+    "already empty; never overwrites an existing $c.",
     "normalized_subfield_9_to_0": "A $9 subfield was rewritten to $0 "
     "(MARC21's standard authority-control-number code). NO DATA LOSS.",
     "normalized_smart_characters": "Typographic (\"smart\") quotes/"
@@ -4643,10 +4647,12 @@ _CHECK_DESCRIPTIONS: dict[str, str] = {
     "holdings_852_duplicate_nr_subfield": "852 (Location) had a "
     "Not-Repeatable subfield (e.g. $h) more than once -- every "
     "occurrence after the first removed. POSSIBLE DATA LOSS.",
-    "fixed_008_length": "008 wasn't exactly 40 characters -- padded or "
-    "truncated to fit. NO DATA LOSS.",
+    "fixed_008_length": "008 wasn't exactly 40 characters -- padded "
+    "(no loss) or truncated (discards the trailing bytes past 40) to "
+    "fit. POSSIBLE DATA LOSS.",
     "fixed_holdings_008_length": "Holdings 008 wasn't exactly 32 "
-    "characters -- padded or truncated to fit. NO DATA LOSS.",
+    "characters -- padded (no loss) or truncated (discards the "
+    "trailing bytes past 32) to fit. POSSIBLE DATA LOSS.",
     "added_field": "A field required via --ensure-field was missing "
     "entirely -- inserted with the given content. NO DATA LOSS.",
     "added_missing_852_location": "852 (Location) had none of $a/$b/"
