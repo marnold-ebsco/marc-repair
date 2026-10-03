@@ -178,10 +178,9 @@ pass; a full local re-run of `WTS_bibs_2026-10-01.out` now completes in
 `transcode_marc8_failed: 2 record(s)` (`.b11165406`, `.b11227394`) as
 expected. Re-confirmed again (2026-10-02, 95.21s this time) after the
 start/finish/elapsed logging change below -- same 2-record result, so
-that change didn't regress anything. Still not re-verified on the EC2
-box itself -- next session there should re-run `install.sh --dir .`
-(self-updates on first run, needs a second run to apply) and confirm
-the real run also completes.
+that change didn't regress anything. **Confirmed on the EC2 box itself
+too (2026-10-02, user-reported)** -- fix is fully verified end to end,
+nothing further to do here.
 
 ## DONE: log start/finish/elapsed time
 
