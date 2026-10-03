@@ -4770,11 +4770,19 @@ def _timestamped_log_path(path: str, run_ts: str) -> str:
     return f"{base}_{run_ts}{ext}"
 
 
-def _write_run_timing_header(log_path: str, started: datetime, finished: datetime) -> None:
-    """Write a run-level started/finished/elapsed line as the very first
-    line of the log file -- the stdout summary's elapsed-seconds line
-    doesn't persist once the terminal scrolls away, so the log file
-    needs its own record of when the run ran and how long it took.
+def _write_run_timing_header(
+    log_path: str,
+    started: datetime,
+    finished: datetime,
+    source_path: str,
+    repaired_path: str,
+    problem_path: str,
+) -> None:
+    """Write a run-level started/finished/elapsed line, followed by the
+    source/repaired/problem filenames for this run, as the very first
+    lines of the log file -- the stdout summary doesn't persist once the
+    terminal scrolls away, so the log file needs its own record of when
+    the run ran, how long it took, and which files it read from/wrote to.
     Elapsed is wall-clock `finished - started`, to .01s."""
     elapsed = (finished - started).total_seconds()
     with open(log_path, "w", encoding="utf-8") as fh:
@@ -4783,6 +4791,10 @@ def _write_run_timing_header(log_path: str, started: datetime, finished: datetim
             f"finished {finished.strftime('%Y-%m-%dT%H:%M:%SZ')}, "
             f"elapsed {elapsed:.2f}s ===\n"
         )
+        fh.write(f"Source filename: {source_path}\n")
+        fh.write(f"Repaired filename: {repaired_path}\n")
+        fh.write(f"Problem filename: {problem_path}\n")
+        fh.write("\n")
 
 
 def write_log(
@@ -5442,7 +5454,10 @@ def repair_holdings_records(
         }
         if n_new_holdings_records else None
     )
-    _write_run_timing_header(log_path, run_started, datetime.now(timezone.utc))
+    _write_run_timing_header(
+        log_path, run_started, datetime.now(timezone.utc),
+        input_path, output_path, error_path,
+    )
     write_log(
         log_path, log_entries, active_categories=active_categories,
         full_categories=resolved_full_categories, count_notes=count_notes,
@@ -5681,6 +5696,22 @@ def main(argv: list[str] | None = None) -> int:
         "(default: 25); has no effect without --sample-problems",
     )
     parser.add_argument(
+        "--sample-log",
+        nargs="?",
+        const="",
+        default=None,
+        metavar="PATH",
+        help="write a full log file to PATH documenting every check/"
+        "category this tool can log -- one header + description per "
+        "category, exactly as --log would produce if every check ran "
+        "and found nothing -- then exit immediately. No input is read "
+        "or repaired; every count is 0 and there are no per-record "
+        "findings. Meant as a reference/template of the log's full "
+        "structure, e.g. for building something that parses it. PATH "
+        "is optional -- bare --sample-log defaults to "
+        "sample_log_TIMESTAMP.log",
+    )
+    parser.add_argument(
         "--no-fix-misplaced-subfield-codes",
         dest="fix_misplaced_subfield_codes",
         action="store_false",
@@ -5877,6 +5908,23 @@ def main(argv: list[str] | None = None) -> int:
         "that and keep the generic hint for every finding instead",
     )
     args = parser.parse_args(argv)
+
+    if args.sample_log is not None:
+        run_ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        log_path = (
+            _timestamped_log_path(args.sample_log, run_ts) if args.sample_log
+            else f"sample_log_{run_ts}.log"
+        )
+        now = datetime.now(timezone.utc)
+        _write_run_timing_header(
+            log_path, now, now,
+            "(none -- --sample-log, no input read)",
+            "(none -- --sample-log, no input read)",
+            "(none -- --sample-log, no input read)",
+        )
+        write_log(log_path, [], active_categories=set(_CHECK_DESCRIPTIONS))
+        print(f"sample log ({len(_CHECK_DESCRIPTIONS)} category header(s), all 0 record(s)) written to {log_path}")
+        return 0
 
     while not args.input:
         try:
@@ -6488,7 +6536,10 @@ def main(argv: list[str] | None = None) -> int:
         _timestamped_log_path(args.log, run_ts) if args.log
         else os.path.splitext(out_path)[0] + f"_log_{run_ts}.log"
     )
-    _write_run_timing_header(log_path, run_started, datetime.now(timezone.utc))
+    _write_run_timing_header(
+        log_path, run_started, datetime.now(timezone.utc),
+        args.input, out_path, error_path,
+    )
     write_log(
         log_path, log_entries, active_categories=active_categories,
         full_categories=resolved_full_categories,
