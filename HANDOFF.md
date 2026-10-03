@@ -1,5 +1,29 @@
 # Handoff Notes
 
+## NEXT TASK: make suspect_hex_encoded_marc8 findings more readable
+
+Not started. `find_suspect_hex_encoded_marc8` (`marc_repair.py:2478`)
+builds its per-finding detail with `preview = decoded.decode("latin-1")`
+then embeds it (and the raw surrounding `context`) via `!r` --
+`marc_repair.py:2510` / `2513` / `2517-2522`. When the decoded bytes
+are genuine MARC-8 (the common "NO DATA LOSS (apparent)" case), that's
+raw MARC-8 escape sequences and high-bit EACC/CJK bytes, which `repr()`
+renders as `\x1b`, `\xNN`, etc. -- unreadable to a cataloger reviewing
+the log, even though the decode itself succeeded. The two real
+"POSSIBLE DATA LOSS" examples from this session's analysis
+(`docs/MARC8_ESCAPE_ANALYSIS.md`-adjacent work) that happened to be
+plain English text read fine, but that's the lucky case, not the
+typical one.
+
+Worth considering next session: decode the MARC-8 bytes to Unicode for
+the preview (via pymarc, same as `transcode_marc8_to_utf8` already
+does elsewhere) when `recoverable` is true, falling back to the current
+raw `repr()` only when it isn't real MARC-8/plain text to begin with.
+Check whether `context` (also raw latin-1 `!r`) needs the same
+treatment, or whether showing it as literal MARC-8 bytes is actually
+more useful there (it's meant to show *where* in the field the run
+sits, not what it decodes to).
+
 ## Session summary (2026-10-02)
 
 Work done on `marc_repair.py` this session:
