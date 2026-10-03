@@ -6076,6 +6076,12 @@ def main(argv: list[str] | None = None) -> int:
     }
 
     encoding_used = detect_encoding(args.input)
+    if args.marc8_corpus_lookup and encoding_used == "latin-1":
+        # build_marc8_corpus_index is a full pass over the whole input file
+        # that runs before the first progress line prints -- on a big file
+        # this is a real, if bounded, multi-second gap with no output at
+        # all otherwise (see HANDOFF.md).
+        print("Scanning input file for MARC-8 corpus lookup...", file=sys.stderr)
     marc8_corpus_index = (
         build_marc8_corpus_index(args.input, encoding_used)
         if args.marc8_corpus_lookup

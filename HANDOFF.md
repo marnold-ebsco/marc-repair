@@ -1,5 +1,29 @@
 # Handoff Notes
 
+## TODO (later): `build_marc8_corpus_index` reads the whole input file into memory at once
+
+Unlike the rest of the pipeline (which streams one record at a time and
+stays O(1) in memory regardless of file size), `build_marc8_corpus_index`
+(`marc_repair.py:2333-2334`) does `text = fh.read().decode("latin-1")` --
+the entire file as one string, held for the duration of the scan. Only
+triggers when `encoding_used == "latin-1"` (true legacy MARC-8 files).
+
+Cost is roughly 1x file size (latin-1 decode is 1 byte/char in CPython's
+internal representation, so no multiplier) plus the small, already-bounded
+`index_exact`/`index_minus_one` sets. Confirmed fine at 421MB (the
+WTS_bibs EC2 file). Not a correctness bug -- just no ceiling the way the
+rest of the pipeline has. A sufficiently large latin-1 file (several GB)
+could push memory up by that file's full size on a constrained box.
+`--no-marc8-corpus-lookup` is already an escape hatch.
+
+**If picked up:** switch to a chunked read with a small overlap buffer
+carried across chunk boundaries (so a diacritic+letter match straddling a
+chunk edge isn't missed, and the `_MAX_WORD_FRAGMENT_WINDOW=100`-char
+before/after slices still resolve correctly near a boundary). Estimated
+~40-80k tokens of agent work including new boundary-case tests -- the
+overlap-buffer correctness is the fiddly part and likely needs 1-2
+correction rounds after the first test run.
+
 ## DONE: shortened/readable detail messages for `suspect_marc8_escape` and `suspect_hex_encoded_marc8`
 
 All 345 tests passing (1 skipped), flake8 clean.
