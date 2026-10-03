@@ -2237,35 +2237,38 @@ def find_suspect_marc8_escapes(
                             suggestion = (
                                 "suggested fix: likely an accented letter and "
                                 "the letter right after it (e.g. ö, é, ñ, ü) "
-                                f"in \"{word_before}[?]{word_after}\" -- compare "
-                                "against another edition or an authority record "
-                                "to confirm the correct spelling"
+                                f"in \"{word_before}[?]{word_after}\" -- verify "
+                                "against another source"
                             )
                         else:
                             suggestion = (
                                 "suggested fix: likely a miskeyed accented letter "
                                 "(e.g. ö, é, ñ, ü) in "
-                                f"\"{word_before}[?]{word_after}\" -- compare "
-                                "against another edition or an authority record "
-                                "to confirm the correct spelling"
+                                f"\"{word_before}[?]{word_after}\" -- verify "
+                                "against another source"
                             )
                     problem_start = match.start() - 1
                     problem_end = close + 4
                     window_start = max(0, problem_start - _CONTEXT_CHARS)
                     window_end = min(len(text), problem_end + _CONTEXT_CHARS)
-                    window = text[window_start:window_end]
+                    # replace the raw escape bytes with a short readable
+                    # marker -- repr()'ing them as-is (\x1b, high-bit
+                    # charset bytes) is unreadable in the log
+                    window = (
+                        text[window_start:match.start()]
+                        + "<escape>"
+                        + text[close + 3:window_end]
+                    )
                     occurrences.append((window, charset_name, before, after, suggestion))
             if not occurrences:
                 continue
-            context_preview = " ... ".join(o[0] for o in occurrences)
             for window, charset_name, before, after, suggestion in occurrences:
                 findings.append((
                     "suspect_marc8_escape",
                     f"tag {f.tag}: single {charset_name} character embedded "
                     f"mid-word ({before!r}<escape>{after!r}) -- likely a "
-                    "miskeyed diacritic in the source record, not real "
-                    f"{charset_name} content; {suggestion}; "
-                    f"context: {context_preview!r}",
+                    f"miskeyed diacritic; {suggestion}; "
+                    f"context: {window!r}",
                 ))
     return findings
 
@@ -2475,19 +2478,49 @@ def _hex_brace_decode_looks_recoverable(decoded: bytes, clean: bool) -> bool:
     return printable / len(text) >= 0.9
 
 
+def _marc8_bytes_to_readable_preview(decoded: bytes) -> str:
+    """Render `decoded` (raw MARC-8 bytes, from `_decode_hex_brace_run`)
+    as human-readable Unicode text for a log preview, the same way
+    `transcode_marc8_to_utf8` converts real record content -- without
+    this, a genuinely-recovered MARC-8 escape sequence or high-bit
+    EACC/CJK byte shows up `repr()`'d as raw `\\x1b`/`\\xNN` control
+    bytes, unreadable to a cataloger even though the decode succeeded.
+    Falls back to the raw latin-1 string (the previous behavior) if
+    pymarc isn't installed or the bytes don't actually transcode
+    cleanly -- this is a best-effort preview, not a correctness check,
+    so any failure here is swallowed rather than raised.
+    """
+    try:
+        from pymarc.marc8 import marc8_to_unicode
+    except ImportError:
+        return decoded.decode("latin-1")
+    try:
+        captured_stderr = io.StringIO()
+        with redirect_stderr(captured_stderr):
+            result = marc8_to_unicode(decoded, hide_utf8_warnings=True)
+        if captured_stderr.getvalue():
+            return decoded.decode("latin-1")
+        return str(result)
+    except Exception:
+        return decoded.decode("latin-1")
+
+
 def find_suspect_hex_encoded_marc8(parsed: ParsedRecord) -> list[tuple[str, str]]:
     """Flag a run of "{xxxxxx}" (6 hex-digit characters in literal
     curly braces) in any field's content -- see the module-level
     comment above `_HEX_BRACE_GROUP_RE` for what actually produces
     this and how it's confirmed to decode. Each finding includes the
-    decoded preview and an explicit data-loss call (see
-    `_hex_brace_decode_looks_recoverable`), plus 10-25 characters of
-    surrounding context so a reviewer can see where in the field the
-    run sits without hunting through the whole (often very long)
-    880 value. Detect-only -- never auto-fixed.
+    decoded preview -- rendered as readable Unicode text via
+    `_marc8_bytes_to_readable_preview` when the decode looks
+    recoverable, or the raw latin-1 bytes otherwise -- and an explicit
+    data-loss call (see `_hex_brace_decode_looks_recoverable`), plus up
+    to 10 characters of surrounding context on each side so a reviewer
+    can see where in the field the run sits without hunting through
+    the whole (often very long) 880 value. Detect-only -- never
+    auto-fixed.
     """
     findings: list[tuple[str, str]] = []
-    _CONTEXT_CHARS = 20
+    _CONTEXT_CHARS = 10
     for f in parsed.fields:
         texts = [("", f.content)] if f.is_control() else list(f.subfields)
         for code, text in texts:
@@ -2507,7 +2540,10 @@ def find_suspect_hex_encoded_marc8(parsed: ParsedRecord) -> list[tuple[str, str]
                     "valid MARC-8 or plain text (may be truncated or "
                     "boundary-shifted)"
                 )
-                preview = decoded.decode("latin-1")
+                preview = (
+                    _marc8_bytes_to_readable_preview(decoded)
+                    if recoverable else decoded.decode("latin-1")
+                )
                 window_start = max(0, match.start() - _CONTEXT_CHARS)
                 window_end = min(len(text), match.end() + _CONTEXT_CHARS)
                 context = text[window_start:window_end]

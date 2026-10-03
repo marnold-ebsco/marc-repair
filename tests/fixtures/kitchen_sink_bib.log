@@ -84,7 +84,7 @@
 === NEEDS REVIEW: suspect_marc8_escape ===
 === A MARC-8 script-switching escape (Hebrew/Arabic/Cyrillic/Greek/CJK) produces only a single character, welded directly between two ASCII letters with no word boundary -- almost certainly a miskeyed accented letter, not real embedded foreign-script text; never auto-fixed, since there's no safe way to guess the intended character. NO DATA LOSS. ===
 === 1 record(s) ===
-	2026-09-22T21:55:31Z	record 22 (ks-suspectescape)	tag 880: single CJK/EACC character embedded mid-word ('r'<escape>'i') -- likely a miskeyed diacritic in the source record, not real CJK/EACC content; suggested fix: likely a miskeyed accented letter (e.g. ö, é, ñ, ü) in "Schr[?]inger" -- compare against another edition or an authority record to confirm the correct spelling; context: 'Schr\x1b$1)36\x1b(Binger'
+	2026-09-22T21:55:31Z	record 22 (ks-suspectescape)	tag 880: single CJK/EACC character embedded mid-word ('r'<escape>'i') -- likely a miskeyed diacritic; suggested fix: likely an accented letter and the letter right after it (e.g. ö, é, ñ, ü) in "Schr[?]inger" -- verify against another source; context: 'Schr<escape>inger'
 
 === NEEDS REVIEW: transcode_marc8_failed ===
 === MARC-8-to-UTF-8 transcoding failed for this record's content -- left as MARC-8, error recorded. POSSIBLE DATA LOSS. ===

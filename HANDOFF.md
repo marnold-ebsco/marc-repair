@@ -1,28 +1,45 @@
 # Handoff Notes
 
-## NEXT TASK: make suspect_hex_encoded_marc8 findings more readable
+## DONE: shortened/readable detail messages for `suspect_marc8_escape` and `suspect_hex_encoded_marc8`
 
-Not started. `find_suspect_hex_encoded_marc8` (`marc_repair.py:2478`)
-builds its per-finding detail with `preview = decoded.decode("latin-1")`
-then embeds it (and the raw surrounding `context`) via `!r` --
-`marc_repair.py:2510` / `2513` / `2517-2522`. When the decoded bytes
-are genuine MARC-8 (the common "NO DATA LOSS (apparent)" case), that's
-raw MARC-8 escape sequences and high-bit EACC/CJK bytes, which `repr()`
-renders as `\x1b`, `\xNN`, etc. -- unreadable to a cataloger reviewing
-the log, even though the decode itself succeeded. The two real
-"POSSIBLE DATA LOSS" examples from this session's analysis
-(`docs/MARC8_ESCAPE_ANALYSIS.md`-adjacent work) that happened to be
-plain English text read fine, but that's the lucky case, not the
-typical one.
+All 345 tests passing (1 skipped), flake8 clean.
 
-Worth considering next session: decode the MARC-8 bytes to Unicode for
-the preview (via pymarc, same as `transcode_marc8_to_utf8` already
-does elsewhere) when `recoverable` is true, falling back to the current
-raw `repr()` only when it isn't real MARC-8/plain text to begin with.
-Check whether `context` (also raw latin-1 `!r`) needs the same
-treatment, or whether showing it as literal MARC-8 bytes is actually
-more useful there (it's meant to show *where* in the field the run
-sits, not what it decodes to).
+**`find_suspect_marc8_escapes`** (`marc_repair.py:2151`):
+1. Fixed an O(N²) bug -- `context_preview` joined *every* occurrence's
+   window in a field with `" ... "`, then every finding in that field
+   repeated the whole joined string. Each finding now carries only its
+   own window.
+2. Trimmed repeated boilerplate out of the per-finding message (dropped
+   "in the source record, not real {charset} content").
+3. Shortened the suggestion's closing clause ("compare against another
+   edition or an authority record to confirm the correct spelling" ->
+   "verify against another source").
+4. The `context:` field no longer shows the raw `\x1b` escape bytes via
+   `repr()` -- they're replaced with a plain `<escape>` marker before
+   reprinting, since the before/after letters are already shown
+   separately in the message.
+
+**`find_suspect_hex_encoded_marc8`** (`marc_repair.py:2508`), closing out
+the "NEXT TASK" note left by the previous session: when a decode is
+`recoverable` (the common "NO DATA LOSS (apparent)" case), the preview is
+now run through a new `_marc8_bytes_to_readable_preview` helper that
+transcodes the recovered MARC-8 bytes to Unicode via pymarc's
+`marc8_to_unicode` (same mechanism `transcode_marc8_to_utf8` already
+uses) instead of `repr()`-ing the raw latin-1 bytes. E.g. a genuine
+CJK/EACC escape that used to show as `'\x1b$1oOfoH_oQFoVf\x1b(B'` now
+shows as the actual decoded text (confirmed against the real production
+example in `test_flags_double_encoded_run_and_recovers_escape_sequence`:
+now reads `'· 마가복음'`). Falls back to the raw latin-1 `repr()` if
+pymarc isn't installed, the transcode raises, or pymarc logs a warning
+(e.g. a truncated multi-byte character) -- this is a best-effort log
+preview, not a correctness check. The `context:` field (surrounding raw
+field text, not the decoded payload) was left untouched -- it's meant to
+show *where* in the field the run sits, and still can.
+
+Also updated `tests/fixtures/kitchen_sink_bib.log`'s one
+`suspect_marc8_escape` line, which had gone stale even before this
+session's wording changes (it was showing the older single-character
+suggestion wording instead of the CJK/EACC-specific one).
 
 ## Session summary (2026-10-02)
 
