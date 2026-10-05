@@ -408,6 +408,52 @@ Separately, two smaller log-header fixes landed in the same commit
 Committed and pushed as `b1b8223` (stacked on `f983a4a`, the prior
 session's HANDOFF-only commit).
 
+## DONE: dedicated DATA LOSS category for 010 fields with empty/effectively-empty $a
+
+User found that every problem record recovered into
+`WTS_source_FOLIO_full.mrc` (via `tools/pull_full_problem_records.py`)
+shares the same defect: a 010 (LCCN) field whose $a is all spaces (12
+blanks), with the real canceled/invalid LCCN sitting in $z instead --
+e.g. `=010  \\$a            $z   70185211`. `strip_missing_required_a`
+already detects this shape (its `_is_punctuation_only` check treats a
+whitespace-only string the same as a literal "."), but running it
+against the existing `required_a_tags.txt` heading-field set would
+have logged the removal under the generic `field_removed_because_missing_a`
+category, worded "POSSIBLE DATA LOSS" -- not accurate here, since a
+010 missing $a this way routinely still carries a real $z that gets
+discarded right along with it.
+
+Added a second, separate call to `strip_missing_required_a(parsed,
+_010_REQUIRED_A_TAGS)` (`_010_REQUIRED_A_TAGS = frozenset({"010"})`,
+`marc_repair.py`) in the bib pipeline, logged under its own always-on
+category `removed_010_missing_a` (FIXED/REQUIRES ATTENTION, worded
+plain "DATA LOSS" -- see its `_CHECK_DESCRIPTIONS` entry). Registered
+in `_FIXED_REQUIRES_ATTENTION`, `_ALWAYS_FULL_CATEGORIES`, and the
+unconditional `active_categories` set in `main`. Added
+`tools/generate_repair_categories_doc.py`'s row for it and regenerated
+`docs/REPAIR_CATEGORIES.md`.
+
+Separately, dropped the per-row timestamp from `LogEntry.render()` --
+every detail line repeated the run's own start time for no reason
+(`write_log`'s header already states it once); rows are now just
+`\trecord N (id)\tdetail`.
+
+Added `TestStrip010MissingA` to `tests/test_marc_repair_bib.py`
+(unit-level reuse check, a valid-$a record staying untouched, and a
+full `main()` pipeline run asserting the new category/section/DATA
+LOSS wording and that the full field -- including $z -- is in the log
+line). All 353 tests pass; flake8 clean (one pre-existing long line at
+`marc_repair.py:5991`, unrelated).
+
+Ran the tool against `WTS_source_FOLIO_full.mrc` as requested, output
+left in the repo root: `WTS_source_FOLIO_full_repaired.mrc` and
+`WTS_source_FOLIO_full_repaired_log_20261005T182809Z.log`. 130/132
+records had their 010 removed this way; the 2 left untouched are
+`.b11065898` (907 $a -- has a genuinely valid LCCN in $a,
+`2007043817`) and `.b11081624` (907 $a -- has no 010 field at all).
+
+Committed and pushed as `46f5d52`.
+
 ## Context usage at handoff (from `/context`)
 
 - Model: claude-sonnet-5
