@@ -3721,6 +3721,21 @@ def _is_punctuation_only(data: str) -> bool:
 #: just POSSIBLE.
 _010_REQUIRED_A_TAGS = frozenset({"010"})
 
+#: 880 (Alternate Graphic Representation) run of `strip_missing_required_a`
+#: on its own, same reasoning as _010_REQUIRED_A_TAGS above -- see `main`,
+#: which logs it under its own category ("removed_880_missing_a") rather
+#: than the shared "field_removed_because_missing_a" one. An 880 exists
+#: solely to carry a linked vernacular/alternate-script representation of
+#: another field; its only other subfields ($6 linking data, $0-$8
+#: control subfields) never carry the actual heading content itself, so a
+#: blank/punctuation-only $a here means the vernacular text was never
+#: populated at all -- confirmed in real production data (WTS_bibs
+#: 2026-10-01): two records each had an 880 linked to their 100 and
+#: explicitly flagged as Greek script (066/$6 both say so), with $a
+#: containing nothing but whitespace. Definite DATA LOSS, not just
+#: POSSIBLE.
+_880_REQUIRED_A_TAGS = frozenset({"880"})
+
 
 def strip_missing_required_a(
     parsed: ParsedRecord,
@@ -4401,6 +4416,7 @@ _FIXED_REQUIRES_ATTENTION = {
     "invalid_bibliographic_level",
     "holdings_852_b_suspect_content",
     "removed_010_missing_a",
+    "removed_880_missing_a",
 }
 
 #: INFORMATIONAL, at the very bottom: a fix applied via a fixed
@@ -4533,6 +4549,10 @@ _CHECK_DESCRIPTIONS: dict[str, str] = {
     "removed_010_missing_a": "A 010 (LCCN) field whose $a was empty or "
     "effectively empty (e.g. all spaces) -- the whole field removed, "
     "including any $z (Canceled/Invalid LCCN) it carried. DATA LOSS.",
+    "removed_880_missing_a": "An 880 (Alternate Graphic Representation) "
+    "field whose $a was empty or effectively empty (e.g. all spaces, or "
+    "punctuation only) -- the whole field removed, including any $6 "
+    "linking data it carried. DATA LOSS.",
     "removed_invalid_subfield": "A subfield code that isn't a lowercase "
     "letter or digit -- the subfield removed. POSSIBLE DATA LOSS.",
     "removed_bad_call_number": "An 852 $h (call number) that was "
@@ -4717,6 +4737,7 @@ _ALWAYS_FULL_CATEGORIES = {
     "removed_non_repeatable_duplicate",
     "field_removed_because_missing_a",
     "removed_010_missing_a",
+    "removed_880_missing_a",
     "removed_invalid_subfield",
     "removed_bad_call_number",
     "removed_extra_852_b",
@@ -6384,6 +6405,9 @@ def main(argv: list[str] | None = None) -> int:
                 rec_id = record_identifier(parsed)
                 for detail in strip_missing_required_a(parsed, _010_REQUIRED_A_TAGS):
                     log("removed_010_missing_a", True, i, rec_id, detail)
+                rec_id = record_identifier(parsed)
+                for detail in strip_missing_required_a(parsed, _880_REQUIRED_A_TAGS):
+                    log("removed_880_missing_a", True, i, rec_id, detail)
                 if args.strip_empty_fields:
                     strip_empty_fields(parsed)
                 if args.strip_duplicate_non_repeatable_fields:
@@ -6558,7 +6582,7 @@ def main(argv: list[str] | None = None) -> int:
         "unfixed_non_numeric_tag", "invalid_indicator_value", "invalid_bibliographic_level",
         "leader_entry_map_fixed", "oversized_sentinel_fixed", "duplicate_identifier",
         "removed_null_identifier", "suspect_marc8_escape", "suspect_hex_encoded_marc8",
-        "removed_010_missing_a",
+        "removed_010_missing_a", "removed_880_missing_a",
     }
     if args.fix_bad_indicators:
         active_categories.add("padded_indicators")

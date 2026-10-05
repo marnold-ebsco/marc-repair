@@ -195,6 +195,19 @@ BIB_ROWS = [
         "-- (no switch -- always runs and always logged)",
     ),
     CategoryRow(
+        "880 (Alternate Graphic Representation) missing/effectively-empty "
+        "$a -- reuses the same missing-required-$a check above, as its own "
+        "category: an 880 exists solely to carry a linked vernacular/"
+        "alternate-script heading, and its only other subfields ($6 "
+        "linking data, etc.) never carry that content themselves, so "
+        "removing the whole field here is definite DATA LOSS, not just "
+        "possible",
+        "Removed field (including any $6 it carried)",
+        "Yes, always", "`removed_880_missing_a`", "FIXED/REQUIRES ATTENTION",
+        "**Yes**",
+        "-- (no switch -- always runs and always logged)",
+    ),
+    CategoryRow(
         "Empty-field removal", "Removed field",
         "Yes (`--no-strip-empty-fields`)",
         "-- (unconditional, unlogged either way)", "--", "--",

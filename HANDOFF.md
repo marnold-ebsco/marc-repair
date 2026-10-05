@@ -454,6 +454,153 @@ records had their 010 removed this way; the 2 left untouched are
 
 Committed and pushed as `46f5d52`.
 
+## Analysis: 066 (Character Sets Present) fields missing $a across `WTS_bibs_2026-10-01_repaired.mrc`
+
+User asked for every record whose 066 has no subfield $a, with its 907 $a
+and the 066's raw contents, for manual review. Wrote
+`tools/list_066_missing_a.py` (uses pymarc, run via the repo's `venv`) --
+walks the file once, collects `(907 $a, rendered 066 subfields)` for every
+066 lacking $a, writes a TSV to the repo root. Found **1037** such records;
+output left at `066_missing_subfield_a.tsv` (gitignored like the other
+root-level data exports).
+
+Two of those records -- `.b11081624` and `.b11065898`, both already
+flagged above for their 010 $a situation -- were asked about specifically.
+They do **not** stand out: both have `066 $c(S` and only `$c(S`, which is
+one of the more common shapes in the list (75 of the 1037 records), not an
+outlier.
+
+**What the 066 subfield codes actually mean.** They aren't free text --
+each is an ISO 2022/MARC-8 escape-sequence identifier (or, for UTF-8
+records, a plain ISO 15924 script tag) naming a character set used
+somewhere in the record, confirmed against LC's MARC-8 specification
+(`https://www.loc.gov/marc/specifications/speccharmarc8.html`):
+
+| Code | Meaning |
+|---|---|
+| `(B` | Basic Latin (ASCII) |
+| `(N` | Basic Cyrillic |
+| `(S` | Basic Greek |
+| `(2` | Basic Hebrew |
+| `(3` | Basic Arabic |
+| `(4` | Extended Arabic |
+| `(Q` | Extended Cyrillic |
+| `$1` | Chinese/Japanese/Korean (EACC) |
+| `Grek` / `Cyrl` / `Hebr` / `Hani` / `Armn` / `Syrc` / `Zsym` | ISO 15924 script tags (Greek, Cyrillic, Hebrew, Han, Armenian, Syriac, Symbols) -- used directly instead of an escape sequence in UTF-8-encoded records |
+
+So the file mixes two notations for the same underlying information
+(older MARC-8 escape form vs. newer ISO 15924 tag form) depending on which
+encoding a given record was in -- e.g. `$c(S` and `$cGrek` both just mean
+"this record uses Greek characters," they're not different findings.
+
+**Follow-up: why `b11081624`/`b11065898` actually fail to load.** Not an
+066-decoding question after all -- pulled both full raw records directly
+from `WTS_bibs_2026-10-01_repaired.mrc` (`tools/_dump_offset.py`, scratch,
+not committed) and found the real defect. Both records have an `880`
+field (alternate graphic representation -- the vernacular-script version
+of a heading) linked via `$6` to their `100` field and explicitly marked
+Greek (`$6 100-01/(S`, matching the record's own `066 $c(S`), but the
+`880`'s `$a` -- where the actual Greek text belongs -- is blank:
+- `.b11081624`: `880 ‡6 100-01/(S ‡a "          "` (10 spaces, nothing else)
+- `.b11065898`: `880 ‡6 100-01/(S ‡a "         ."` (9 spaces + a period)
+
+No `\x1b` (MARC-8 escape) bytes anywhere in either raw record and the
+leader's char-coding-scheme byte is `a` (UTF-8) on both -- ruled out a
+transcoding/escape-sequence bug. This is upstream source data loss (the
+vernacular heading was never actually cataloged, just linked), not an
+encoding problem, and it's the same defect shape already written up above
+for these two records' `010` fields -- except `strip_missing_required_a`
+never catches it here because `880` isn't in `required_a_tags.txt`, so
+`marc_repair.py` currently leaves the blank `880` in place untouched.
+Whatever's failing to load these records downstream is almost certainly
+choking on that blank/punctuation-only `880 $a`.
+
+**Not yet decided:** whether to add `880` to `required_a_tags.txt` (would
+make `strip_missing_required_a` remove it under the existing
+`field_removed_because_missing_a` category) or give it its own dedicated
+DATA LOSS category the way `010` got (`removed_010_missing_a`) -- an 880
+missing its vernacular text is arguably always worth calling out
+specifically rather than folding into the generic category, same
+reasoning as the 010 case. Whether this pattern is widespread enough to
+be worth generalizing (a quick scan of how many 880 fields across the
+file have whitespace/punctuation-only $a) hasn't been done yet.
+
+**Suggested fix, not yet made:** add a "meaning" column to
+`list_066_missing_a.py`'s TSV output, decoding each subfield via a small
+lookup table (the one above, extended to cover every code actually seen in
+`066_missing_subfield_a.tsv` -- run `cut -f2 066_missing_subfield_a.tsv |
+sort -u` to get the full set) so a reviewer doesn't have to look up each
+code by hand. Low-risk, additive change to a standalone reporting script
+(not `marc_repair.py` itself) -- no tests exist for `tools/` scripts yet,
+so this would be the first; a plain unit test around the decode-table
+lookup function would be enough.
+
+## DONE: dedicated DATA LOSS category for 880 fields with empty/effectively-empty $a
+
+Follow-up to the 066/880 analysis above. User asked to flag 880 fields
+missing $a; decided (after a quick tradeoff discussion) to mirror the 010
+precedent exactly rather than literally adding "880" to
+`required_a_tags.txt` -- an 880's only other subfields ($6 linking data,
+etc.) never carry the vernacular heading content itself, so a blank/
+punctuation-only $a there is definite DATA LOSS, not just POSSIBLE, same
+reasoning as 010's $z.
+
+Added `_880_REQUIRED_A_TAGS = frozenset({"880"})` (`marc_repair.py`, next
+to `_010_REQUIRED_A_TAGS`), a second unconditional
+`strip_missing_required_a(parsed, _880_REQUIRED_A_TAGS)` call in the bib
+pipeline logged under its own always-on category `removed_880_missing_a`
+(FIXED/REQUIRES ATTENTION, worded plain "DATA LOSS"). Registered in
+`_FIXED_REQUIRES_ATTENTION`, `_ALWAYS_FULL_CATEGORIES`, and the
+unconditional `active_categories` set in `main`, same as 010. Added
+`tools/generate_repair_categories_doc.py`'s row and regenerated
+`docs/REPAIR_CATEGORIES.md`. Added `TestStrip880MissingA` to
+`tests/test_marc_repair_bib.py`, mirroring `TestStrip010MissingA`.
+
+All 356 tests pass (1 skipped); flake8 clean (same pre-existing long line
+at `marc_repair.py:6012`, unrelated). Verified against the real two
+records (`.b11065898`, `.b11081624`) by extracting just those two into a
+scratch file and running the tool: both 880s removed and logged, e.g.
+`removed =880  0 $6100-01/(S$a          \t($a is punctuation only;
+content discarded)`.
+
+**Not yet done:** regenerating the full-file log/output against
+`WTS_bibs_2026-10-01_repaired.mrc` to get the real total count of 880s
+this newly removes across the whole file -- a full re-run hit an
+unrelated crash (see TODO immediately below) before reaching a count.
+
+## TODO: `transcode_marc8_to_utf8` crashes on a lone surrogate byte when re-running against an already-UTF-8 file
+
+Found while trying to re-run the full repair pipeline against
+`WTS_bibs_2026-10-01_repaired.mrc` (itself already a repaired/UTF-8
+output file) to get a real count for the 880 fix above. Crashed partway
+through (~83k/263k records) with:
+
+```
+UnicodeEncodeError: 'latin-1' codec can't encode character '\udce6' in
+position 7: ordinal not in range(256)
+```
+
+in `transcode_marc8_to_utf8` (`marc_repair.py:2621`, inside `convert` ->
+`text.encode("latin-1")` before handing off to `marc8_to_unicode`). A
+lone surrogate (`\udce6`) in `text` means some subfield's data is already
+a Python str containing a surrogate-escaped byte (typically from decoding
+genuinely malformed/mixed-encoding bytes with `errors="surrogateescape"`
+somewhere upstream) -- `latin-1` encoding can only represent code points
+0-255, so it chokes immediately.
+
+Did not reproduce against a small 2-record extract, so it's specific to
+some other record further into the file, not the 880 fix just made (which
+doesn't touch `transcode_marc8_to_utf8` at all). Workaround used instead:
+none yet for the full-file case -- `--no-transcode-marc8` would skip the
+crash but also skip legitimate MARC-8 transcoding, so isn't a real fix,
+just an avoidance. Next session: find which record triggers it (bisect by
+record count or grep the raw bytes for the pattern that decodes to
+`\udce6` under whatever upstream encoding step produced it) and decide
+whether `convert`/`transcode_marc8_to_utf8` should catch/skip a
+surrogate-containing string gracefully (treat as "can't transcode, leave
+as-is or log transcode_marc8_failed") rather than letting the
+`UnicodeEncodeError` propagate and kill the whole run.
+
 ## Context usage at handoff (from `/context`)
 
 - Model: claude-sonnet-5
