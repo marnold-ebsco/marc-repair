@@ -680,6 +680,35 @@ class TestTranscodeMarc8:
         assert converted == "כתאב אלחגה"
         assert "\x1b" not in converted  # no leftover raw escape byte
 
+    def test_converts_surrogate_escaped_byte_from_utf8_decoded_input(self):
+        # Real bug found in production: when the whole input file is
+        # decoded as UTF-8 (the common case for a file that's mostly
+        # already UTF-8 with a handful of leftover un-transcoded MARC-8
+        # records -- see `_read_text_with_encoding`), a byte that isn't
+        # valid UTF-8 on its own (e.g. a genuine ANSEL diacritic byte
+        # like \xe5 in a record nobody transcoded yet) survives as a
+        # surrogate-escaped character (\udce5), not a literal latin-1
+        # code point (\xe5) the way it would if the whole file had been
+        # decoded as latin-1 instead. `convert`'s `text.encode("latin-1")`
+        # used to assume the latter unconditionally and raised
+        # UnicodeEncodeError on the surrogate, killing the whole run.
+        pytest.importorskip("pymarc")
+        leader = list(_SYNTHETIC_LEADER)
+        leader[9] = " "  # declare MARC-8
+        parsed = m.ParsedRecord(
+            leader="".join(leader),
+            entries=[],
+            fields=[
+                m.Field_("001", None, None, content="abc123"),
+                m.Field_("100", "1 ", [("a", "Bal\udce5asim, \udcf2Hasan.")]),
+            ],
+        )
+        changed = m.transcode_marc8_to_utf8(parsed)
+        assert changed is True
+        assert parsed.leader[9] == "a"
+        name_field = next(f for f in parsed.fields if f.tag == "100")
+        assert name_field.subfields == [("a", "Balāsim, Ḥasan.")]
+
     def test_transcoded_marc8_stays_summary_only_even_with_log_full(self, tmp_path):
         # transcoded_marc8 is INFORMATIONAL -- never listed in full, not
         # even via --log-full, which would work for any other category.

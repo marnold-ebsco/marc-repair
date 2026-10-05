@@ -11,6 +11,10 @@ build/
 venv/
 venv2/
 
+# Scratch working folder for real-world run input/output, data dumps, and
+# other non-essential files kept out of the repo root -- not source.
+working/
+
 # Real MARC data and run artifacts (large, generated, not source) --
 # only the specific small fixtures the test suite actually reads are
 # checked in as exceptions below.

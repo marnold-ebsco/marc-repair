@@ -568,50 +568,84 @@ content discarded)`.
 this newly removes across the whole file -- a full re-run hit an
 unrelated crash (see TODO immediately below) before reaching a count.
 
-## TODO: `transcode_marc8_to_utf8` crashes on a lone surrogate byte when re-running against an already-UTF-8 file
+## DONE: fixed `transcode_marc8_to_utf8` crash on a lone surrogate byte when re-running against an already-UTF-8 file
 
-Found while trying to re-run the full repair pipeline against
-`WTS_bibs_2026-10-01_repaired.mrc` (itself already a repaired/UTF-8
-output file) to get a real count for the 880 fix above. Crashed partway
-through (~83k/263k records) with:
+Follow-up to the TODO this replaces. Root cause turned out to be
+different from the original guess (bisecting by naive record-count
+split kept *not* reproducing the crash in isolation, which was the
+giveaway):
 
-```
-UnicodeEncodeError: 'latin-1' codec can't encode character '\udce6' in
-position 7: ordinal not in range(256)
-```
+`_read_text_with_encoding` picks ONE encoding for the whole input file
+(`detect_encoding`). `WTS_bibs_2026-10-01_repaired.mrc` is mostly
+already UTF-8 (output of a prior repair run), so the whole file decodes
+as UTF-8 -- except one straggler record, `.b11165406` (a 5-volume Korean
+commentary set), whose leader byte 9 is still `" "` (never got
+transcoded) and whose 245/246/505 fields carry a raw ANSEL diacritic
+byte (`0xe6`) that isn't valid UTF-8 on its own. The UTF-8 decoder
+(`errors="surrogateescape"`) preserves that invalid byte as a surrogate
+character (`\udce6`), not as the literal latin-1 code point `convert`'s
+comment assumed it would always be. `text.encode("latin-1")` (strict)
+can't represent a surrogate at all, hence the crash.
 
-in `transcode_marc8_to_utf8` (`marc_repair.py:2621`, inside `convert` ->
-`text.encode("latin-1")` before handing off to `marc8_to_unicode`). A
-lone surrogate (`\udce6`) in `text` means some subfield's data is already
-a Python str containing a surrogate-escaped byte (typically from decoding
-genuinely malformed/mixed-encoding bytes with `errors="surrogateescape"`
-somewhere upstream) -- `latin-1` encoding can only represent code points
-0-255, so it chokes immediately.
+Confirmed by monkeypatching `transcode_marc8_to_utf8` to print the
+record on failure (isolating just that one record into its own file
+was a red herring -- `detect_encoding` then picks *latin-1* for that
+tiny file instead of utf-8, so the byte decodes as a literal `\xe6` and
+nothing crashes; the discrepancy only shows up at full-file scale).
 
-Did not reproduce against a small 2-record extract, so it's specific to
-some other record further into the file, not the 880 fix just made (which
-doesn't touch `transcode_marc8_to_utf8` at all). Workaround used instead:
-none yet for the full-file case -- `--no-transcode-marc8` would skip the
-crash but also skip legitimate MARC-8 transcoding, so isn't a real fix,
-just an avoidance. Next session: find which record triggers it (bisect by
-record count or grep the raw bytes for the pattern that decodes to
-`\udce6` under whatever upstream encoding step produced it) and decide
-whether `convert`/`transcode_marc8_to_utf8` should catch/skip a
-surrogate-containing string gracefully (treat as "can't transcode, leave
-as-is or log transcode_marc8_failed") rather than letting the
-`UnicodeEncodeError` propagate and kill the whole run.
+Fix: `text.encode("latin-1", errors="surrogateescape")` instead of
+plain `text.encode("latin-1")` at `marc_repair.py:2621` (now a few lines
+later after the comment rewrite) -- reverses a surrogate-escape exactly
+when one was applied upstream, and is a no-op otherwise, so it's correct
+whether the whole-file decode used utf-8 or latin-1. Added
+`test_converts_surrogate_escaped_byte_from_utf8_decoded_input` to
+`TestTranscodeMarc8` in `tests/test_marc_repair_bib.py`, mirroring the
+existing `test_converts_combining_diacritics_and_flips_leader_byte` but
+with `\udce5`/`\udcf2` (surrogate-escaped) instead of `\xe5`/`\xf2`
+(literal latin-1) in the subfield text. All 357 tests pass (1 skipped);
+`flake8 --max-line-length=100` clean (same pre-existing long line at
+`marc_repair.py:6025`, unrelated -- note flake8 needs that flag, see
+README.md:530; running it with flake8's bare 79-char default floods
+hundreds of false positives across the whole file).
 
-## Context usage at handoff (from `/context`)
+Re-ran the full pipeline against `WTS_bibs_2026-10-01_repaired.mrc`
+(263,595 records) with the fix in place: completes cleanly now, no
+crash, 263,594/263,603 written (the same 9 pre-existing UNFIXABLE
+records as always, unrelated -- bad directories/splits on those
+specific records, not a new regression). This also unblocks the real
+count the previous session wanted for the 880-missing-`$a` fix:
+**`removed_880_missing_a` fired on 91 records** across the full file
+(see `working/WTS_bibs_2026-10-01_repaired2_log_20261005T191642Z.log`).
+
+## DONE: root-folder cleanup -- `working/` directory for non-essential files
+
+The project root had accumulated a pile of large, generated, non-source
+files (real MARC run inputs/outputs, logs, a JSON data export, a
+one-off TSV) sitting alongside the actual source. None of them were
+git-tracked (already covered by `.gitignore`'s `*.mrc`/`*.mrk`/`*.log`/
+`/*.json` patterns, except the TSV), but they cluttered `ls` in the
+project root.
+
+Created `working/` and moved every non-essential root file into it:
+`066_missing_subfield_a.tsv`, all `WTS_*` run inputs/outputs/logs,
+`folio_instances_transform_bibs.json`, `sampled_problems.mrc`. Added
+`working/` to `.gitignore`. Left `venv/`, `venv2/`, `build/`,
+`*.egg-info/`, `__pycache__/`, `.pytest_cache/` alone -- those are
+already gitignored and tied to absolute paths from `pip install -e .`/
+venv activation scripts, so moving them risked breaking the dev install
+rather than just tidying. The repair-run input/output files
+(`WTS_source_FOLIO_full.mrc` and its repaired re-run,
+`WTS_bibs_2026-10-01_repaired.mrc` and its repaired re-run for the
+crash fix above) now live under `working/` too.
+
+## Context usage at handoff
 
 - Model: claude-sonnet-5
-- Tokens: 135.3k / 1m (14%)
-- System prompt: 9.9k (1.0%)
-- System tools: 20.1k (2.0%)
-- MCP tools: 7.2k (0.7%)
-- MCP tools (deferred): 43.6k (4.4%)
-- System tools (deferred): 16.4k (1.6%)
-- Memory files: 214 (0.0%)
-- Skills: 4k (0.4%)
-- Messages: 94k (9.4%)
-- Free space: 831.7k (83.2%)
-- Autocompact buffer: 33k (3.3%)
+- Tokens: 124.5k / 1m (12%)
+- System prompt: 10.3k (1.0%)
+- System tools: 29.7k (3.0%)
+- MCP tools: 10.7k (1.1%)
+- Memory files: 0.2k (0.0%)
+- Skills: 4.0k (0.4%)
+- Messages: 69.6k (7.0%)
+- Autocompacts at: 97%

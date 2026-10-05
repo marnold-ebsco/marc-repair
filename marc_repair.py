@@ -2606,9 +2606,20 @@ def transcode_marc8_to_utf8(parsed: ParsedRecord) -> bool:
         # e.g. a real Hebrew 880 field decoded as "(2kzlgbd(B" instead
         # of "כתלחגה". Plain ANSEL diacritics (no escape needed) still
         # worked, which is why this wasn't caught earlier. `text` is
-        # always latin-1-decoded 1:1 from the original bytes (see
-        # `_read_text_with_encoding`), so re-encoding with latin-1
-        # here recovers those exact original bytes losslessly.
+        # latin-1-decoded 1:1 from the original bytes when
+        # `_read_text_with_encoding` used latin-1 for the whole file, so
+        # re-encoding with latin-1 recovers those exact original bytes
+        # losslessly -- but when the whole file was instead decoded as
+        # UTF-8 (the common case for a file that's mostly already UTF-8
+        # with a handful of leftover un-transcoded MARC-8 records), any
+        # byte that wasn't valid UTF-8 was preserved not as a literal
+        # latin-1 code point but as a surrogate-escaped character
+        # (U+DC80-U+DCFF, see `errors="surrogateescape"` in
+        # `_read_text_with_encoding`) -- plain `.encode("latin-1")`
+        # can't represent those at all and raises UnicodeEncodeError.
+        # `errors="surrogateescape"` on the encode reverses that escaping
+        # exactly (recovering the original byte) when it was applied,
+        # and is a no-op otherwise, so it's correct for both cases.
         #
         # pymarc doesn't raise for a truncated multi-byte (CJK/EACC)
         # character -- it writes a warning to stderr and substitutes a
@@ -2618,7 +2629,9 @@ def transcode_marc8_to_utf8(parsed: ParsedRecord) -> bool:
         # proper logged failure instead.
         captured_stderr = io.StringIO()
         with redirect_stderr(captured_stderr):
-            result = marc8_to_unicode(text.encode("latin-1"), hide_utf8_warnings=True)
+            result = marc8_to_unicode(
+                text.encode("latin-1", errors="surrogateescape"), hide_utf8_warnings=True
+            )
         warning = captured_stderr.getvalue()
         if warning:
             match = _MARC8_MULTIBYTE_TRUNCATED_RE.search(warning)
