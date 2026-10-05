@@ -42,6 +42,11 @@ split/
 WTS_bibs_*.out
 WTS_bibs_*.run.stdout
 
+# Real-world JSON data exports in the project root (e.g. FOLIO instances
+# transform dumps) -- large, generated, not source. Root-only so JSON
+# fixtures/config in subdirectories aren't affected.
+/*.json
+
 # Personal editor config -- not shared project config
 *.code-workspace
 .vscode/
