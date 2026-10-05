@@ -500,6 +500,38 @@ def _category_header_line(lines: list[str], category: str) -> int:
     )
 
 
+class TestWriteRunTimingHeader:
+    def test_basenames_source_and_repaired_paths(self, tmp_path):
+        log_path = tmp_path / "run.log"
+        now = m.datetime.now(m.timezone.utc)
+        m._write_run_timing_header(
+            str(log_path), now, now,
+            "/some/dir/source.mrc", "/other/dir/repaired.mrc", None,
+        )
+        content = log_path.read_text(encoding="utf-8")
+        assert "Source filename: source.mrc\n" in content
+        assert "Repaired filename: repaired.mrc\n" in content
+
+    def test_omits_problem_line_when_none(self, tmp_path):
+        log_path = tmp_path / "run.log"
+        now = m.datetime.now(m.timezone.utc)
+        m._write_run_timing_header(
+            str(log_path), now, now, "source.mrc", "repaired.mrc", None,
+        )
+        content = log_path.read_text(encoding="utf-8")
+        assert "Problem filename" not in content
+
+    def test_basenames_problem_path_when_given(self, tmp_path):
+        log_path = tmp_path / "run.log"
+        now = m.datetime.now(m.timezone.utc)
+        m._write_run_timing_header(
+            str(log_path), now, now,
+            "source.mrc", "repaired.mrc", "/some/dir/problem.mrc",
+        )
+        content = log_path.read_text(encoding="utf-8")
+        assert "Problem filename: problem.mrc\n" in content
+
+
 class TestWriteLog:
     def test_groups_by_fixed_then_category_with_headers(self, tmp_path):
         entries = [
@@ -625,16 +657,35 @@ class TestWriteLog:
 # ---------------------------------------------------------------------------
 
 class TestProgressEstimate:
-    def test_does_not_fire_before_thresholds(self, capsys):
+    def test_does_not_fire_before_warmup_floor(self, capsys):
         reporter = m.ProgressReporter(total_bytes=1_000_000)
-        reporter.maybe_print_estimate(10, 1000)  # below the 200-record floor
+        reporter.maybe_print_estimate(10, 1000)  # below the 20-record warm-up floor
         assert reporter.estimate_shown is False
+        assert reporter._estimate_warmup_time is None
+        assert capsys.readouterr().err == ""
+
+    def test_first_call_past_warmup_only_anchors_the_sample(self, capsys):
+        # the first call to reach the warm-up floor doesn't fire the
+        # estimate even though it clears the old 200-record/1s
+        # thresholds by itself -- it only anchors where the real sample
+        # window starts (see test_fires_once_past_thresholds)
+        reporter = m.ProgressReporter(total_bytes=1_000_000)
+        reporter.start_time -= 5.0
+        reporter.maybe_print_estimate(300, 150_000)
+        assert reporter.estimate_shown is False
+        assert reporter._estimate_warmup_n == 300
         assert capsys.readouterr().err == ""
 
     def test_fires_once_past_thresholds(self, capsys):
         reporter = m.ProgressReporter(total_bytes=1_000_000)
-        reporter.start_time -= 1.0  # simulate 1s elapsed
-        reporter.maybe_print_estimate(200, 100_000)
+        # anchor the warm-up point first, simulating a slow first read
+        # that burned 10s before only 20 records got through -- none of
+        # that should count toward the rate below
+        reporter.start_time -= 10.0
+        reporter.maybe_print_estimate(20, 1_000)
+        assert reporter.estimate_shown is False
+        reporter._estimate_warmup_time -= 1.0  # simulate 1s elapsed since warm-up
+        reporter.maybe_print_estimate(220, 101_000)
         assert reporter.estimate_shown is True
         err = capsys.readouterr().err
         assert "Estimated total runtime" in err
@@ -648,8 +699,9 @@ class TestProgressEstimate:
 
     def test_no_op_without_total_bytes(self, capsys):
         reporter = m.ProgressReporter(total_bytes=0)
-        reporter.start_time -= 1.0
-        reporter.maybe_print_estimate(200, 100_000)
+        reporter.maybe_print_estimate(20, 10_000)
+        assert reporter._estimate_warmup_time is None  # never even anchored
+        reporter.maybe_print_estimate(220, 100_000)
         assert reporter.estimate_shown is False
         assert capsys.readouterr().err == ""
 
@@ -660,11 +712,34 @@ class TestProgressEstimate:
         # the caller-tracked bytes_consumed produced a wildly wrong
         # ("~0s" on a run that actually took 12s) early estimate.
         reporter = m.ProgressReporter(total_bytes=1_000_000)
-        reporter.start_time -= 1.0
         reporter.on_progress(32_000_000)  # a whole read-ahead chunk
-        reporter.maybe_print_estimate(200, 10_000)  # but only 10KB actually consumed
+        reporter.maybe_print_estimate(20, 1_000)
+        reporter._estimate_warmup_time -= 1.0
+        reporter.maybe_print_estimate(220, 10_000)  # but only 10KB actually consumed
         err = capsys.readouterr().err
         assert "Estimated total runtime: ~0s" not in err
+
+    def test_warmup_sample_discards_slow_startup(self, capsys):
+        # Regression test for the real overestimate this fix targets: a
+        # slow first chunk read burns several seconds before only a
+        # couple hundred records get through, then throughput is fast
+        # and steady for the rest of the sample window. The old
+        # single-clock-from-construction approach would have folded
+        # that slow start into the rate and wildly overestimated the
+        # total runtime; anchoring the sample at the warm-up point
+        # should ignore it and produce an estimate close to the true
+        # steady-state rate.
+        reporter = m.ProgressReporter(total_bytes=1_000_000)
+        reporter.start_time -= 20.0  # the "slow first read" burned 20s
+        reporter.maybe_print_estimate(20, 10_000)
+        assert reporter.estimate_shown is False
+        # post-warm-up: 200 records / 100KB in a fast, steady 1s
+        reporter._estimate_warmup_time -= 1.0
+        reporter.maybe_print_estimate(220, 110_000)
+        assert reporter.estimate_shown is True
+        err = capsys.readouterr().err
+        # steady rate: 100KB/s -> 1,000,000 bytes / 100,000 B/s = 10s
+        assert "Estimated total runtime: ~10s" in err
 
 
 class TestPromptsForMissingInput:

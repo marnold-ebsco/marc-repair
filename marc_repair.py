@@ -4776,14 +4776,24 @@ def _write_run_timing_header(
     finished: datetime,
     source_path: str,
     repaired_path: str,
-    problem_path: str,
+    problem_path: str | None,
 ) -> None:
     """Write a run-level started/finished/elapsed line, followed by the
     source/repaired/problem filenames for this run, as the very first
     lines of the log file -- the stdout summary doesn't persist once the
     terminal scrolls away, so the log file needs its own record of when
     the run ran, how long it took, and which files it read from/wrote to.
-    Elapsed is wall-clock `finished - started`, to .01s."""
+    Elapsed is wall-clock `finished - started`, to .01s.
+
+    `problem_path` is None when the run has no actual problem/error file to
+    name -- it's written lazily (see `_LazyBinaryWriter`) and never created
+    at all when there's nothing unfixable to put in it, so a caller passing
+    a real path here must first confirm the file actually exists; the line
+    is omitted entirely rather than naming a file that was never written.
+
+    Each path is reduced to its basename -- the log is meant to be a quick
+    at-a-glance record of which files were involved, not a durable pointer
+    back to them (the run's own stdout/args already has the full paths)."""
     elapsed = (finished - started).total_seconds()
     with open(log_path, "w", encoding="utf-8") as fh:
         fh.write(
@@ -4791,9 +4801,10 @@ def _write_run_timing_header(
             f"finished {finished.strftime('%Y-%m-%dT%H:%M:%SZ')}, "
             f"elapsed {elapsed:.2f}s ===\n"
         )
-        fh.write(f"Source filename: {source_path}\n")
-        fh.write(f"Repaired filename: {repaired_path}\n")
-        fh.write(f"Problem filename: {problem_path}\n")
+        fh.write(f"Source filename: {os.path.basename(source_path)}\n")
+        fh.write(f"Repaired filename: {os.path.basename(repaired_path)}\n")
+        if problem_path is not None:
+            fh.write(f"Problem filename: {os.path.basename(problem_path)}\n")
         fh.write("\n")
 
 
@@ -4889,6 +4900,10 @@ class ProgressReporter:
     lines (piped/redirected output, e.g. into a log file).
     """
 
+    #: Records to let go by, uncounted, before the estimate's own sample
+    #: window starts -- see `maybe_print_estimate`.
+    _ESTIMATE_WARMUP_RECORDS = 20
+
     def __init__(self, total_bytes: int, min_interval: float | None = None):
         self.total_bytes = total_bytes
         self.is_tty = sys.stderr.isatty()
@@ -4902,6 +4917,12 @@ class ProgressReporter:
         self.bytes_read = 0
         self.printed_anything = False
         self.estimate_shown = False
+        # Set once `_ESTIMATE_WARMUP_RECORDS` records have gone by -- the
+        # estimate's own sample window is measured from here, not from
+        # `start_time` (see `maybe_print_estimate`).
+        self._estimate_warmup_n: int | None = None
+        self._estimate_warmup_bytes: int | None = None
+        self._estimate_warmup_time: float | None = None
 
     def on_progress(self, bytes_read: int) -> None:
         self.bytes_read = bytes_read
@@ -4911,12 +4932,21 @@ class ProgressReporter:
         from the ongoing ETA in `maybe_print` below, which only starts
         appearing once that method's own throttle interval has elapsed
         (up to 10s on a non-tty stderr, meaning a modest-sized run could
-        finish before it ever prints anything). Waits for at least 200
-        records and 0.5s of elapsed time -- a real run showed a much
-        shorter sample (50 records / 0.1s) gives a rate dominated by
-        one-time startup/warm-up cost rather than steady-state
-        throughput, overestimating total time by ~4x -- but otherwise
-        fires as early as possible.
+        finish before it ever prints anything).
+
+        The sample used for the estimate is NOT measured from
+        `self.start_time` (i.e. from construction) -- it's measured from
+        the moment `_ESTIMATE_WARMUP_RECORDS` records have gone by, with
+        everything before that point thrown away entirely. A real run
+        showed the very first stretch of a run can be dominated by a
+        one-time cost -- e.g. the first disk read, before any OS
+        read-ahead/page-cache has kicked in -- that has nothing to do
+        with this tool's actual steady-state per-record throughput;
+        sampling through it produced a rate ~30x too slow and a runtime
+        estimate (1h03m) wildly higher than the real one (~2min). Once
+        that warm-up point is reached, waits for at least 200 further
+        records and 1.0s of further elapsed time -- still fires as
+        early as possible otherwise.
 
         `bytes_consumed` must be actual bytes consumed by the
         `n_records` processed so far (the caller tracks this from each
@@ -4932,12 +4962,26 @@ class ProgressReporter:
         """
         if self.estimate_shown or not self.total_bytes or bytes_consumed <= 0:
             return
-        elapsed = time.perf_counter() - self.start_time
-        if n_records < 200 or elapsed < 1.0:
+        if n_records < self._ESTIMATE_WARMUP_RECORDS:
+            return
+        if self._estimate_warmup_time is None:
+            # this is the first call past the warm-up floor -- anchor the
+            # sample window here and wait for the next call to measure
+            # anything, so whatever happened before this point (most
+            # likely that first, possibly-slow disk read) never factors
+            # into the rate below
+            self._estimate_warmup_n = n_records
+            self._estimate_warmup_bytes = bytes_consumed
+            self._estimate_warmup_time = time.perf_counter()
+            return
+        elapsed = time.perf_counter() - self._estimate_warmup_time
+        sample_n = n_records - self._estimate_warmup_n
+        sample_bytes = bytes_consumed - self._estimate_warmup_bytes
+        if sample_n < 200 or elapsed < 1.0:
             return
         self.estimate_shown = True
-        avg_bytes_per_record = bytes_consumed / n_records
-        rate = n_records / elapsed
+        avg_bytes_per_record = sample_bytes / sample_n
+        rate = sample_n / elapsed
         if avg_bytes_per_record <= 0 or rate <= 0:
             return
         estimated_total_records = self.total_bytes / avg_bytes_per_record
@@ -4945,7 +4989,8 @@ class ProgressReporter:
         print(
             f"Estimated total runtime: ~{_format_duration(estimated_total_time)} "
             f"for {self.total_bytes / 1_000_000:.1f} MB "
-            f"(rough estimate from the first {n_records:,} records; assumes no "
+            f"(rough estimate from {sample_n:,} records after an initial "
+            f"{self._ESTIMATE_WARMUP_RECORDS}-record warm-up; assumes no "
             "record needs the invalid-tag second pass)",
             file=sys.stderr,
         )
@@ -5456,7 +5501,8 @@ def repair_holdings_records(
     )
     _write_run_timing_header(
         log_path, run_started, datetime.now(timezone.utc),
-        input_path, output_path, error_path,
+        input_path, output_path,
+        error_path if os.path.exists(error_path) else None,
     )
     write_log(
         log_path, log_entries, active_categories=active_categories,
@@ -6538,7 +6584,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     _write_run_timing_header(
         log_path, run_started, datetime.now(timezone.utc),
-        args.input, out_path, error_path,
+        args.input, out_path,
+        error_path if os.path.exists(error_path) else None,
     )
     write_log(
         log_path, log_entries, active_categories=active_categories,

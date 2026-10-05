@@ -1773,6 +1773,7 @@ class TestUnfixableErrorFile:
         content = _resolve_log(log).read_text(encoding="utf-8")
         assert "=== UNFIXABLE: unfixable" in content
         assert "no consistent directory found for this record at all" in content
+        assert "Problem filename: out_error.mrc\n" in content
 
     def test_oversized_field_diverted_to_error_file(self, tmp_path):
         raw = self._oversized_field_record()
@@ -1794,9 +1795,12 @@ class TestUnfixableErrorFile:
         src = tmp_path / "in.mrc"
         src.write_bytes(self._clean_record())
         out = tmp_path / "out.mrc"
-        rc = m.main([str(src), "-o", str(out)])
+        log = tmp_path / "run.log"
+        rc = m.main([str(src), "-o", str(out), "--log", str(log)])
         assert rc == 0
         assert not (tmp_path / "out_error.mrc").exists()
+        content = _resolve_log(log).read_text(encoding="utf-8")
+        assert "Problem filename" not in content
 
     def test_unfixable_section_appears_before_every_other_section(self, tmp_path):
         # A file with one of everything: unresolvable garbage (UNFIXABLE),
