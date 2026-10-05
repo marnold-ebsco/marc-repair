@@ -704,14 +704,25 @@ rather than just tidying. The repair-run input/output files
 `WTS_bibs_2026-10-01_repaired.mrc` and its repaired re-run for the
 crash fix above) now live under `working/` too.
 
+## Next session: no open bugs from this session's two fixes
+
+Both the `transcode_marc8_to_utf8` surrogate crash and the
+`parse_directory` phantom-entry bug above are fixed, tested, and
+verified end-to-end (full 263,595-record file, zero crashes, zero
+UNFIXABLE). Nothing new to pick up from this session specifically --
+the remaining open items are the pre-existing ones higher up: the
+`install.sh` self-update UX question, `build_marc8_corpus_index`'s
+whole-file in-memory read on very large latin-1 files, and whether
+that same corpus-index prescan needs its own progress indicator.
+
 ## Context usage at handoff
 
 - Model: claude-sonnet-5
-- Tokens: 212.6k / 1m (21%)
+- Tokens: 218.7k / 1m (22%)
 - System prompt: 10.3k (1.0%)
 - System tools: 29.7k (3.0%)
 - MCP tools: 10.7k (1.1%)
 - Memory files: 0.2k (0.0%)
 - Skills: 4.0k (0.4%)
-- Messages: 157.7k (15.8%)
+- Messages: 163.9k (16.4%)
 - Autocompacts at: 97%
