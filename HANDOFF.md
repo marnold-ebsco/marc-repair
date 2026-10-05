@@ -704,25 +704,92 @@ rather than just tidying. The repair-run input/output files
 `WTS_bibs_2026-10-01_repaired.mrc` and its repaired re-run for the
 crash fix above) now live under `working/` too.
 
-## Next session: no open bugs from this session's two fixes
+## DONE: shortened `removed_880_missing_a` detail line to `$6`/`$a` + 20 chars of context
 
-Both the `transcode_marc8_to_utf8` surrogate crash and the
-`parse_directory` phantom-entry bug above are fixed, tested, and
-verified end-to-end (full 263,595-record file, zero crashes, zero
-UNFIXABLE). Nothing new to pick up from this session specifically --
-the remaining open items are the pre-existing ones higher up: the
-`install.sh` self-update UX question, `build_marc8_corpus_index`'s
-whole-file in-memory read on very large latin-1 files, and whether
-that same corpus-index prescan needs its own progress indicator.
+`strip_missing_required_a` (`marc_repair.py:3768`) logged the *entire*
+removed field body for every missing-required-`$a` tag, 010 and 880
+alike. For 880 (Alternate Graphic Representation) specifically, that
+body is the vernacular-script value itself -- often long -- even
+though the only subfields that matter for diagnosing the defect are
+`$6` (the linking data) and `$a` (the thing that's missing/punctuation-
+only). Changed the 880 case only (010 is untouched, still logs the
+full field): the detail now shows `$6`/`$a` in full, then at most 20
+characters of whatever else the field held, in a trailing `[...]`
+(with a `...` suffix if truncated). A field with nothing but `$6`/`$a`
+gets no `[...]` suffix at all. Example from a real production record
+(`WTS_bibs_2026-10-01.out`, see full-corpus re-run below):
+
+    removed =880  00$6505-00/(S [$tDer Römerbrief und...]	(missing required $a; content discarded)
+
+Commit `ada7f95`.
+
+## DONE: reordered and shortened `suspect_hex_encoded_marc8` detail line
+
+The old detail line buried the actually-useful part (the decoded
+preview) after a long explanatory sentence, and always appended
+"context" -- the original raw-field text around the `{xxxxxx}` run --
+even when the run had already been successfully decoded back to real
+readable text, in which case that context adds nothing. Also, that
+context window was built as `match.start() - 10` to `match.end() + 10`,
+so it included the *entire* matched run (which can be dozens of
+`{xxxxxx}` groups, i.e. very long) rather than being bounded the way
+"10 characters of context" implies.
+
+Changed `find_suspect_hex_encoded_marc8` (`marc_repair.py:2523`) so the
+detail line now reads: recovered content first, then a short data-loss
+verdict ("recovered -- verify against source (byte alignment not
+guaranteed)" vs. "POSSIBLE DATA LOSS -- doesn't decode to valid
+MARC-8/text..."), then the hex-brace-run summary (group count, layers
+deep). Original context is only appended when the decode is NOT
+recoverable, and even then is now exactly 10 characters immediately
+before and 10 after the run -- never the run itself. Real examples from
+`WTS_bibs_2026-10-01.out`:
+
+    tag 880 $a: recovers '· 마가복음'; recovered -- verify against source (byte alignment not guaranteed); 23 "{xxxxxx}" hex-brace group(s), 2 layer(s) deep
+
+Updated two existing tests in `TestFindSuspectHexEncodedMarc8`
+(`tests/test_marc_repair_bib.py:596`) whose assertions had been passing
+only incidentally -- one checked for a literal escape-sequence
+substring that, with pymarc's full MARC-8 transcoding, actually now
+decodes to readable Korean text ("마가복음") instead; the other checked
+for the old "NO DATA LOSS" wording that this change renamed to
+"recovered". 358 tests pass (1 skipped); flake8 clean. Commit `d987f5a`.
+
+## DONE: full re-run of `WTS_bibs_2026-10-01.out` against both fixes above
+
+Re-ran the full pipeline against the original 421MB/263,595-record
+`working/WTS_bibs_2026-10-01.out` (not the already-repaired copy) to
+confirm both log-formatting changes above hold up on real production
+data at full scale, not just the synthetic test cases. Result:
+**263,595/263,595 records written, 0 unfixable**, 94.34s. 91 records
+hit `removed_880_missing_a`, 12 hit `suspect_hex_encoded_marc8` -- same
+counts as prior runs, confirming these are purely log-formatting
+changes with no effect on what gets fixed or flagged. Output and log
+left at `working/WTS_bibs_2026-10-01_repaired4.mrc` /
+`working/WTS_bibs_2026-10-01_repaired4_log_20261005T200749Z.log`.
+
+(Separately, pulled `--log-full` detail lines for both categories into
+scratch files under `/tmp` to spot-check the new wording against real
+records -- those scratch files were deleted after use, not left behind.)
+
+## Next session: no open bugs from this session's changes
+
+Both log-formatting changes above are implemented, tested, and
+verified end-to-end against the full real corpus. Nothing new to pick
+up from this session specifically -- the remaining open items are the
+pre-existing ones higher up: the `install.sh` self-update UX question,
+`build_marc8_corpus_index`'s whole-file in-memory read on very large
+latin-1 files, and whether that same corpus-index prescan needs its
+own progress indicator.
 
 ## Context usage at handoff
 
 - Model: claude-sonnet-5
-- Tokens: 218.7k / 1m (22%)
-- System prompt: 10.3k (1.0%)
-- System tools: 29.7k (3.0%)
-- MCP tools: 10.7k (1.1%)
-- Memory files: 0.2k (0.0%)
+- Tokens: 133.7k / 1m (13%)
+- System prompt: 9.8k (1.0%)
+- System tools: 20.1k (2.0%)
+- MCP tools: 7.2k (0.7%)
+- Memory files: 0.3k (0.0%)
 - Skills: 4.0k (0.4%)
-- Messages: 163.9k (16.4%)
+- Messages: 92.5k (9.2%)
 - Autocompacts at: 97%
