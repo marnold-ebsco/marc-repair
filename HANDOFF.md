@@ -297,6 +297,40 @@ Added to `.gitignore` -- these are large EC2-pulled real-world test
 files, never meant to be committed. Committed alongside the logging
 change above (`13d017c`).
 
+## DONE: log source/repaired/problem filenames; add `--sample-log`
+
+User wanted every combined log to name the run's source/repaired/
+problem files underneath the timing header, so the log is
+self-describing without needing the original invocation.
+
+Extended `_write_run_timing_header` (`marc_repair.py`) to take
+`source_path`/`repaired_path`/`problem_path` and write `Source
+filename:`/`Repaired filename:`/`Problem filename:` lines right after
+the `=== RUN: ... ===` line, followed by a blank line before `write_log`'s
+own output (which already appends, via `open(path, "a")`, so ordering
+Just Works). Both call sites updated: `main()` passes `args.input`,
+`out_path`, `error_path`; `repair_holdings_records` passes
+`input_path`, `output_path`, `error_path`.
+
+Also added `--sample-log [PATH]`, requested separately in the same
+session: writes a full log documenting every category in
+`_CHECK_DESCRIPTIONS` (header + description + `0 record(s)`, no
+per-record findings) without reading any input at all -- handled
+before the `args.input` prompt loop so it needs no real file. Meant as
+a reference for the log's full structure. Ran once, output left at
+`sample_files/sample_log_20261005T*.log` (gitignored, like every other
+`.log`, so it won't show up as a change to commit).
+
+All 345 tests pass. Committed and pushed as `fdf8545`.
+
+Separately, answered a question (not yet acted on / nothing to verify)
+about updating the non-git EC2 install: since that directory was built
+by `install.sh`'s minimal-fetch mode (see the TODO at the top of this
+file), the correct update command is the `curl | bash` one-liner
+pointed at the existing `--dir`, not a local `./install.sh` (which may
+not exist there) -- re-run:
+`curl -fsSL https://raw.githubusercontent.com/marnold-ebsco/marc-repair/main/install.sh | bash -s -- --dir /working/migration/scripts/marc_repair`.
+
 ## Checked: install.sh was not actually broken
 
 The modified-install.sh seen in git status at the start of a session
