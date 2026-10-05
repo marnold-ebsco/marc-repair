@@ -354,8 +354,59 @@ input file that happens *before* the first progress line prints --
 on a big enough file this could again look like a multi-second "no
 output" stall right at startup, just a bounded one now instead of an
 unbounded hang. Consider whether it needs its own "scanning file for
-corpus lookup..." progress indicator, or whether `maybe_print_estimate`
-needs to account for that upfront cost at all.
+corpus lookup..." progress indicator -- that specific piece is still
+open; see the DONE entry below for a related but separate fix (the
+*estimate's* sample window, not the corpus-index build itself).
+
+## DONE: log header omits unwritten problem file + basenames; `maybe_print_estimate` warm-up fix
+
+All 350 tests passing, flake8 clean on the touched regions (no new
+findings beyond this file's existing pre-change lint debt).
+
+User reported a real run where the printed "Estimated total runtime"
+was wildly off: ~1h03m predicted for 421.2MB, actual run finished in
+about 2 minutes (~30x overestimate). Root cause: `ProgressReporter
+.maybe_print_estimate` (`marc_repair.py`) measured its rate sample
+from `self.start_time`, set at `ProgressReporter.__init__` --
+essentially at the very start of the run, before the first disk read.
+A slow first chunk read (no OS read-ahead/page-cache warmed up yet,
+plausible on EC2/network-backed storage) could burn several seconds
+while only a couple hundred small records got through, and that
+slow-start window dominated the 200-record/1s sample, producing a
+rate far below the tool's real steady-state throughput.
+
+Fix: the estimate's sample window is no longer anchored at
+`start_time`. It now anchors once `_ESTIMATE_WARMUP_RECORDS` (20)
+records have gone by -- that first call just records where the real
+window starts and returns without evaluating anything -- and only
+*then* waits for the usual 200 further records / 1.0s further elapsed
+before firing. Whatever happened before the 20-record mark (almost
+certainly dominated by that first slow read) is discarded outright
+rather than diluted. Added `TestProgressEstimate
+.test_warmup_sample_discards_slow_startup`, which reproduces the bug
+shape directly (20s burned on the first 20 records, then a fast/
+steady post-warm-up window) and asserts the estimate matches the
+steady-state rate, not the slow start. The other `TestProgressEstimate`
+tests were updated for the new two-call handshake (first call past
+the warm-up floor only anchors the window; a second call is needed to
+actually evaluate/fire).
+
+Separately, two smaller log-header fixes landed in the same commit
+(`b1b8223`), both in `_write_run_timing_header`:
+1. `Problem filename:` is now omitted entirely when there's no actual
+   problem/error file -- it's written lazily by `_LazyBinaryWriter`
+   and never created when nothing was unfixable, so naming it
+   unconditionally was misleading. Both real call sites now pass
+   `error_path if os.path.exists(error_path) else None`; the
+   `--sample-log` placeholder call site is unaffected (it always
+   passes a real, non-None placeholder string).
+2. All three header filenames (source/repaired/problem) are now
+   `os.path.basename()`'d -- the log is meant as an at-a-glance
+   record, not a durable pointer back to the files (stdout/args
+   already have the full paths).
+
+Committed and pushed as `b1b8223` (stacked on `f983a4a`, the prior
+session's HANDOFF-only commit).
 
 ## Context usage at handoff (from `/context`)
 
