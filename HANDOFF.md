@@ -610,12 +610,78 @@ hundreds of false positives across the whole file).
 
 Re-ran the full pipeline against `WTS_bibs_2026-10-01_repaired.mrc`
 (263,595 records) with the fix in place: completes cleanly now, no
-crash, 263,594/263,603 written (the same 9 pre-existing UNFIXABLE
-records as always, unrelated -- bad directories/splits on those
-specific records, not a new regression). This also unblocks the real
-count the previous session wanted for the 880-missing-`$a` fix:
-**`removed_880_missing_a` fired on 91 records** across the full file
-(see `working/WTS_bibs_2026-10-01_repaired2_log_20261005T191642Z.log`).
+crash, but still left 9 records UNFIXABLE -- NOT pre-existing/unrelated
+after all, see the `parse_directory` fix immediately below, which
+resolves them too.
+
+## DONE: fixed `parse_directory` accepting a phantom directory entry that coincidentally matched real cumulative lengths
+
+User pushed back on the 9 UNFIXABLE records above with "they shouldn't
+exist" -- right instinct. Traced one (`.b12765077`-ish content,
+originally OCLC `on1341033027`) back to the *original* pre-repair
+source (`working/WTS_bibs_2026-10-01.out`): byte-for-byte, that record
+is a perfectly clean, single, well-formed ISO 2709 record there (one
+real directory, one real terminator per field, total length matches
+the leader exactly) -- repairing it the first time round produces
+valid output (confirmed by checking every field's byte span for stray
+0x1E/0x1D: none). But feeding that *valid output* back into
+`marc_repair.py` a second time reproduced the exact same "no split
+satisfies the rest of the record" + 8x "no consistent directory found"
+cascade seen in the full-file run. So the bug was in parsing, not in
+anything upstream, and it took re-repairing the tool's own valid
+output to expose it (the original source's specific field lengths
+happened not to trigger it).
+
+Root cause, confirmed by stepping through `_read_intact_at` by hand:
+`parse_directory` (`marc_repair.py:410`) walks 12-byte chunks after the
+leader, accepting each as a real directory entry if its length+start
+digits are valid AND `start == cum` (the running total of prior
+entries' declared lengths) -- the cumulative check exists specifically
+to reject a directory-entry-shaped false positive in the field data
+right after the real terminator (per the function's own docstring).
+For this record, the content of field 001 (`on1341033027`) read
+starting *at* the real directory terminator happened to produce a
+bogus 40th entry whose `start` digits (`03302`) exactly equalled the
+true cumulative length (`3302`) of the 39 real entries -- the one
+numeric coincidence the existing guard couldn't catch. That phantom
+entry got accepted, `pos` advanced 12 bytes into what was actually
+field 001's real content, and every field boundary from there on was
+wrong -- which Mode 1 (`_read_intact_at`) does correctly detect and
+bail out of (returns `None` rather than corrupting data), but Mode 2
+(`_repair_stripped_at`) failed too for the same underlying reason, so
+the whole record fell through to the "no consistent directory found"
+resync path, chopping the next ~8,400 bytes into 9 garbage chunks
+before the next genuine leader pattern-match.
+
+Fix: a real directory entry's 12 raw characters are always plain ASCII
+tag+digits -- FIELDTERM (0x1E) and SUBFIELD (0x1F) are reserved
+delimiter bytes that can never legitimately appear inside one (they
+only ever occur in field *data*, never in the directory). Added `if
+FIELDTERM in chunk or SUBFIELD in chunk: break` right after the
+length/digit-shape check in `parse_directory`'s entry loop
+(`marc_repair.py:410`) -- this rejects the phantom entry immediately
+(its own first byte *is* the real terminator), closing the coincidence
+hole without weakening the loose, intentionally tag-non-validating
+parse for any genuinely corrupted-but-real directory.
+
+Added `TestParseDirectoryTerminatorCoincidence` to
+`tests/test_marc_repair_bib.py`, constructing a minimal 2-field record
+(001 + 245) whose 001 content is deliberately built so its digits,
+read starting at the real directory terminator, produce exactly this
+coincidence (`start == cum`) -- asserts the coincidence actually lands
+as designed, then asserts `_read_intact_at` still parses the record as
+the correct 2 fields instead of desyncing. 358 tests pass (1 skipped);
+flake8 clean (same pre-existing long line, now at line 6040 after the
+insertions above).
+
+Re-ran the full pipeline against `WTS_bibs_2026-10-01_repaired.mrc`
+once more with this fix in place: **263,595/263,595 records written,
+zero UNFIXABLE** -- confirms this really was the root cause for all 9,
+not just the one traced by hand. `removed_880_missing_a` still fires on
+the same **91 records** as the run before this fix (see
+`working/WTS_bibs_2026-10-01_repaired3_log_20261005T193353Z.log`) --
+expected, since these 9 records are unrelated to the 880 fix's own
+logic.
 
 ## DONE: root-folder cleanup -- `working/` directory for non-essential files
 
@@ -641,11 +707,11 @@ crash fix above) now live under `working/` too.
 ## Context usage at handoff
 
 - Model: claude-sonnet-5
-- Tokens: 124.5k / 1m (12%)
+- Tokens: 212.6k / 1m (21%)
 - System prompt: 10.3k (1.0%)
 - System tools: 29.7k (3.0%)
 - MCP tools: 10.7k (1.1%)
 - Memory files: 0.2k (0.0%)
 - Skills: 4.0k (0.4%)
-- Messages: 69.6k (7.0%)
+- Messages: 157.7k (15.8%)
 - Autocompacts at: 97%

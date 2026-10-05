@@ -317,6 +317,65 @@ class TestFixBadIndicators:
 
 
 # ---------------------------------------------------------------------------
+# parse_directory -- coincidental false directory entries
+# ---------------------------------------------------------------------------
+
+class TestParseDirectoryTerminatorCoincidence:
+    def test_control_field_digits_matching_directory_terminator_dont_desync_parse(self):
+        # Real bug found in production: on a second repair pass over a
+        # record this tool had itself already repaired, a control field's
+        # digit content immediately after the real directory terminator
+        # coincidentally formed a phantom extra directory entry whose
+        # bogus `start` exactly equalled the true cumulative length of
+        # the real entries (the only numeric check `parse_directory` had
+        # at the time) -- accepted it, then every field boundary after
+        # that was wrong, cascading into "no consistent directory found"
+        # for several records in a row. Constructed here deliberately:
+        # a 001 field whose content, read starting at the real
+        # terminator, parses as "tag"=(terminator + 2 chars) and
+        # length/start digits where start == cum.
+        length_digits = "0001"
+        content_245 = "00" + m.SUBFIELD + "aTitle."
+        len_245 = len(content_245) + 1
+
+        def make_content_001(start: int) -> str:
+            digits = f"{length_digits}{start:05d}"
+            assert len(digits) == 9
+            return "on" + digits + "xx"  # 13 chars total
+
+        # len_001 only depends on len(content_001), which is fixed at 13
+        # regardless of the digit values chosen, so cum can be computed
+        # up front without iterating.
+        len_001 = len(make_content_001(0)) + 1
+        cum = len_001 + len_245
+        content_001 = make_content_001(cum)
+
+        fields = [
+            m.Field_("001", None, None, content=content_001),
+            m.Field_("245", "00", [("a", "Title.")]),
+        ]
+        parsed = m.ParsedRecord(leader=_SYNTHETIC_LEADER, entries=[], fields=fields)
+        raw = m.assemble_marc(parsed).decode("utf-8")
+
+        # Confirm the designed coincidence actually lands where expected
+        # before asserting on the fix -- a false pass here would mean
+        # the test stopped testing the real scenario.
+        rest = raw[24:]
+        chunk = rest[24:36]
+        assert chunk[0] == m.FIELDTERM
+        assert chunk[3:12].isdigit()
+        assert int(chunk[7:12]) == cum
+
+        result = m._read_intact_at(raw, 0)
+        assert result is not None
+        fixed, _end = result
+        assert [f.tag for f in fixed.fields] == ["001", "245"]
+        assert fixed.fields[0].content == content_001
+        title_field = fixed.fields[1]
+        assert title_field.subfields == [("a", "Title.")]
+
+
+# ---------------------------------------------------------------------------
 # transcode_marc8_to_utf8 -- ANSEL diacritics -> Unicode
 # ---------------------------------------------------------------------------
 

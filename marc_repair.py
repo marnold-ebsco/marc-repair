@@ -441,6 +441,21 @@ def parse_directory(rest: str) -> tuple[int, list[DirEntry]]:
             chunk = chunk_stream[pos:pos + 12]
             if len(chunk) < 12 or not chunk[3:12].isdigit():
                 break
+            # A real directory entry is always plain ASCII tag+digits --
+            # FIELDTERM/SUBFIELD are reserved delimiter bytes that never
+            # appear inside one. Without this check, a chunk starting
+            # *at* the real directory terminator (so chunk[0] is that
+            # 0x1E, "tag" is actually the first 2 bytes of field 001's
+            # content, and "length"/"start" are drawn from that content's
+            # own digits) can still pass the digit check above and even
+            # coincidentally satisfy `start == cum` below -- a real
+            # production record hit exactly that: an OCLC number like
+            # "on1341033027" right after the terminator produced a
+            # phantom 40th entry whose bogus start (3302) coincidentally
+            # equalled the true cumulative length of the 39 real entries,
+            # desyncing every field boundary from there on.
+            if FIELDTERM in chunk or SUBFIELD in chunk:
+                break
             length, start = int(chunk[3:7]), int(chunk[7:12])
             if start != cum:
                 break
