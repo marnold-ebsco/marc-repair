@@ -598,7 +598,8 @@ class TestFindSuspectHexEncodedMarc8:
         # .b11165406, 880 occurrence 246-02): the record's own real
         # MARC-8/EACC bytes were hex-encoded and brace-wrapped TWICE.
         # Decoding both layers recovers a well-formed MARC-8 escape
-        # sequence: "\x1b(B \x1b$1oOfoH_oQFoVf\x1b(B".
+        # sequence that itself transcodes to readable Korean text
+        # ("마가복음", i.e. Gospel of Mark).
         raw = (
             "\x1b$1oOfoZz"
             "{7b6138}{316232}{387d7b}{343232}{303162}{7d7b32}{343331}"
@@ -614,8 +615,11 @@ class TestFindSuspectHexEncodedMarc8:
         assert category == "suspect_hex_encoded_marc8"
         assert "tag 880 $a" in detail
         assert "2 layer(s) deep" in detail
-        assert "\\x1b(B" in detail or "\x1b(B" in detail
-        assert "context:" in detail
+        assert "마가복음" in detail
+        assert "recovered" in detail
+        # Recovered (not just "possible data loss") -- original context
+        # isn't needed since the real text is already shown.
+        assert "context:" not in detail
 
     def test_flags_single_encoded_run_and_recovers_readable_text(self):
         # Real production example (Sierra bib .b11227394, 880 $c):
@@ -633,7 +637,7 @@ class TestFindSuspectHexEncodedMarc8:
         detail = findings[0][1]
         assert "1 layer(s) deep" in detail
         assert "Ian M. Duguid" in detail
-        assert "NO DATA LOSS" in detail
+        assert "recovered" in detail
 
     def test_does_not_flag_plain_text_without_brace_hex_pattern(self):
         parsed = self._record("\x1b$1oWIoKOoLp\x1b(B plain text, no braces")

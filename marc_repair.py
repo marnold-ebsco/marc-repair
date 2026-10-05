@@ -2527,11 +2527,14 @@ def find_suspect_hex_encoded_marc8(parsed: ParsedRecord) -> list[tuple[str, str]
     this and how it's confirmed to decode. Each finding includes the
     decoded preview -- rendered as readable Unicode text via
     `_marc8_bytes_to_readable_preview` when the decode looks
-    recoverable, or the raw latin-1 bytes otherwise -- and an explicit
-    data-loss call (see `_hex_brace_decode_looks_recoverable`), plus up
-    to 10 characters of surrounding context on each side so a reviewer
-    can see where in the field the run sits without hunting through
-    the whole (often very long) 880 value. Detect-only -- never
+    recoverable, or the raw latin-1 bytes otherwise -- followed by an
+    explicit data-loss call (see `_hex_brace_decode_looks_recoverable`)
+    and a succinct description of the hex-brace run itself. Original
+    surrounding context -- up to 10 characters immediately before and
+    after the run, never the run itself, which can be very long -- is
+    only appended when the decode is NOT recoverable; once the real
+    text has been recovered, showing where the raw "{xxxxxx}" run sat
+    in the field adds nothing a reviewer needs. Detect-only -- never
     auto-fixed.
     """
     findings: list[tuple[str, str]] = []
@@ -2547,29 +2550,34 @@ def find_suspect_hex_encoded_marc8(parsed: ParsedRecord) -> list[tuple[str, str]
                 decoded, layers, clean = _decode_hex_brace_run(run)
                 recoverable = _hex_brace_decode_looks_recoverable(decoded, clean)
                 data_loss = (
-                    "NO DATA LOSS (apparent) -- decoded content looks like "
-                    "valid MARC-8/plain text, but exact byte alignment "
-                    "isn't guaranteed; verify before trusting it"
+                    "recovered -- verify against source (byte alignment "
+                    "not guaranteed)"
                     if recoverable else
-                    "POSSIBLE DATA LOSS -- decoded bytes don't look like "
-                    "valid MARC-8 or plain text (may be truncated or "
-                    "boundary-shifted)"
+                    "POSSIBLE DATA LOSS -- doesn't decode to valid "
+                    "MARC-8/text (may be truncated or boundary-shifted)"
                 )
                 preview = (
                     _marc8_bytes_to_readable_preview(decoded)
                     if recoverable else decoded.decode("latin-1")
                 )
-                window_start = max(0, match.start() - _CONTEXT_CHARS)
-                window_end = min(len(text), match.end() + _CONTEXT_CHARS)
-                context = text[window_start:window_end]
+                # Original context only earns its keep when the decode
+                # isn't recoverable -- if we already recovered the real
+                # text, showing where the "{xxxxxx}" run sat in the raw
+                # field adds nothing a reviewer needs. Even then, show
+                # only up to 10 characters on each side of the run, not
+                # the run itself -- it's already summarized above by
+                # n_groups/layers and can be very long (many groups).
+                context_suffix = ""
+                if not recoverable:
+                    before = text[max(0, match.start() - _CONTEXT_CHARS):match.start()]
+                    after = text[match.end():match.end() + _CONTEXT_CHARS]
+                    context_suffix = f"; context: {before!r}...{after!r}"
                 subfield_label = f" ${code}" if code else ""
                 findings.append((
                     "suspect_hex_encoded_marc8",
-                    f"tag {f.tag}{subfield_label}: {n_groups} \"{{xxxxxx}}\" "
-                    "hex-digit group(s) in curly braces -- looks like real "
-                    "MARC-8 content that was hex-encoded and brace-wrapped "
-                    f"({layers} layer(s) deep); decoding recovers {preview!r}; "
-                    f"{data_loss}; context: {context!r}",
+                    f"tag {f.tag}{subfield_label}: recovers {preview!r}; "
+                    f"{data_loss}; {n_groups} \"{{xxxxxx}}\" hex-brace "
+                    f"group(s), {layers} layer(s) deep{context_suffix}",
                 ))
     return findings
 
