@@ -3792,6 +3792,11 @@ def strip_missing_required_a(
     line describing exactly what was discarded is returned (category
     "field_removed_because_missing_a" -- see `main`) so the caller can log it before the
     content is gone for good.
+
+    For an 880 specifically, the logged line only shows $6 and $a (the
+    subfields that actually matter for diagnosing a missing/punctuation-only
+    $a) plus 20 characters of whatever else the field held, not the full
+    (sometimes very long) vernacular-script body.
     """
     details = []
     kept = []
@@ -3807,7 +3812,20 @@ def strip_missing_required_a(
             kept.append(f)
             continue
         if any(data for code, data in f.subfields):
-            body = "".join(f"${code}{data}" for code, data in f.subfields)
+            if f.tag == "880":
+                body = "".join(
+                    f"${code}{data}" for code, data in f.subfields if code in ("6", "a")
+                )
+                rest = "".join(
+                    f"${code}{data}"
+                    for code, data in f.subfields
+                    if code not in ("6", "a")
+                )
+                if rest:
+                    ellipsis = "..." if len(rest) > 20 else ""
+                    body += f" [{rest[:20]}{ellipsis}]"
+            else:
+                body = "".join(f"${code}{data}" for code, data in f.subfields)
             reason = (
                 f"{code_label} is punctuation only"
                 if any(code in valid_codes and data for code, data in f.subfields)
