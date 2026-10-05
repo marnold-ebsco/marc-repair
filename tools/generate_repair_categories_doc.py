@@ -184,6 +184,17 @@ BIB_ROWS = [
         "`--no-strip-missing-required-a`; `--required-a-tags-file`",
     ),
     CategoryRow(
+        "010 (LCCN) missing/effectively-empty $a (e.g. all spaces) -- "
+        "reuses the same missing-required-$a check above, as its own "
+        "category: a bare 010 commonly still carries a real canceled/"
+        "invalid LCCN in $z, so removing the whole field here is "
+        "definite DATA LOSS, not just possible",
+        "Removed field (including any $z it carried)",
+        "Yes, always", "`removed_010_missing_a`", "FIXED/REQUIRES ATTENTION",
+        "**Yes**",
+        "-- (no switch -- always runs and always logged)",
+    ),
+    CategoryRow(
         "Empty-field removal", "Removed field",
         "Yes (`--no-strip-empty-fields`)",
         "-- (unconditional, unlogged either way)", "--", "--",

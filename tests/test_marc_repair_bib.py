@@ -1007,6 +1007,62 @@ class TestStripMissingRequiredA:
 
 
 # ---------------------------------------------------------------------------
+# 010 (LCCN) missing/effectively-empty $a -- reuses strip_missing_required_a
+# under its own category (removed_010_missing_a), since a bare 010 commonly
+# still carries a real canceled/invalid LCCN in $z (real shape seen in
+# WTS_source_FOLIO_full.mrc: $a all spaces, $z holding the real number).
+# ---------------------------------------------------------------------------
+
+class TestStrip010MissingA:
+    def test_space_only_a_with_z_is_removed_and_logged_with_full_field(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[m.Field_("010", "  ", [("a", "            "), ("z", "   70185211")])],
+        )
+        details = m.strip_missing_required_a(parsed, m._010_REQUIRED_A_TAGS)
+        assert parsed.fields == []
+        assert len(details) == 1
+        assert "010" in details[0]
+        assert "70185211" in details[0]
+
+    def test_valid_a_is_kept(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[m.Field_("010", "  ", [("a", "  2007043817")])],
+        )
+        details = m.strip_missing_required_a(parsed, m._010_REQUIRED_A_TAGS)
+        assert len(parsed.fields) == 1
+        assert details == []
+
+    def test_bib_pipeline_logs_under_own_category_unconditionally(self, tmp_path):
+        parsed = m.ParsedRecord(
+            leader=_VALID_LEADER,
+            entries=[],
+            fields=[
+                m.Field_("001", None, None, content="997"),
+                m.Field_("008", None, None, content="x" * 40),
+                m.Field_("010", "  ", [("a", "            "), ("z", "   70185211")]),
+                m.Field_("245", "00", [("a", "Some title.")]),
+            ],
+        )
+        src = tmp_path / "bib.mrc"
+        src.write_bytes(m.assemble_marc(parsed))
+        out = tmp_path / "out.mrc"
+        log = tmp_path / "run.log"
+        rc = m.main([str(src), "-o", str(out), "--log", str(log)])
+        assert rc == 0
+        content = _resolve_log(log).read_text(encoding="utf-8")
+        assert "=== FIXED/REQUIRES ATTENTION: removed_010_missing_a ===" in content
+        assert "DATA LOSS" in content
+        assert _detail_line_marker("removed_010_missing_a").search(content)
+        assert "70185211" in content
+        out_parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
+        assert not any(f.tag == "010" for f in out_parsed.fields)
+
+
+# ---------------------------------------------------------------------------
 # strip_null_identifiers -- empty subfield removal, main()'s bib pipeline
 # ---------------------------------------------------------------------------
 
