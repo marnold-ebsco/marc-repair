@@ -1,5 +1,55 @@
 # Handoff Notes
 
+## TODO (deferred by user): `suspect_hex_encoded_marc8` is still detect-only -- the `{xxxxxx}` text itself is never fixed in output
+
+Follow-up to the per-field transcode isolation fix below ("Important limits
+of this fix" item 1). Confirmed by reading `find_suspect_hex_encoded_marc8`
+(`marc_repair.py:2523`): it's genuinely detect-only -- it logs a decoded
+preview (and an explicit "recovered" vs. "POSSIBLE DATA LOSS" call per
+finding) but never mutates the record. So every `{xxxxxx}` hex-brace run
+stays in the repaired output verbatim, whether or not the decode happens to
+recover clean text. This is a deliberate prior decision, not an oversight --
+see the comment above `_HEX_BRACE_GROUP_RE` (`marc_repair.py:2430-2434`):
+decoding is boundary-sensitive (a stray byte or incomplete trailing hex
+digit commonly survives at a chunk's edge in real examples), so an automatic
+rewrite risks silently replacing one corruption with a different,
+equally-wrong one.
+
+**Options discussed with user, none chosen yet:**
+1. Auto-replace the `{xxxxxx}` run with its decoded text only when
+   `_hex_brace_decode_looks_recoverable` says `recoverable` -- leave the
+   "POSSIBLE DATA LOSS" (not recoverable) findings untouched/still just
+   flagged. Re-home the category from detect-only to FIXED/REQUIRES
+   ATTENTION.
+2. Same as 1, plus strip the field/subfield entirely when not recoverable,
+   mirroring the `removed_untranscodable_subfield` precedent (unusable bytes
+   discarded outright rather than left in place).
+3. Leave fully detect-only (status quo) -- no code change, just confirm the
+   existing log is good enough for a human reviewer.
+
+**Rough cost estimates given to user:**
+- Scope quantification (full corpus re-run with `--log-full
+  suspect_hex_encoded_marc8`, split findings into recovered vs.
+  not-recovered, review the 3 known non-throwing records --
+  `.b11077347`, `.b11188236`, `.b11257982`): ~5-10k tokens, no code change.
+- Option 3: ~0 beyond the scope step.
+- Option 1: ~30-50k tokens (mutator rewrite of the function, call-site wire-up,
+  category re-homed, new tests against the real corrupted bytes, docs
+  regen, full suite + flake8, full-corpus re-run to diff counts) --
+  comparable in shape to the Stage 1-3 per-field transcode isolation fix
+  below.
+- Option 2: ~45-70k tokens (everything in option 1 plus the strip path and
+  its own tests/doc row).
+- Biggest variable either way: the boundary-sensitivity risk the existing
+  comment already flags means a first implementation could produce a
+  subtly wrong splice on a real example, costing at least one extra
+  correction round (same shape as the 5-vs-3 prediction miss during the
+  Stage 4 re-run below).
+
+**Status: user is putting this off for now, may come back to it later.**
+Next session picking this up should start with the cheap scope-quantification
+step regardless of which option (if any) ends up chosen.
+
 ## DONE: Stage 4 -- full corpus re-run for the per-field 880 transcode fix below
 
 Re-ran the full pipeline against the original `working/WTS_bibs_2026-10-01.out`
