@@ -680,8 +680,9 @@ class TestTranscodeMarc8:
                 m.Field_("100", "1 ", [("a", "Bal\xe5asim, \xf2Hasan.")]),
             ],
         )
-        changed = m.transcode_marc8_to_utf8(parsed)
+        changed, removed = m.transcode_marc8_to_utf8(parsed)
         assert changed is True
+        assert removed == []
         assert parsed.leader[9] == "a"
         name_field = next(f for f in parsed.fields if f.tag == "100")
         assert name_field.subfields == [("a", "Balāsim, Ḥasan.")]
@@ -696,8 +697,9 @@ class TestTranscodeMarc8:
             fields=[m.Field_("100", "1 ", [("a", "Plain name")])],
         )
         assert _SYNTHETIC_LEADER[9] == "a"
-        changed = m.transcode_marc8_to_utf8(parsed)
+        changed, removed = m.transcode_marc8_to_utf8(parsed)
         assert changed is False
+        assert removed == []
         name_field = next(f for f in parsed.fields if f.tag == "100")
         assert name_field.subfields == [("a", "Plain name")]
 
@@ -766,8 +768,9 @@ class TestTranscodeMarc8:
                 m.Field_("100", "1 ", [("a", "Bal\udce5asim, \udcf2Hasan.")]),
             ],
         )
-        changed = m.transcode_marc8_to_utf8(parsed)
+        changed, removed = m.transcode_marc8_to_utf8(parsed)
         assert changed is True
+        assert removed == []
         assert parsed.leader[9] == "a"
         name_field = next(f for f in parsed.fields if f.tag == "100")
         assert name_field.subfields == [("a", "Balāsim, Ḥasan.")]
@@ -817,14 +820,12 @@ class TestTranscodeMarc8:
         results = m.repair_text(m._read_text(str(out)))
         assert results[0].leader[9] == " "
 
-    def test_atomic_on_failure_partway_through_record(self, monkeypatch):
-        # A field partway through a record failing to convert must not
-        # leave the record in a mixed state (some fields converted,
-        # some not, leader never flipped) -- transcode_marc8_to_utf8
-        # computes every field's new value before mutating anything, so
-        # a failure on the second field must leave the first field's
-        # original (unconverted) value in place too, and the leader
-        # untouched.
+    def test_control_field_failure_still_aborts_whole_record(self, monkeypatch):
+        # Only a *control* field's own failure still aborts everything
+        # (control fields aren't given per-subfield isolation -- see the
+        # function's docstring): nothing changes, not even an earlier
+        # data field that would have "succeeded" if fields were
+        # converted one at a time.
         pytest.importorskip("pymarc")
         import pymarc.marc8
 
@@ -847,16 +848,157 @@ class TestTranscodeMarc8:
             # exercising, rather than the ASCII/no-escape fast path
             fields=[
                 m.Field_("100", "1 ", [("a", "F\xe5rst")]),
-                m.Field_("245", "00", [("a", "S\xe5cond")]),
+                m.Field_("007", None, None, content="S\xe5cond"),
             ],
         )
-        with pytest.raises(RuntimeError, match=r"tag 245 \$a"):
+        with pytest.raises(RuntimeError, match=r"tag 007"):
             m.transcode_marc8_to_utf8(parsed)
-        # nothing changed -- not even the first field, which would have
-        # "succeeded" if fields were converted one at a time
         assert parsed.fields[0].subfields == [("a", "F\xe5rst")]
-        assert parsed.fields[1].subfields == [("a", "S\xe5cond")]
+        assert parsed.fields[1].content == "S\xe5cond"
         assert parsed.leader[9] == " "
+
+    def test_untranscodable_a_subfield_drops_whole_field_not_whole_record(self):
+        # Real production bytes (WTS_bibs export, Sierra bib
+        # `.b11165406`, 880 occurrence 246-02 -- the same raw $a as
+        # TestFindSuspectHexEncodedMarc8's double-encoded-run fixture
+        # above): pymarc's marc8_to_unicode doesn't raise for this, it
+        # writes "Multi-byte position ... exceeds length of marc8
+        # string ..." to stderr and silently substitutes blank spaces
+        # (see _MARC8_MULTIBYTE_TRUNCATED_RE) -- which `convert` turns
+        # into a real failure. $a failing drops the whole 880 field
+        # (nothing usable without it) but the clean 100 field still
+        # converts and the leader still flips.
+        pytest.importorskip("pymarc")
+        raw_a = (
+            "\x1b$1oOfoZz"
+            "{7b6138}{316232}{387d7b}{343232}{303162}{7d7b32}{343331}"
+            "{36667d}{7b3466}{363636}{667d7b}{343835}{663666}{7d7b35}"
+            "{313436}{36667d}{7b3536}{363631}{627d7b}{323834}{323030}"
+            "{7d1b28}{420053}"
+            "\x1b(B"
+        )
+        leader = list(_SYNTHETIC_LEADER)
+        leader[9] = " "
+        parsed = m.ParsedRecord(
+            leader="".join(leader),
+            entries=[],
+            fields=[
+                m.Field_("100", "1 ", [("a", "Clean name")]),
+                m.Field_("880", "00", [("6", "246-02/(S"), ("a", raw_a)]),
+            ],
+        )
+        changed, removed = m.transcode_marc8_to_utf8(parsed)
+        assert changed is True
+        assert parsed.leader[9] == "a"
+        assert [f.tag for f in parsed.fields] == ["100"]
+        assert parsed.fields[0].subfields == [("a", "Clean name")]
+        assert len(removed) == 1
+        assert "tag 880 $a" in removed[0]
+        assert "truncated multi-byte MARC-8 character" in removed[0]
+        assert "dropped $a and the rest of =880 with it" in removed[0]
+
+    def test_untranscodable_non_a_subfield_drops_only_that_subfield(self):
+        # Real production bytes (Sierra bib `.b11227394`, 880 $c -- same
+        # raw value as TestFindSuspectHexEncodedMarc8's single-encoded-
+        # run fixture above): hits the same truncated-multi-byte failure
+        # mode, but on a non-$a subfield, so only $c is dropped -- $a/$b
+        # and the rest of the field survive untouched.
+        pytest.importorskip("pymarc")
+        raw_c = (
+            "\x1b$1!0}!>C"
+            "{a82143}{742135}{2e213d}{751b28}{422028}{49616e}{204d2e}"
+            "{204475}{677569}{642920}{1b2431}"
+            "!UN\x1b(B ; \x1b$1!\\l!Iw!:g!YF\x1b(B."
+        )
+        leader = list(_SYNTHETIC_LEADER)
+        leader[9] = " "
+        parsed = m.ParsedRecord(
+            leader="".join(leader),
+            entries=[],
+            fields=[
+                m.Field_(
+                    "880", "00",
+                    [
+                        ("6", "245-01/(S"), ("a", "Clean title"),
+                        ("b", "Clean subtitle"), ("c", raw_c),
+                    ],
+                ),
+            ],
+        )
+        changed, removed = m.transcode_marc8_to_utf8(parsed)
+        assert changed is True
+        field880 = parsed.fields[0]
+        assert field880.subfields == [
+            ("6", "245-01/(S"), ("a", "Clean title"), ("b", "Clean subtitle"),
+        ]
+        assert len(removed) == 1
+        assert "tag 880 $c" in removed[0]
+        assert "truncated multi-byte MARC-8 character" in removed[0]
+        assert "dropped just $c, rest of =880 kept" in removed[0]
+
+    def test_other_hex_corrupted_records_from_corpus_unaffected(self):
+        # Regression guard: `hex_encoded_marc8_no_throw.mrc` holds the 3
+        # real records (`.b11077347`, `.b11188236`, `.b11257982`) from
+        # the same WTS_bibs_2026-10-01 corpus that `suspect_hex_encoded_
+        # marc8` also flags, but that never threw/triggered
+        # `transcode_marc8_failed` even before this per-subfield
+        # isolation existed (their literal "{xxxxxx}" hex-brace text
+        # just passes through as valid-but-garbled text, successfully
+        # "transcoded" with wrong content -- a separate, pre-existing
+        # gap this fix doesn't touch, see HANDOFF.md). Confirms this
+        # change doesn't newly remove anything from them.
+        pytest.importorskip("pymarc")
+        text = _read("hex_encoded_marc8_no_throw.mrc")
+        results = m.repair_text(text)
+        assert len(results) == 3
+        for parsed in results:
+            assert parsed.unresolved == []
+            findings = m.find_suspect_hex_encoded_marc8(parsed)
+            assert findings  # still flagged, unrelated detect-only check
+            changed, removed = m.transcode_marc8_to_utf8(parsed)
+            assert changed is True
+            assert removed == []
+
+    def test_bib_pipeline_logs_removed_untranscodable_subfield(self, tmp_path):
+        # Full main() pipeline, real production bytes (same `.b11165406`
+        # 246-02 $a as the unit test above): the 880 gets dropped and
+        # logged under the new category, the rest of the record still
+        # converts to UTF-8, and the run completes successfully.
+        pytest.importorskip("pymarc")
+        raw_a = (
+            "\x1b$1oOfoZz"
+            "{7b6138}{316232}{387d7b}{343232}{303162}{7d7b32}{343331}"
+            "{36667d}{7b3466}{363636}{667d7b}{343835}{663666}{7d7b35}"
+            "{313436}{36667d}{7b3536}{363631}{627d7b}{323834}{323030}"
+            "{7d1b28}{420053}"
+            "\x1b(B"
+        )
+        leader = list(_SYNTHETIC_LEADER)
+        leader[9] = " "
+        parsed = m.ParsedRecord(
+            leader="".join(leader),
+            entries=[],
+            fields=[
+                m.Field_("001", None, None, content="b11165406"),
+                m.Field_("008", None, None, content="x" * 40),
+                m.Field_("245", "00", [("a", "Clean title.")]),
+                m.Field_("880", "00", [("6", "246-02/(S"), ("a", raw_a)]),
+            ],
+        )
+        src = tmp_path / "marc8.mrc"
+        src.write_bytes(m.assemble_marc(parsed))
+        out = tmp_path / "out.mrc"
+        log = tmp_path / "run.log"
+        rc = m.main([str(src), "-o", str(out), "--log", str(log)])
+        assert rc == 0
+        content = _resolve_log(log).read_text(encoding="utf-8")
+        assert "=== FIXED/REQUIRES ATTENTION: removed_untranscodable_subfield ===" in content
+        assert "DATA LOSS" in content
+        assert _detail_line_marker("removed_untranscodable_subfield").search(content)
+        assert not _detail_line_marker("transcode_marc8_failed").search(content)
+        out_parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
+        assert not any(f.tag == "880" for f in out_parsed.fields)
+        assert out_parsed.leader[9] == "a"  # rest of record still transcoded
 
     def test_main_falls_back_gracefully_on_transcode_failure(self, tmp_path, monkeypatch):
         pytest.importorskip("pymarc")
@@ -872,9 +1014,11 @@ class TestTranscodeMarc8:
         parsed = m.ParsedRecord(
             leader="".join(leader),
             entries=[],
-            # non-ASCII (\xe5) so this hits the slow path being tested
+            # non-ASCII (\xe5) so this hits the slow path being tested;
+            # a control field failing is the one case that still aborts
+            # the whole record (see test_control_field_failure_above)
             fields=[
-                m.Field_("008", None, None, content="x" * 40),
+                m.Field_("007", None, None, content="x\xe5" * 20),
                 m.Field_("245", "00", [("a", "Titl\xe5.")]),
             ],
         )

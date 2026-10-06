@@ -110,6 +110,18 @@ BIB_ROWS = [
         "**Yes**", "`--no-transcode-marc8` (skips this entirely)",
     ),
     CategoryRow(
+        "Transcode failure isolated to one subfield -- a data field's "
+        "subfield whose MARC-8 content can't be transcoded is dropped on "
+        "its own (the whole field too, if the dropped subfield was $a or "
+        "nothing usable is left) instead of aborting the whole record; "
+        "the rest of the record still transcodes and flips to UTF-8 "
+        "normally",
+        "Removed subfield (and the field with it, if needed)",
+        "n/a (only if it occurs)", "`removed_untranscodable_subfield`",
+        "FIXED/REQUIRES ATTENTION", "**Yes**",
+        "`--no-transcode-marc8` (skips this entirely)",
+    ),
+    CategoryRow(
         "Mojibake (double-encoded UTF-8) fix", "Re-decoded field data",
         "Yes (`--no-fix-mojibake`)", "`fixed_mojibake`", "INFORMATIONAL",
         "No -- INFORMATIONAL categories are never listed in full, "

@@ -2582,22 +2582,39 @@ def find_suspect_hex_encoded_marc8(parsed: ParsedRecord) -> list[tuple[str, str]
     return findings
 
 
-def transcode_marc8_to_utf8(parsed: ParsedRecord) -> bool:
+def transcode_marc8_to_utf8(parsed: ParsedRecord) -> tuple[bool, list[str]]:
     """Convert every field's text from MARC-8 to Unicode in place and flip
-    the leader's encoding byte to "a". Returns False (no-op) if the record
-    already declares Unicode encoding.
+    the leader's encoding byte to "a". Returns (False, []) (no-op) if the
+    record already declares Unicode encoding.
+
+    A data field's subfield whose MARC-8 content fails to transcode
+    (genuinely malformed bytes, e.g. a truncated escape sequence or a
+    multi-byte CJK/EACC character cut off at the end of a field) is
+    isolated to just that subfield: it's dropped (and the whole field
+    along with it, if the dropped subfield was $a or nothing usable is
+    left in the field afterward), logged in the returned `removed_details`
+    list (category "removed_untranscodable_subfield" -- see `main`), and
+    every other field still converts and the leader still flips to UTF-8
+    normally. This is deliberate: the alternative (aborting the whole
+    record over one already-corrupted field) would leave the rest of a
+    large, otherwise-clean record stuck in MARC-8 for no reason, and the
+    unrecoverable bytes are being discarded outright here, not guessed
+    at, so isolating the damage is safe.
 
     Raises RuntimeError if pymarc isn't installed -- run `pip install -r
-    requirements.txt` first -- or if any field's MARC-8 content fails to
-    transcode (genuinely malformed bytes, e.g. a truncated escape
-    sequence or a multi-byte CJK/EACC character cut off at the end of a
-    field); that message names the specific tag/subfield and shows ~10
-    characters of context on each side of the actual error position, so
-    a human reviewing the log has enough to actually find and judge the
-    defect, not just a bare byte offset.
+    requirements.txt` first -- or if a *control* field's content fails to
+    transcode. Control fields are fixed-format and essentially never
+    carry MARC-8 escape/high-bit content, so this rare case isn't given
+    the same per-subfield isolation as data fields; it still aborts the
+    whole record (nothing in `parsed` is changed), the same as every
+    field used to behave before this per-subfield isolation existed. The
+    raised message names the specific tag and shows ~10 characters of
+    context on each side of the actual error position, so a human
+    reviewing the log has enough to actually find and judge the defect,
+    not just a bare byte offset.
     """
     if parsed.leader[9:10] == UNICODE_ENCODING_BYTE:
-        return False
+        return False, []
     try:
         from pymarc.marc8 import marc8_to_unicode
     except ImportError as exc:
@@ -2694,36 +2711,57 @@ def transcode_marc8_to_utf8(parsed: ParsedRecord) -> bool:
             ) from exc
 
     # Compute every field's converted value BEFORE mutating `parsed` at
-    # all. Without this, a field partway through this record that fails
-    # to convert (e.g. genuinely truncated/malformed multi-byte MARC-8
-    # data -- a real, if rare, possibility now that this runs by
-    # default on every record) would leave the record in an
-    # inconsistent state: some fields already converted to Unicode,
-    # later ones still raw MARC-8, but the leader never flipped because
-    # that only happens at the very end. Computing everything into a
-    # plain list first means a failure here leaves `parsed` completely
-    # untouched -- the caller can log it and fall back to passing the
-    # record through with its original MARC-8 declaration intact.
+    # all. A *control* field that fails to convert still aborts
+    # everything (see docstring) -- computing into plain dicts first
+    # means that failure leaves `parsed` completely untouched, same as
+    # before this function could isolate a data-field failure. A *data*
+    # field subfield that fails is instead recorded in `removed_details`/
+    # `drop_field` below and never raises past this point.
     new_control_content = {}
     new_subfields = {}
+    drop_field = set()
+    removed_details = []
     for idx, f in enumerate(parsed.fields):
         if f.is_control():
             if f.content:
                 new_control_content[idx] = convert_labeled(f.content, f"tag {f.tag}")
+            continue
+        kept_subfields = []
+        whole_field_broken = False
+        for code, data in f.subfields:
+            try:
+                converted = convert_labeled(data, f"tag {f.tag} ${code}")
+            except RuntimeError as exc:
+                if code == "a":
+                    removed_details.append(
+                        f"{exc}; dropped $a and the rest of ={f.tag} with it "
+                        "(nothing usable without it)"
+                    )
+                    whole_field_broken = True
+                    break
+                removed_details.append(
+                    f"{exc}; dropped just ${code}, rest of ={f.tag} kept"
+                )
+                continue
+            kept_subfields.append((code, converted))
+        if whole_field_broken or (f.subfields and not kept_subfields):
+            drop_field.add(idx)
         else:
-            new_subfields[idx] = [
-                (code, convert_labeled(data, f"tag {f.tag} ${code}"))
-                for code, data in f.subfields
-            ]
+            new_subfields[idx] = kept_subfields
 
+    new_fields = []
     for idx, f in enumerate(parsed.fields):
+        if idx in drop_field:
+            continue
         if idx in new_control_content:
             f.content = new_control_content[idx]
         if idx in new_subfields:
             f.subfields = new_subfields[idx]
+        new_fields.append(f)
+    parsed.fields = new_fields
 
     parsed.leader = parsed.leader[:9] + UNICODE_ENCODING_BYTE + parsed.leader[10:]
-    return True
+    return True, removed_details
 
 
 def _is_sierra_number(value: str) -> bool:
@@ -4471,6 +4509,7 @@ _FIXED_REQUIRES_ATTENTION = {
     "holdings_852_b_suspect_content",
     "removed_010_missing_a",
     "removed_880_missing_a",
+    "removed_untranscodable_subfield",
 }
 
 #: INFORMATIONAL, at the very bottom: a fix applied via a fixed
@@ -4609,6 +4648,11 @@ _CHECK_DESCRIPTIONS: dict[str, str] = {
     "linking data it carried. DATA LOSS.",
     "removed_invalid_subfield": "A subfield code that isn't a lowercase "
     "letter or digit -- the subfield removed. POSSIBLE DATA LOSS.",
+    "removed_untranscodable_subfield": "A subfield's MARC-8 content "
+    "couldn't be transcoded to UTF-8 (genuinely malformed bytes) -- the "
+    "subfield removed (and the whole field with it, if the removed "
+    "subfield was $a or nothing usable was left); the rest of the "
+    "record still transcodes normally. DATA LOSS.",
     "removed_bad_call_number": "An 852 $h (call number) that was "
     "unusable (e.g. punctuation-only) -- removed. POSSIBLE DATA LOSS.",
     "removed_extra_852_b": "An 852 had more than one $b (Sublocation) "
@@ -4793,6 +4837,7 @@ _ALWAYS_FULL_CATEGORIES = {
     "removed_010_missing_a",
     "removed_880_missing_a",
     "removed_invalid_subfield",
+    "removed_untranscodable_subfield",
     "removed_bad_call_number",
     "removed_extra_852_b",
     "incomplete_852",
@@ -6421,23 +6466,29 @@ def main(argv: list[str] | None = None) -> int:
                     log(category, False, i, rec_id, detail)
                 if args.transcode_marc8:
                     try:
-                        transcoded = transcode_marc8_to_utf8(parsed)
+                        transcoded, removed_untranscodable = transcode_marc8_to_utf8(parsed)
                     except (UnicodeDecodeError, RuntimeError) as exc:
                         # transcode_marc8_to_utf8 leaves `parsed`
-                        # untouched on failure (see its own docstring),
-                        # so it's safe to just skip this fix and let
-                        # every other one continue -- important now
-                        # that this runs by default, so one genuinely
-                        # malformed MARC-8 field can't crash the whole
-                        # run over records that never asked for this.
+                        # untouched on failure (see its own docstring) --
+                        # only a *control* field's content can still
+                        # raise this far; a data field's own failure is
+                        # isolated internally and surfaces via
+                        # `removed_untranscodable` instead. Safe to just
+                        # skip this fix and let every other one continue
+                        # -- important now that this runs by default, so
+                        # one genuinely malformed MARC-8 field can't
+                        # crash the whole run over records that never
+                        # asked for this.
                         rec_id = record_identifier(parsed)
                         log(
                             "transcode_marc8_failed", False, i, rec_id,
                             f"could not transcode MARC-8 -> UTF-8: {exc}",
                         )
                     else:
+                        rec_id = record_identifier(parsed)
+                        for detail in removed_untranscodable:
+                            log("removed_untranscodable_subfield", True, i, rec_id, detail)
                         if transcoded:
-                            rec_id = record_identifier(parsed)
                             log("transcoded_marc8", True, i, rec_id, "transcoded MARC-8 -> UTF-8")
                 if args.fix_mojibake:
                     rec_id = record_identifier(parsed)
@@ -6659,7 +6710,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.reattach_orphaned_fields:
         active_categories.add("reattached_orphaned_field")
     if args.transcode_marc8:
-        active_categories |= {"transcoded_marc8", "transcode_marc8_failed"}
+        active_categories |= {
+            "transcoded_marc8", "transcode_marc8_failed", "removed_untranscodable_subfield",
+        }
     if args.fix_mojibake:
         active_categories.add("fixed_mojibake")
     if args.fix_invalid_leader_bytes:

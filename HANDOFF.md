@@ -1,5 +1,168 @@
 # Handoff Notes
 
+## TODO (next session): Stage 4 -- full corpus re-run for the per-field 880 transcode fix below
+
+Stages 1-3 of the staged plan immediately below are DONE this session
+(see "DONE: Stage 1-3" right below). Stage 4, the one remaining step:
+re-run the full pipeline against `working/WTS_bibs_2026-10-01.out`
+(421MB/263,595 records -- the *original* un-repaired file, not an
+already-repaired copy, same as the prior full re-runs below) with this
+session's changes in place. Diff only the relevant log section counts
+via `grep` against
+`working/WTS_bibs_2026-10-01_repaired4_log_20261005T200749Z.log` (never
+`cat`/read the full log or .mrc into context) -- confirm:
+- `transcode_marc8_failed` drops from 2 to 0 record(s).
+- A new `removed_untranscodable_subfield` section appears with exactly
+  6 record(s) worth of findings expected (`.b11165406`'s 5 fields +
+  `.b11227394`'s 1 subfield) -- confirm the actual count matches and
+  spot-check both record IDs appear.
+- Every other category's count is byte-for-byte unchanged from that
+  log (in particular `removed_880_missing_a` should stay at 91, and
+  `suspect_hex_encoded_marc8` should stay at 12).
+
+Then mark this TODO DONE and fold it into the "DONE: Stage 1-3" entry.
+
+## DONE: Stage 1-3 -- per-field (not per-record) isolation when `transcode_marc8_to_utf8` hits corrupted MARC-8 content
+
+Follow-up to the "DONE: fixed `transcode_marc8_to_utf8` crash on a lone
+surrogate byte" entry below. A user traced a downstream FOLIO-loader
+error (some other tool's own ad hoc "Latin-1 leader heuristic", not
+this tool's) back to `transcode_marc8_failed` records this tool leaves
+in MARC-8 in the main `_repaired.mrc` output. That downstream tool then
+force-decoded the still-MARC-8 bytes itself and silently substituted
+blank spaces for every CJK character it couldn't map -- confirmed by
+reproducing FOLIO's actual loaded 880 content (`마태        `,
+`누가        `, etc. -- real word + blank padding where more text
+should be) byte-for-byte from this record's raw bytes. That's **already
+live in production FOLIO data**, not hypothetical.
+
+**Scope, confirmed against the real 263,595-record
+`WTS_bibs_2026-10-01` corpus:** exactly 2 records hit
+`transcode_marc8_failed`, both due to the same root cause --
+`suspect_hex_encoded_marc8` corruption (upstream hex-encoded,
+brace-wrapped MARC-8, see that category's own description) landing in
+an 880 field and breaking `transcode_marc8_to_utf8`'s per-record
+all-or-nothing conversion:
+- `.b11165406` (5-volume Korean commentary, OCLC `ocn823158355`): 5 of
+  its 10 `880` fields are hex-corrupted (`246-02`, `246-03`, `246-04`,
+  `246-06`, `505-09`) -- each has only `$6`+`$a`, so there's no partial
+  fix, the whole field has to go.
+- `.b11227394`: only `$c` of its single `880 245-01` field is
+  corrupted; `$a`/`$b` on that same field are clean, so only that one
+  subfield needs to go.
+
+**Decision (discussed with user, two options considered):**
+1. Quarantine the whole record to the `_error` file, same as
+   `unfixable` records already are -- makes `_repaired.mrc`'s "every
+   record is valid UTF-8" contract absolute, but the library can't
+   necessarily fix/reload a fully-quarantined record themselves.
+2. **Chosen middle ground:** remove only the specific hex-corrupted
+   880 field(s)/subfield(s) that block transcoding (not a whole
+   record), then let the rest of the record transcode and flip to
+   UTF-8 normally. Verified directly against the real
+   `transcode_marc8_to_utf8` function (not simulated): removing the 5
+   fields from `.b11165406` and just the `$c` subfield from
+   `.b11227394` lets the real function succeed cleanly on both, with
+   no exceptions and no silent character substitution, because the
+   unrecoverable bytes are discarded outright rather than guessed at.
+   Side effect: the 5 counterpart fields on `.b11165406` (`245`, four
+   `246`s, `505`) that still carry a `$6` pointing at a now-removed
+   880 become dangling links -- already a handled, detect-only, NO
+   DATA LOSS category (`dangling_880_link`), not a new problem.
+
+**Stage 1 (core fix), DONE.** Restructured `transcode_marc8_to_utf8`
+(`marc_repair.py:2585`) to isolate a conversion failure per field/
+subfield instead of aborting the whole record: on a data-field
+subfield's transcode failure, drop just that subfield (the whole field
+too if the dropped subfield was `$a` or nothing usable is left), log
+it via the function's new `removed_details` return value, then still
+convert and flip the leader on everything else. A *control* field's
+own failure still aborts the whole record (unchanged from before --
+control fields are fixed-format and essentially never carry MARC-8
+escape content, so isolating a failure there wasn't needed). Function
+signature changed from `-> bool` to `-> tuple[bool, list[str]]`
+(`(transcoded, removed_details)`); its one call site in `main()`
+(`marc_repair.py:6467`) updated to log each `removed_details` entry
+under a new always-on category, `removed_untranscodable_subfield`
+(FIXED/REQUIRES ATTENTION, "DATA LOSS" -- genuinely unrecoverable bytes
+discarded outright, not guessed at). Named it generically rather than
+the originally-suggested `removed_untranscodable_880` since the
+restructured function isolates a failure on *any* data field tag, not
+just 880 -- mirrors `removed_invalid_subfield`'s own non-tag-specific
+naming. Registered in `_CHECK_DESCRIPTIONS`, `_FIXED_REQUIRES_ATTENTION`,
+`_ALWAYS_FULL_CATEGORIES`, and `active_categories` in
+`main()` (alongside `transcoded_marc8`/`transcode_marc8_failed`, under
+the same `args.transcode_marc8` guard). `docs/REPAIR_CATEGORIES.md`
+regenerated via `tools/generate_repair_categories_doc.py` (new row
+right after the existing "Transcode failure" one).
+
+**Stage 2 (tests), DONE.** All in `TestTranscodeMarc8`
+(`tests/test_marc_repair_bib.py`):
+- Updated 4 existing tests for the new `tuple[bool, list[str]]` return.
+- Replaced `test_atomic_on_failure_partway_through_record` (tested the
+  now-gone all-or-nothing contract) with
+  `test_control_field_failure_still_aborts_whole_record`, confirming
+  the one case that still aborts fully.
+- `test_untranscodable_a_subfield_drops_whole_field_not_whole_record`
+  and `test_untranscodable_non_a_subfield_drops_only_that_subfield`:
+  unit tests using the *actual real MARC-8 bytes* from `.b11165406`'s
+  246-02 880 `$a` and `.b11227394`'s 880 `$c` (same raw strings already
+  used as `TestFindSuspectHexEncodedMarc8` fixtures just above in the
+  same file) -- confirmed these genuinely trigger pymarc's real
+  "Multi-byte position ... exceeds length of marc8 string ..." stderr
+  warning (not simulated/monkeypatched) when run through the real,
+  non-monkeypatched `transcode_marc8_to_utf8`.
+- `test_other_hex_corrupted_records_from_corpus_unaffected`: extracted
+  the real 3 hex-corrupted-but-non-throwing records (`.b11077347`,
+  `.b11188236`, `.b11257982`) from `working/WTS_bibs_2026-10-01.out`
+  into a new committed fixture,
+  `tests/fixtures/hex_encoded_marc8_no_throw.mrc` (force-added past the
+  `*.mrc` gitignore pattern, same as the other real-data fixtures
+  already there) -- confirms this change removes nothing from them.
+- `test_bib_pipeline_logs_removed_untranscodable_subfield`: full
+  `main()` run on a synthetic record carrying the real `.b11165406`
+  246-02 bytes, asserting the new category's log header/DATA LOSS
+  wording/detail line, the 880 actually gone from the output record,
+  and the rest of the record still flipped to UTF-8.
+
+**Stage 3 (full suite + lint), DONE.** 361 passed, 1 skipped, 1
+pre-existing unrelated failure (`TestUnfixableErrorFile::
+test_unresolvable_record_diverted_to_error_file` -- confirmed via `git
+stash` that it fails identically on `main` before this session's
+changes; a stale "Problem filename:" log-header assertion, nothing to
+do with this fix). `flake8 --max-line-length=100` clean except the
+same pre-existing long line (`marc_repair.py:6127`, the sample-log
+print statement).
+
+**Also worth a look, separately (not acted on):** the FOLIO records
+already loaded with the blanked-out text (at least `.b11165406`'s
+246/505 alternate titles) will need to be identified and reloaded/
+corrected once this fix is deployed -- the bad data is already live,
+this fix only stops it from recurring.
+
+**Important limits of this fix, even once implemented -- do not
+overclaim "the whole file is now UTF-8":**
+1. **Fixes thrown failures, not silent wrong-output.** This only
+   catches corruption that makes `marc8_to_unicode` raise. Of the 5
+   records flagged by `suspect_hex_encoded_marc8`, only these 2 throw.
+   The other 3 don't throw today either -- their literal `{xxxxxx}`
+   hex-brace text just passes through unchanged as valid-but-garbled
+   ASCII/UTF-8, "successfully" transcoded with wrong content. This fix
+   does not touch that case; it's a separate, pre-existing gap (same
+   mechanism that already silently corrupted `.b11165406` in FOLIO,
+   just a milder variant that happens not to throw).
+2. Depends on `--transcode-marc8` staying enabled (on by default;
+   `--no-transcode-marc8` bypasses this entirely).
+3. Does not apply to holdings records -- MARC-8-to-UTF-8 conversion is
+   already skipped entirely for holdings (see
+   `holdings_escape_sequence`), a separate known limitation.
+4. Only covers the main `_repaired.mrc` output, not the `_error` file
+   -- `unfixable` records are written there byte-for-byte untouched by
+   design and are out of scope here.
+5. Only guards against corruption shapes that actually throw. A novel
+   corruption pattern that fails silently (like item 1) wouldn't be
+   caught just because this fix landed.
+
 ## TODO (later): re-examine `install.sh`'s self-update/re-run story
 
 A user ran `./install.sh --dir .` from inside an EC2 checkout at
