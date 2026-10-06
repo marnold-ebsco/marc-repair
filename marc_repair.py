@@ -4884,6 +4884,18 @@ _ALWAYS_FULL_CATEGORIES = {
 }
 
 
+#: Categories whose per-entry `detail` already carries its own "NO
+#: DATA LOSS" vs. "POSSIBLE DATA LOSS" call (see
+#: `strip_duplicate_non_repeatable_fields`) -- for these, `write_log`
+#: collapses every NO DATA LOSS entry into a single summary count
+#: line instead of listing each one, since an exact-duplicate removal
+#: needs no individual review and would otherwise bury the POSSIBLE
+#: DATA LOSS entries that do.
+_SUMMARIZE_NO_DATA_LOSS_ENTRIES = {
+    "removed_non_repeatable_duplicate",
+}
+
+
 #: Where each 852 (Location)-related category sits within its own
 #: section's 852 cluster (see `_category_sort_key`) -- whole-field/
 #: whole-record concerns first (no single subfield to blame: either
@@ -5060,8 +5072,19 @@ def write_log(
                 count_line += f" - {count_note}"
             fh.write(f"=== {count_line} ===\n")
             if category in full_categories and label != "INFORMATIONAL":
-                for e in group:
-                    fh.write(e.render() + "\n")
+                if category in _SUMMARIZE_NO_DATA_LOSS_ENTRIES:
+                    no_loss_count = sum(1 for e in group if "NO DATA LOSS" in e.detail)
+                    if no_loss_count:
+                        fh.write(
+                            f"\t{no_loss_count} record(s) where the fields are "
+                            "exact duplicates -- NO DATA LOSS\n"
+                        )
+                    for e in group:
+                        if "NO DATA LOSS" not in e.detail:
+                            fh.write(e.render() + "\n")
+                else:
+                    for e in group:
+                        fh.write(e.render() + "\n")
 
 
 class ProgressReporter:

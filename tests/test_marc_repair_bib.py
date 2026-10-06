@@ -3434,6 +3434,24 @@ _FIXED_REQUIRES_ATTENTION_CASES = [
         verify=lambda results: len([f for f in results[0].fields if f.tag == "245"]) == 1,
     ),
     _CliDefaultCase(
+        id="removed_non_repeatable_duplicate_exact_duplicate_summarized",
+        build=lambda: m.assemble_marc(m.ParsedRecord(
+            leader=_SYNTHETIC_LEADER,
+            entries=[],
+            fields=[
+                m.Field_("008", None, None, content="x" * 40),
+                m.Field_("245", "14", [("a", "Real title /")]),
+                m.Field_("245", "14", [("a", "Real title /")]),
+            ],
+        )),
+        required_log_substrings=[
+            "=== FIXED/REQUIRES ATTENTION: removed_non_repeatable_duplicate ===",
+            "1 record(s) where the fields are exact duplicates -- NO DATA LOSS",
+        ],
+        forbidden_log_substrings=["removed duplicate =245"],
+        verify=lambda results: len([f for f in results[0].fields if f.tag == "245"]) == 1,
+    ),
+    _CliDefaultCase(
         id="invalid_bibliographic_level",
         build=lambda: m.assemble_marc(m.ParsedRecord(
             leader=_SYNTHETIC_LEADER[:7] + "9" + _SYNTHETIC_LEADER[8:],
