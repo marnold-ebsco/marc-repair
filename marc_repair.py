@@ -2609,9 +2609,16 @@ def transcode_marc8_to_utf8(parsed: ParsedRecord) -> tuple[bool, list[str]]:
     whole record (nothing in `parsed` is changed), the same as every
     field used to behave before this per-subfield isolation existed. The
     raised message names the specific tag and shows ~10 characters of
-    context on each side of the actual error position, so a human
-    reviewing the log has enough to actually find and judge the defect,
-    not just a bare byte offset.
+    context before and ~20 after the actual error position (raw `\x1b`
+    escape bytes replaced with a readable `<escape>` marker, same
+    convention as `find_suspect_marc8_escapes`), so a human reviewing
+    the log has enough to actually find and judge the defect, not just
+    a bare byte offset. For a truncated multi-byte character
+    specifically, the error position is always past the field's own
+    end (that's what "truncated" means), so the context necessarily
+    stops at the field's last byte -- marked explicitly with a trailing
+    "<-- field ends here", with the message itself stating how many
+    more bytes the encoding expected but didn't get.
     """
     if parsed.leader[9:10] == UNICODE_ENCODING_BYTE:
         return False, []
@@ -2682,7 +2689,7 @@ def transcode_marc8_to_utf8(parsed: ParsedRecord) -> tuple[bool, list[str]]:
 
     def convert_labeled(text: str, label: str) -> str:
         # Wraps `convert` to re-raise with `label` (e.g. "tag 500 $a")
-        # and ~10 characters of context on each side of the actual
+        # and ~10 characters of context before / ~20 after the actual
         # error position -- a bare UnicodeDecodeError only names a byte
         # offset, giving a human nothing to go on to find the field
         # that actually failed or judge whether the surrounding text
@@ -2692,22 +2699,34 @@ def transcode_marc8_to_utf8(parsed: ParsedRecord) -> tuple[bool, list[str]]:
         except UnicodeDecodeError as exc:
             before = text[max(0, exc.start - 10):exc.start]
             bad = text[exc.start:exc.end]
-            after = text[exc.end:exc.end + 10]
+            after = text[exc.end:exc.end + 20]
             raise RuntimeError(
                 f"{label} ({exc.reason}); context: {before!r} >>> {bad!r} <<< {after!r}"
             ) from exc
         except _Marc8MultibyteTruncated as exc:
             raw = text.encode("latin-1")
             start = max(0, exc.byte_pos - 10)
-            end = min(len(raw), exc.byte_pos + 10)
+            # `end` is always exactly `len(raw)` here -- `exc.byte_pos`
+            # (the position pymarc expected the character to extend to)
+            # is by definition past the actual end of the field, which
+            # is the whole reason this is "truncated" -- so there is
+            # never anything to show past the field's own last byte,
+            # no matter how far `end` reaches.
+            end = min(len(raw), exc.byte_pos + 20)
             # decode defensively -- this is a byte-offset window into
             # raw MARC-8, which may not land on a clean latin-1
             # boundary around a multi-byte escape, but latin-1 maps
             # every byte value so this never actually raises.
             context = raw[start:end].decode("latin-1")
+            # replace the raw escape byte with a short readable marker --
+            # repr()'ing \x1b as-is is unreadable to a non-technical
+            # reader, same convention as find_suspect_marc8_escapes.
+            context_display = context.replace("\x1b", "<escape>")
+            missing = exc.byte_pos - len(raw)
             raise RuntimeError(
-                f"{label} (truncated multi-byte MARC-8 character); "
-                f"context: {context!r}"
+                f"{label} (MARC-8 encoding expected {missing} more byte(s) "
+                "than the field provided -- character cut off); "
+                f"context: {context_display!r} <-- field ends here"
             ) from exc
 
     # Compute every field's converted value BEFORE mutating `parsed` at
@@ -6124,7 +6143,10 @@ def main(argv: list[str] | None = None) -> int:
             "(none -- --sample-log, no input read)",
         )
         write_log(log_path, [], active_categories=set(_CHECK_DESCRIPTIONS))
-        print(f"sample log ({len(_CHECK_DESCRIPTIONS)} category header(s), all 0 record(s)) written to {log_path}")
+        print(
+            f"sample log ({len(_CHECK_DESCRIPTIONS)} category header(s), "
+            f"all 0 record(s)) written to {log_path}"
+        )
         return 0
 
     while not args.input:

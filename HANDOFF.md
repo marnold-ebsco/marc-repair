@@ -1,26 +1,105 @@
 # Handoff Notes
 
-## TODO (next session): Stage 4 -- full corpus re-run for the per-field 880 transcode fix below
+## DONE: Stage 4 -- full corpus re-run for the per-field 880 transcode fix below
 
-Stages 1-3 of the staged plan immediately below are DONE this session
-(see "DONE: Stage 1-3" right below). Stage 4, the one remaining step:
-re-run the full pipeline against `working/WTS_bibs_2026-10-01.out`
-(421MB/263,595 records -- the *original* un-repaired file, not an
-already-repaired copy, same as the prior full re-runs below) with this
-session's changes in place. Diff only the relevant log section counts
-via `grep` against
-`working/WTS_bibs_2026-10-01_repaired4_log_20261005T200749Z.log` (never
-`cat`/read the full log or .mrc into context) -- confirm:
-- `transcode_marc8_failed` drops from 2 to 0 record(s).
-- A new `removed_untranscodable_subfield` section appears with exactly
-  6 record(s) worth of findings expected (`.b11165406`'s 5 fields +
-  `.b11227394`'s 1 subfield) -- confirm the actual count matches and
-  spot-check both record IDs appear.
-- Every other category's count is byte-for-byte unchanged from that
-  log (in particular `removed_880_missing_a` should stay at 91, and
-  `suspect_hex_encoded_marc8` should stay at 12).
+Re-ran the full pipeline against the original `working/WTS_bibs_2026-10-01.out`
+(421MB/263,595 records) with this session's Stage 1-3 changes in place,
+diffed every log section count against
+`working/WTS_bibs_2026-10-01_repaired4_log_20261005T200749Z.log`:
+- `transcode_marc8_failed` dropped from 2 to **0** record(s), as expected.
+- Every other category's count is byte-for-byte unchanged (in particular
+  `removed_880_missing_a` stayed at 91 and `suspect_hex_encoded_marc8` at
+  12) -- confirms this change is additive, nothing else regressed.
+- The new `removed_untranscodable_subfield` section appeared with
+  **4** record(s) worth of findings (3 for `.b11165406` + 1 for
+  `.b11227394`), **not the 6 originally predicted** (5 + 1) -- see
+  below for why.
 
-Then mark this TODO DONE and fold it into the "DONE: Stage 1-3" entry.
+**Why the prediction was off (not a bug).** The original scope analysis
+confirmed `.b11165406` has 5 `880` fields containing hex-brace
+(`{xxxxxx}`) corruption (`246-02`, `246-03`, `246-04`, `246-06`,
+`505-09`) and assumed all 5 would throw on transcode, requiring removal.
+Re-verified directly against the real `marc8_to_unicode` call on each of
+those 5 field values in isolation: only 3 (`246-02`, `246-03`,
+`246-04`) actually raise `"Multi-byte position X exceeds length of
+marc8 string Y"` (truncated multi-byte) and get caught/dropped/logged.
+The other 2 (`246-06`, `505-09`) produce **no warning at all** -- they
+"successfully" decode to garbled/wrong text instead, the same
+pre-existing silent-corruption gap already documented under "Important
+limits of this fix" item 1 below (hex-brace corruption that doesn't
+happen to land on a truncated multi-byte boundary passes straight
+through unflagged). That gap had only been confirmed at the
+whole-corpus/whole-record level before; this is the same mechanism
+shown to apply at individual-field granularity too. Conflating "field
+contains hex corruption" with "field will throw on transcode" was the
+source of the wrong 5-vs-3 prediction -- the code itself needed no
+change.
+
+Output and log left in `working/` for review:
+`WTS_bibs_2026-10-01_repaired6.mrc` /
+`WTS_bibs_2026-10-01_repaired6_log_<timestamp>.log`.
+
+Separately, expanded the `removed_untranscodable_subfield` /
+`transcode_marc8_failed` context window in `convert_labeled`
+(`marc_repair.py:2683`, both the `UnicodeDecodeError` and
+`_Marc8MultibyteTruncated` branches) from a symmetric ~10 characters on
+each side to an asymmetric **-10 before / +20 after** the error
+position -- more room to see what follows a truncation point without
+widening the leading side. Docstring at `marc_repair.py:2611` updated
+to match. All 15 `TestTranscodeMarc8` tests still pass (no test pinned
+the exact window content).
+
+## DONE: made `removed_untranscodable_subfield`'s detail line readable for non-technical reviewers (e.g. library staff)
+
+User flagged that a real example (`context: '0053}\x1b(B'`) was unreadable
+to someone without MARC-8 byte-level knowledge, and that the "+20 after"
+window change above had no visible effect for this category. Root
+cause of the latter: the `_Marc8MultibyteTruncated` branch's error
+position (`exc.byte_pos`, what pymarc calls the position the multi-byte
+character needed to extend to) is *by definition* always past the
+field's actual last byte -- that's what "truncated" means -- so the
+context window's `end` always collapses to `len(raw)` regardless of how
+far past it the window reaches; there is never anything to show "after"
+within the subfield's own text, no matter the window size.
+
+Two fixes in the `_Marc8MultibyteTruncated` branch of `convert_labeled`
+(`marc_repair.py:2699-2721`):
+1. Raw `\x1b` escape bytes in the context are now replaced with a
+   plain `<escape>` marker before `repr()`-ing the string, same
+   convention `find_suspect_marc8_escapes` already uses -- no more raw
+   control-character escapes in the log.
+2. The message now explicitly states the shortfall (`exc.byte_pos -
+   len(raw)`, e.g. "MARC-8 encoding expected 2 more byte(s) than the
+   field provided -- character cut off") and the context string gets an
+   explicit trailing `<-- field ends here` marker, since the window
+   always ends at the field's actual last byte.
+
+Example, same record as above, now reads: `tag 880 $a (MARC-8 encoding
+expected 2 more byte(s) than the field provided -- character cut off);
+context: '0053}<escape>(B' <-- field ends here; dropped $a and the rest
+of =880 with it (nothing usable without it)`.
+
+Docstring at `marc_repair.py:2604` updated to describe both the
+`<escape>` substitution and the "field ends here" marker. Updated the
+two `TestTranscodeMarc8` tests that pinned the old wording
+(`test_untranscodable_a_subfield_drops_whole_field_not_whole_record`,
+`test_untranscodable_non_a_subfield_drops_only_that_subfield`) to assert
+the new wording/markers instead.
+
+Separately, wrapped the one pre-existing long line flake8 had been
+flagging for several sessions (`marc_repair.py`, the `--sample-log`
+summary `print` statement) -- no reason it needed to stay long, just
+never gotten to. `flake8 --max-line-length=100 marc_repair.py` is now
+fully clean with zero exceptions.
+
+Full suite: 361 passed, 1 skipped, the same pre-existing unrelated
+failure as every prior session (`TestUnfixableErrorFile::
+test_unresolvable_record_diverted_to_error_file`). Re-ran the full
+`working/WTS_bibs_2026-10-01.out` corpus once more with both fixes in
+place: 263,595/263,595 written, 0 unfixable, every section count
+identical to the Stage 4 run above (purely a log-wording change).
+Output/log left in `working/`: `WTS_bibs_2026-10-01_repaired7.mrc` /
+`WTS_bibs_2026-10-01_repaired7_log_20261006T163333Z.log`.
 
 ## DONE: Stage 1-3 -- per-field (not per-record) isolation when `transcode_marc8_to_utf8` hits corrupted MARC-8 content
 

@@ -894,7 +894,11 @@ class TestTranscodeMarc8:
         assert parsed.fields[0].subfields == [("a", "Clean name")]
         assert len(removed) == 1
         assert "tag 880 $a" in removed[0]
-        assert "truncated multi-byte MARC-8 character" in removed[0]
+        assert "MARC-8 encoding expected" in removed[0]
+        assert "more byte(s) than the field provided" in removed[0]
+        assert "<escape>" in removed[0]
+        assert "\\x1b" not in removed[0]
+        assert "field ends here" in removed[0]
         assert "dropped $a and the rest of =880 with it" in removed[0]
 
     def test_untranscodable_non_a_subfield_drops_only_that_subfield(self):
@@ -933,7 +937,11 @@ class TestTranscodeMarc8:
         ]
         assert len(removed) == 1
         assert "tag 880 $c" in removed[0]
-        assert "truncated multi-byte MARC-8 character" in removed[0]
+        assert "MARC-8 encoding expected" in removed[0]
+        assert "more byte(s) than the field provided" in removed[0]
+        assert "<escape>" in removed[0]
+        assert "\\x1b" not in removed[0]
+        assert "field ends here" in removed[0]
         assert "dropped just $c, rest of =880 kept" in removed[0]
 
     def test_other_hex_corrupted_records_from_corpus_unaffected(self):
