@@ -1,5 +1,29 @@
 # Handoff Notes
 
+## DONE: full-corpus run against `working/GTU_bibs.mrc` (527.5MB, 404,957 records)
+
+Ran default settings (`python3 marc_repair.py working/GTU_bibs.mrc`):
+404,956/404,957 records repaired and written to
+`working/GTU_bibs_repaired.mrc`; log at
+`working/GTU_bibs_repaired_log_20261006T234719Z.log` (820,878
+record-level findings, 820,877 fixed, 1 not fixed). Took 133.93s.
+
+**1 record genuinely unfixable** (record 403838, a Daniel
+Schwartz/Second Temple Jewish-history essay collection -- a 505 contents
+note, 500 note, 520 summary, several 650s, a 700 with $0/$1 identifiers,
+an 020 ISBN, and local holdings-ish fields), written byte-for-byte
+unchanged to `working/GTU_bibs_repaired_error.mrc` instead of the main
+output. Inspected the raw bytes: this one is missing its **leader and
+directory entirely**, not just corrupted -- the file starts straight
+into subfield-delimited data (0x1f/0x1e/0x1d all present and well-formed)
+with no leader bytes and no tag/length/start directory anywhere. Neither
+repair mode can help: Mode 1 needs the leader to roughly match reality
+to rebuild from; Mode 2 needs the directory as ground truth to solve
+delimiter placement. With zero surviving tag information, there's no
+safe way to guess which chunk is which MARC field -- this needs a human
+to reconstruct by hand (likely by re-pulling that one record from the
+source ILS) rather than an `--overrides` fix.
+
 ## TODO (deferred by user): `suspect_hex_encoded_marc8` is still detect-only -- the `{xxxxxx}` text itself is never fixed in output
 
 Follow-up to the per-field transcode isolation fix below ("Important limits
