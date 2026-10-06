@@ -4871,6 +4871,9 @@ def _write_run_timing_header(
     source_path: str,
     repaired_path: str,
     problem_path: str | None,
+    source_count: int | None = None,
+    repaired_count: int | None = None,
+    problem_count: int | None = None,
 ) -> None:
     """Write a run-level started/finished/elapsed line, followed by the
     source/repaired/problem filenames for this run, as the very first
@@ -4887,18 +4890,30 @@ def _write_run_timing_header(
 
     Each path is reduced to its basename -- the log is meant to be a quick
     at-a-glance record of which files were involved, not a durable pointer
-    back to them (the run's own stdout/args already has the full paths)."""
+    back to them (the run's own stdout/args already has the full paths).
+
+    `*_count` is the record count for the matching file, appended in
+    parentheses when given; None (e.g. --sample-log's placeholder paths,
+    which never actually read/write any records) omits it."""
     elapsed = (finished - started).total_seconds()
+
+    def _named(path: str, count: int | None) -> str:
+        name = os.path.basename(path)
+        if count is None:
+            return name
+        record_word = "record" if count == 1 else "records"
+        return f"{name} ({count} {record_word})"
+
     with open(log_path, "w", encoding="utf-8") as fh:
         fh.write(
             f"=== RUN: started {started.strftime('%Y-%m-%dT%H:%M:%SZ')}, "
             f"finished {finished.strftime('%Y-%m-%dT%H:%M:%SZ')}, "
             f"elapsed {elapsed:.2f}s ===\n"
         )
-        fh.write(f"Source filename: {os.path.basename(source_path)}\n")
-        fh.write(f"Repaired filename: {os.path.basename(repaired_path)}\n")
+        fh.write(f"Source filename: {_named(source_path, source_count)}\n")
+        fh.write(f"Repaired filename: {_named(repaired_path, repaired_count)}\n")
         if problem_path is not None:
-            fh.write(f"Problem filename: {os.path.basename(problem_path)}\n")
+            fh.write(f"Problem filename: {_named(problem_path, problem_count)}\n")
         fh.write("\n")
 
 
@@ -5597,6 +5612,7 @@ def repair_holdings_records(
         log_path, run_started, datetime.now(timezone.utc),
         input_path, output_path,
         error_path if os.path.exists(error_path) else None,
+        source_count=n_total, repaired_count=n_written, problem_count=n_unfixable,
     )
     write_log(
         log_path, log_entries, active_categories=active_categories,
@@ -6687,6 +6703,8 @@ def main(argv: list[str] | None = None) -> int:
         log_path, run_started, datetime.now(timezone.utc),
         args.input, out_path,
         error_path if os.path.exists(error_path) else None,
+        source_count=n_total, repaired_count=n_total - n_unfixable,
+        problem_count=n_unfixable,
     )
     write_log(
         log_path, log_entries, active_categories=active_categories,
