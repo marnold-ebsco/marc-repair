@@ -2393,15 +2393,17 @@ _MARC8_AMBIGUOUS_CONTEXT_RADIUS = 15
 #:   Spanish name, not ogonek on "o" at all), and after "s" (needs
 #:   breve/dot-below depending on the word) -- genuinely different marks
 #:   depending on context, left alone.
-#: - 0xA4: diaeresis, but only after "u" (10 of 93 occurrences, 11%) --
-#:   confirmed-by-volume German ü ("U<junk>\xa4bersetzung" ->
-#:   "Übersetzung", "Beschlu<junk>\xa4sse" -> "Beschlüsse",
-#:   "Seegru<junk>\xa4n" -> "Seegrün"). Every other before-letter in the
-#:   full occurrence list needs an ACUTE accent instead (Spanish/
-#:   Hungarian/Icelandic names like "Calder<junk>\xa4n" -> "Calderón",
-#:   "Gastn<junk>\xa4 Espinosa" -> "Gastón Espinosa") -- acute isn't in
-#:   this table at all yet, so those stay unfixed/for human review
-#:   rather than silently (and wrongly) getting a diaeresis.
+#: - 0xA4: diaeresis, but only after "u" (10 of 79 occurrences, 13% --
+#:   recounted after the close-escape fix below removed 14 false-positive
+#:   matches from the original 93) -- confirmed-by-volume German ü
+#:   ("U<junk>\xa4bersetzung" -> "Übersetzung", "Beschlu<junk>\xa4sse" ->
+#:   "Beschlüsse", "Seegru<junk>\xa4n" -> "Seegrün"). Every other
+#:   before-letter in the full occurrence list needs an ACUTE accent
+#:   instead (Spanish/Hungarian/Icelandic names like
+#:   "Calder<junk>\xa4n" -> "Calderón", "Gastn<junk>\xa4 Espinosa" ->
+#:   "Gastón Espinosa") -- acute isn't in this table at all yet, so those
+#:   stay unfixed/for human review rather than silently (and wrongly)
+#:   getting a diaeresis.
 #:
 #: Combining (modifies the letter immediately before the junk run, same
 #: mark-before-letter ANSEL order as `_MARC8_DIACRITIC_PAYLOADS`):

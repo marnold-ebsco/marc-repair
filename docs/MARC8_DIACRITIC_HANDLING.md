@@ -99,12 +99,18 @@ confirmed is clean. Outside that context they're left alone for
   after `o` (needs a tilde two letters earlier in a Spanish name, not
   ogonek on "o" at all), and after `s` (needs breve or dot-below depending
   on the word).
-- `0xA4`: only 10 of 93 occurrences (11%) are `u` + diaeresis (German
+- `0xA4`: only 10 of 79 occurrences (13%) are `u` + diaeresis (German
   "Übersetzung", "Beschlüsse", "Seegrün"). Every other before-letter needs
   an **acute accent** instead (Spanish/Hungarian/Icelandic names like
   "Calderón", "Gastón Espinosa") -- acute isn't in this bare-byte table at
   all, so those are correctly left unfixed rather than given the wrong
   mark.
+
+  (Recounted after the close-escape fix below: the original 93-occurrence
+  figure included 14 false-positive matches where a close escape's own "B"
+  byte was misread as the "before" letter -- `_MARC8_NOT_ESCAPE_DESIGNATOR_
+  LOOKBEHIND` now excludes those, leaving 79 genuine occurrences. The 10
+  confirmed `u` + diaeresis fixes are unaffected either way.)
 
 ## Investigated, not implemented -- genuinely ambiguous or insufficient evidence
 
