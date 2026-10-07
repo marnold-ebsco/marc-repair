@@ -2294,10 +2294,14 @@ def find_suspect_marc8_escapes(
     repeats verbatim across more than one field in the same record
     (e.g. a name in both 100 and 245, or a series title duplicated in
     245 and 830) -- these collapse onto one line listing every tag it
-    appears in, rather than repeating the full line per tag. When
-    every distinct defect in the record carries the same suggestion,
-    that suggestion (and the record's LCCN/OCLC) is stated once as a
-    header rather than repeated per defect line.
+    appears in, rather than repeating the full line per tag. The
+    merged detail always has the same two-part shape: a header line
+    (the record's own column in `LogEntry.render`) followed by one
+    indented bullet line per distinct occurrence. When every distinct
+    defect in the record carries the same suggestion, that suggestion
+    (and the record's LCCN/OCLC) is stated once in the header and the
+    bullets stay bare; otherwise the header holds just the LCCN/OCLC
+    (if any) and each bullet states its own suggestion.
     """
     if parsed.leader[9:10] == UNICODE_ENCODING_BYTE:
         return []  # already UTF-8 -- no raw MARC-8 escapes to find
@@ -2416,27 +2420,28 @@ def find_suspect_marc8_escapes(
         tag_word = "tags" if len(tags) > 1 else "tag"
         defect_lines.append((f"{tag_word} {', '.join(tags)}: {window!r}", suggestion))
 
-    if len(defect_lines) == 1:
-        body, suggestion = defect_lines[0]
-        detail = f"{body} -- {suggestion}"
-        if identifiers:
-            detail += f". {identifiers}"
-    else:
-        distinct_suggestions = {s for _, s in defect_lines}
-        lines: list[str] = []
-        if len(distinct_suggestions) == 1:
-            header = next(iter(distinct_suggestions))
-            if identifiers:
-                header += f". {identifiers}"
-            lines.append(header)
-            lines.extend(f"\t{body}" for body, _ in defect_lines)
-        else:
-            if identifiers:
-                lines.append(identifiers)
-            for body, suggestion in defect_lines:
-                line = f"{body} -- {suggestion}"
-                lines.append(line if not lines else f"\t{line}")
-        detail = "\n".join(lines)
+    # Header line states whatever is common to every occurrence --
+    # the shared suggestion (if all occurrences agree) and the
+    # record's LCCN/OCLC (if known) -- so a reader gets the gist
+    # without opening every bullet. Each occurrence then gets its own
+    # indented bullet (two tabs deeper than the header's own leading
+    # tab in `LogEntry.render`, so a multi-occurrence record's bullets
+    # can never be mistaken for the next record's own header line),
+    # repeating the suggestion on the bullet only when it isn't
+    # already stated once in the header.
+    distinct_suggestions = {s for _, s in defect_lines}
+    header_parts = []
+    if len(distinct_suggestions) == 1:
+        header_parts.append(next(iter(distinct_suggestions)))
+    if identifiers:
+        header_parts.append(identifiers)
+    lines = [". ".join(header_parts)]
+    for body, suggestion in defect_lines:
+        bullet = f"\t\t- {body}"
+        if len(distinct_suggestions) > 1:
+            bullet += f" -- {suggestion}"
+        lines.append(bullet)
+    detail = "\n".join(lines)
     return [("suspect_marc8_escape", detail)]
 
 
