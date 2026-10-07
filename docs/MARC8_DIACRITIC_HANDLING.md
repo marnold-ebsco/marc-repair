@@ -115,11 +115,50 @@ interpretation. No code handles them; they still reach
 
 | byte | occurrences | why it's unresolved |
 |---|---|---|
-| `0xA6` | 267 (145 records) | Overloaded *and* structurally broken: means ogonek in some Polish words (confirmed against Sierra record `.b10016855`, "filozofią") but cedilla in Portuguese/Romanian words (confirmed against Sierra record `.b1031037x`, "revelação"). Worse, in at least one occurrence (the same `.b10016855` record, "współczesną") the byte sits *before* the vowel that needs the mark rather than after it -- the fix mechanism (attach to the letter before the junk) can't handle that shape at all, regardless of which mark is intended. |
+| `0xA6` | 267 (145 records) | Overloaded *and* structurally broken -- see writeup below. |
 | `0xBA` | 69 (37 records) | Means Hungarian double-acute (ő/ű -- "felelős", "György") in roughly half its occurrences and Russian hard sign (ʺ -- "obʺedinenii") in the rest, with no reliable split by surrounding letter. |
 | `0xB2` | 745 (398 records) | Murky: frequently tangled with multiple macron escapes within the same word, and at least one occurrence ("JohannesVerl...") appears to need no diacritic fix at all -- a likely false-positive match for the detection shape itself. |
 | `0xB3` | 49 (21 records) | Two unrelated phenomena sharing one byte: Dead Sea Scroll sigla superscripts (e.g. "1QIsaᵃ" -- would need a letter-to-Unicode-superscript substitution, a different fix mechanism entirely, not a mark insertion) and what looks like a Korean name needing a breve ("Yŏn Presbyterian"). |
 | `0xC1` | 8 (3 records) | Tiny sample with an escape structure (`\x1bb8`/`\x1bb9` fragments) not seen anywhere else in the corpus -- may not even be the same corruption mechanism as the rest of this table. |
+
+**`0xA6`, in detail.** Means ogonek in some Polish words (GTU record
+`.b10016855`, "filozofią") but cedilla in Portuguese/Romanian words
+(GTU record `.b1031037x`, "revelação") -- confirmed against both
+records' real Sierra catalog display. Worse, in at least one
+occurrence (the same `.b10016855` record, "współczesną") the byte sits
+*before* the vowel that needs the mark rather than after it -- the fix
+mechanism (attach to the letter before the junk) can't handle that
+shape at all, regardless of which mark is intended.
+
+Checked against the Library of Congress's own authoritative catalog
+records for both titles (not Sierra's display, which the user didn't
+trust for this check) via `search.catalog.loc.gov`, since both are
+LC-cataloged works with an LCCN:
+
+- LC's record for the Polish title (LCCN 76350390) is itself
+  internally inconsistent about this exact word: field `240` (uniform
+  title) renders it `"Z badań nad filosofia̦ współczesna̦..."` --
+  spelled with "s" (not "z"), and marked with what looks like a
+  combining comma-below rather than textbook ogonek, on *both* final
+  "a"s. Field `500` (a quoted note) renders the same title
+  `"...Z badań nad filozofią współczesna."` -- correct ogonek on
+  "filozofią" (spelled with "z" this time), but **no mark at all** on
+  the final "a" of "współczesna". Three different renderings of the
+  same two words, from the same authoritative record. This directly
+  confirms the earlier finding: the "współczesną" shape that breaks
+  this fixer's before-letter mechanism isn't a corner case to design
+  around -- even LC's own catalogers didn't transcribe that specific
+  ending consistently by hand.
+- LC's record for the Portuguese title (LCCN 74210234) is clean and
+  confirms the cedilla reading: field `245` renders
+  `"O conceito de revelação na controvérsia modernista..."` with a
+  plain, unambiguous cedilla on "revelação".
+
+Net effect: both of the original readings (ogonek vs. cedilla) were
+right, so this doesn't change the "leave `0xA6` unconfirmed" decision
+-- it reinforces it. Even the authoritative source is inconsistent for
+the specific word shape that already defeated the fix mechanism on
+syntactic grounds alone.
 
 ## Rejected approaches
 

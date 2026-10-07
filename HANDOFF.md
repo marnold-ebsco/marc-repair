@@ -218,9 +218,17 @@ checked against two real Sierra catalog records at the user's request
 (`.b10016855` Polish, `.b1031037x` Portuguese), confirming it means two
 different marks depending on the word *and* that at least one
 occurrence needs a fix mechanism (mark-applies-to-the-letter-after, not
-before) this codebase doesn't have. Full writeup, including the exact
-restriction percentages and every rejected byte's reasoning, is now in
-`docs/MARC8_DIACRITIC_HANDLING.md` (also created this session) --
+before) this codebase doesn't have. In a later follow-up the user
+didn't trust Sierra's own rendering for this specific check and asked
+to cross-check both titles directly against the Library of Congress's
+own catalog (`search.catalog.loc.gov`, both titles have an LCCN) --
+LC's record for the Polish title turned out to be internally
+inconsistent about this exact word across its own `240`/`500` fields
+(three different renderings of the same two words, one with no mark at
+all), which reinforces rather than overturns the "leave unconfirmed"
+call. Full writeup, including the exact restriction percentages,
+every rejected byte's reasoning, and the LC cross-check detail, is now
+in `docs/MARC8_DIACRITIC_HANDLING.md` (also created this session) --
 that's the doc to hand anyone who asks what's been done. Still not
 done: the full-corpus re-run to see the real before/after effect on
 `fixed_marc8_diacritic`/`suspect_marc8_escape` counts (see Run 1/Run 2
