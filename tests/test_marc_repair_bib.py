@@ -549,6 +549,116 @@ class TestFixMarc8DiacriticEscapes:
         m.transcode_marc8_to_utf8(parsed)
         assert parsed.fields[0].subfields == [("a", "Ilʹich")]
 
+    def test_recovers_bare_combining_ogonek_restricted_to_a_e_u(self):
+        # Real production examples (working/GTU_bibs.mrc): 0xA8 is
+        # overloaded -- confirmed by volume as ogonek only after a/e
+        # (Polish, 64+173 of 324 occurrences) or u (Lithuanian, 11 of
+        # 324) -- see _MARC8_BARE_COMBINING_RESTRICTED_BEFORE's own
+        # comment for the full breakdown and the other before-letters
+        # (c/o/s/etc.) that need a *different* mark and must NOT fire.
+        parsed = self._record("Ksia\x1bp+\x1bs\xa8zka")
+        details = m.fix_marc8_diacritic_escapes(parsed)
+        assert len(details) == 1
+        assert parsed.fields[0].subfields == [("a", "Ksi\xf1azka")]
+
+        parsed = self._record("We\x1bp+\x1bs\xa8gierski")
+        details = m.fix_marc8_diacritic_escapes(parsed)
+        assert len(details) == 1
+        assert parsed.fields[0].subfields == [("a", "W\xf1egierski")]
+
+        parsed = self._record("Kataliku\x1bp+\x1bs\xa8 baznyczios")
+        details = m.fix_marc8_diacritic_escapes(parsed)
+        assert len(details) == 1
+        assert parsed.fields[0].subfields == [("a", "Katalik\xf1u baznyczios")]
+
+    def test_bare_combining_ogonek_restriction_skips_other_before_letters(self):
+        # Same byte (0xA8), but after "c" the real correction is a
+        # cedilla, not ogonek (e.g. "Franc<junk>ais" -> "français",
+        # already covered by 0xA7) -- must stay unfixed here rather
+        # than guess wrong.
+        raw = "Franc\x1bp+\x1bs\xa8ais"
+        parsed = self._record(raw)
+        assert m.fix_marc8_diacritic_escapes(parsed) == []
+        assert parsed.fields[0].subfields == [("a", raw)]
+
+    def test_bare_combining_ogonek_transcodes_to_correct_utf8(self):
+        parsed = self._record("We\x1bp+\x1bs\xa8gierski")
+        m.fix_marc8_diacritic_escapes(parsed)
+        m.transcode_marc8_to_utf8(parsed)
+        assert parsed.fields[0].subfields == [("a", "Węgierski")]
+
+    def test_recovers_bare_combining_dot_below_second_byte_restricted_to_h(self):
+        # Real production examples (working/GTU_bibs.mrc): 0xAE is a
+        # second corrupted-byte representation of the same dot-below
+        # mark 0xA3 already handles, but confirmed by volume only after
+        # "h" (109 of 135 occurrences -- Near Eastern/biblical names
+        # like "Hammurabi", "Yarih"); other before-letters are a
+        # scatter of unconfirmed words and must not fire.
+        parsed = self._record("H\x1bp+\x1bs\xaeammurabi")
+        details = m.fix_marc8_diacritic_escapes(parsed)
+        assert len(details) == 1
+        assert parsed.fields[0].subfields == [("a", "\xf2Hammurabi")]
+
+    def test_bare_combining_dot_below_second_byte_restriction_skips_other_before_letters(self):
+        raw = "Ha\x1bp+\x1bs\xaettusa"
+        parsed = self._record(raw)
+        assert m.fix_marc8_diacritic_escapes(parsed) == []
+        assert parsed.fields[0].subfields == [("a", raw)]
+
+    def test_bare_combining_dot_below_second_byte_transcodes_to_correct_utf8(self):
+        parsed = self._record("H\x1bp+\x1bs\xaeammurabi")
+        m.fix_marc8_diacritic_escapes(parsed)
+        m.transcode_marc8_to_utf8(parsed)
+        assert parsed.fields[0].subfields == [("a", "Ḥammurabi")]
+
+    def test_recovers_bare_combining_dot_below_third_byte_restricted_to_r(self):
+        # Real production examples (working/GTU_bibs.mrc): 0xA5 is a
+        # third corrupted-byte representation of the same dot-below
+        # mark, confirmed by volume only after "r" (251 of 318
+        # occurrences -- Sanskrit IAST vocalic r, e.g. "Rgveda" ->
+        # "Rgveda" with dot-below r, a textbook-unambiguous word).
+        parsed = self._record("R\x1bp+\x1bs\xa5gveda")
+        details = m.fix_marc8_diacritic_escapes(parsed)
+        assert len(details) == 1
+        assert parsed.fields[0].subfields == [("a", "\xf2Rgveda")]
+
+    def test_bare_combining_dot_below_third_byte_restriction_skips_other_before_letters(self):
+        raw = "veltim\x1bp+\x1bs\xa5en"
+        parsed = self._record(raw)
+        assert m.fix_marc8_diacritic_escapes(parsed) == []
+        assert parsed.fields[0].subfields == [("a", raw)]
+
+    def test_bare_combining_dot_below_third_byte_transcodes_to_correct_utf8(self):
+        parsed = self._record("R\x1bp+\x1bs\xa5gveda")
+        m.fix_marc8_diacritic_escapes(parsed)
+        m.transcode_marc8_to_utf8(parsed)
+        assert parsed.fields[0].subfields == [("a", "Ṛgveda")]
+
+    def test_recovers_bare_combining_diaeresis_restricted_to_u(self):
+        # Real production examples (working/GTU_bibs.mrc): 0xA4 is
+        # overloaded -- confirmed by volume as diaeresis only after
+        # "u" (10 of 93 occurrences -- German u-umlaut, e.g.
+        # "Ubersetzung" -> "Ubersetzung" with u-diaeresis). Every other
+        # before-letter in the full occurrence list needs an ACUTE
+        # accent instead (Spanish/Hungarian/Icelandic names), which
+        # isn't in this table at all -- must not fire there.
+        parsed = self._record("U\x1bp+\x1bs\xa4bersetzung")
+        details = m.fix_marc8_diacritic_escapes(parsed)
+        assert len(details) == 1
+        assert parsed.fields[0].subfields == [("a", "\xe8Ubersetzung")]
+
+    def test_bare_combining_diaeresis_restriction_skips_other_before_letters(self):
+        raw = "Calder\x1bp+\x1bs\xa4n"
+        parsed = self._record(raw)
+        assert m.fix_marc8_diacritic_escapes(parsed) == []
+        assert parsed.fields[0].subfields == [("a", raw)]
+
+    def test_bare_combining_diaeresis_transcodes_to_correct_utf8(self):
+        parsed = self._record("U\x1bp+\x1bs\xa4bersetzung")
+        m.fix_marc8_diacritic_escapes(parsed)
+        m.transcode_marc8_to_utf8(parsed)
+        assert parsed.fields[0].subfields == [("a", "Übersetzung")]
+
     def test_recovers_escape_diacritic_immediately_followed_by_bare_byte(self):
         # Real production example (record .b10001463, tag 500):
         # "Ihya" + macron escape + more stray junk leading straight

@@ -2365,11 +2365,66 @@ _MARC8_AMBIGUOUS_CONTEXT_RADIUS = 15
 #: MODIFIER LETTER PRIME, unrelated to cedilla) when *not* preceded by
 #: the junk signal -- same safety argument as 0xA3/0xBC/0xBB above.
 #:
+#: 0xAE, 0xA5, 0xA8, and 0xA4 were added after validating the remaining
+#: candidates from that same scan against the full corpus. Unlike the
+#: bytes above, each of these turned out to be *overloaded* -- the same
+#: byte stands in for more than one mark depending on the word/language
+#: it corrupted, so (unlike 0xA3/0xA7 above) they're only safe to fix
+#: in the specific before-letter context where the evidence is actually
+#: clean; see `_MARC8_BARE_COMBINING_RESTRICTED_BEFORE` below for what
+#: each byte is NOT applied to, and why:
+#: - 0xAE: dot below, but only after "h" (109 of 135 occurrences, 81%)
+#:   -- confirmed-by-volume Near Eastern/biblical names ("H<junk>\xaeammurabi"
+#:   -> "Ḥammurabi", "Yarih<junk>\xae" -> "Yariḥ"). The other before-letters
+#:   (a/s/o/i/u, 26 occurrences) didn't show a single clear, confirmable
+#:   word and are left for a human to review instead of guessing.
+#: - 0xA5: dot below, but only after "r" (251 of 318 occurrences, 79%)
+#:   -- confirmed-by-volume Sanskrit IAST vocalic r ("R<junk>\xa5gveda" ->
+#:   "Ṛgveda", "Kr<junk>\xa5s<junk>\xa3n<junk>\xa3a" -> "Kṛṣṇa", both
+#:   textbook-unambiguous). Other before-letters are a scatter of Greek/
+#:   Tibetan/Arabic transliteration that don't share one consistent mark.
+#: - 0xA8: ogonek, but only after "a", "e", or "u" (248 of 324
+#:   occurrences, 76%) -- confirmed-by-volume Polish a/e ogonek
+#:   ("Ksia<junk>\xa8zka" -> "Książka", "We<junk>\xa8gierski" ->
+#:   "Węgierski") and Lithuanian u ogonek ("Kataliku<junk>\xa8" ->
+#:   "Katalikų"). The same byte also turns up after "c" (needs cedilla,
+#:   e.g. "Franc<junk>\xa8ais" -> "français" -- same corruption 0xA7
+#:   already covers), after "o" (needs tilde two letters earlier in a
+#:   Spanish name, not ogonek on "o" at all), and after "s" (needs
+#:   breve/dot-below depending on the word) -- genuinely different marks
+#:   depending on context, left alone.
+#: - 0xA4: diaeresis, but only after "u" (10 of 93 occurrences, 11%) --
+#:   confirmed-by-volume German ü ("U<junk>\xa4bersetzung" ->
+#:   "Übersetzung", "Beschlu<junk>\xa4sse" -> "Beschlüsse",
+#:   "Seegru<junk>\xa4n" -> "Seegrün"). Every other before-letter in the
+#:   full occurrence list needs an ACUTE accent instead (Spanish/
+#:   Hungarian/Icelandic names like "Calder<junk>\xa4n" -> "Calderón",
+#:   "Gastn<junk>\xa4 Espinosa" -> "Gastón Espinosa") -- acute isn't in
+#:   this table at all yet, so those stay unfixed/for human review
+#:   rather than silently (and wrongly) getting a diaeresis.
+#:
 #: Combining (modifies the letter immediately before the junk run, same
 #: mark-before-letter ANSEL order as `_MARC8_DIACRITIC_PAYLOADS`):
 _MARC8_BARE_COMBINING_BYTES: dict[str, str] = {
     "\xa3": "\xf2",  # -> ANSEL combining dot below (e.g. h -> ḥ, s -> ṣ)
     "\xa7": "\xf0",  # -> ANSEL combining cedilla (e.g. c -> ç)
+    "\xae": "\xf2",  # -> ANSEL combining dot below, restricted (e.g. H -> Ḥ)
+    "\xa5": "\xf2",  # -> ANSEL combining dot below, restricted (e.g. r -> ṛ)
+    "\xa8": "\xf1",  # -> ANSEL combining ogonek, restricted (e.g. a -> ą)
+    "\xa4": "\xe8",  # -> ANSEL combining diaeresis, restricted (e.g. u -> ü)
+}
+
+#: Byte -> the lowercase before-letters it's safe to fire on, for the
+#: overloaded bytes documented in the table comment above. A byte not
+#: listed here (0xA3, 0xA7) fires on any letter, same as before this
+#: restriction existed. Checked case-insensitively against the matched
+#: before-letter; anything outside the listed set is left untouched for
+#: `find_suspect_marc8_escapes` to flag instead of risking the wrong mark.
+_MARC8_BARE_COMBINING_RESTRICTED_BEFORE: dict[str, str] = {
+    "\xae": "h",
+    "\xa5": "r",
+    "\xa8": "aeu",
+    "\xa4": "u",
 }
 
 #: Standalone (a modifier letter in its own right, not combining with
@@ -2498,6 +2553,9 @@ def _marc8_bare_combining_replacement(match: "re.Match[str]") -> str:
     mark = _MARC8_BARE_COMBINING_BYTES.get(byte)
     if mark is None:
         return match.group()
+    allowed_before = _MARC8_BARE_COMBINING_RESTRICTED_BEFORE.get(byte)
+    if allowed_before is not None and before.lower() not in allowed_before:
+        return match.group()  # overloaded byte outside its confirmed context -- see table comment
     return mark + before  # ANSEL order: combining byte precedes its base letter
 
 
@@ -2541,10 +2599,16 @@ def fix_marc8_diacritic_escapes(parsed: ParsedRecord) -> list[str]:
     Also recovers several related, bare-byte (no recognized escape at
     all) corruptions found in the same way, each preceded by the same
     stray ESC-byte junk this function already strips: Arabic combining
-    dot-below, French/Occitan combining cedilla, the standalone hamza/
-    ayn modifier letters, and the standalone modifier-letter prime
-    (Russian "soft sign" romanizations) -- see
-    `_MARC8_BARE_COMBINING_BYTES`/`_MARC8_BARE_STANDALONE_BYTES`.
+    dot-below (from three different corrupted bytes), French/Occitan
+    combining cedilla, Polish/Lithuanian combining ogonek, German
+    combining diaeresis, the standalone hamza/ayn modifier letters, and
+    the standalone modifier-letter prime (Russian "soft sign"
+    romanizations) -- see `_MARC8_BARE_COMBINING_BYTES`/
+    `_MARC8_BARE_STANDALONE_BYTES`. Several of these bare bytes are
+    overloaded (the same byte stands in for more than one mark
+    depending on language/context) and are only fixed within the
+    specific before-letter context the full corpus confirmed is safe;
+    see `_MARC8_BARE_COMBINING_RESTRICTED_BEFORE`.
 
     Also recovers a third, much more common variant of the escape
     corruption itself (~81,000 occurrences checked against the full
@@ -5294,8 +5358,9 @@ _CHECK_DESCRIPTIONS: dict[str, str] = {
     "either a bogus script-switching escape sequence around a "
     "confirmed-by-volume payload byte (e.g. \"Haure\" + <escape> + "
     "\"au\" -> \"Hauréau\") or a bare, un-escaped byte standing in for "
-    "an Arabic transliteration mark, a French/Occitan cedilla, or a "
-    "Russian \"soft sign\" (e.g. "
+    "an Arabic transliteration mark, a French/Occitan cedilla, a "
+    "Russian \"soft sign\", a Polish/Lithuanian ogonek, or a German "
+    "diaeresis (e.g. "
     "\"al-h\" + <bare byte> + \"ujjah\" -> \"al-ḥujjah\") -- the mark "
     "was reapplied to (or reinserted at) the position it was lost "
     "from. Also recovers plain ASCII punctuation/whitespace trapped "
