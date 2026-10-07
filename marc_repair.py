@@ -2584,7 +2584,22 @@ def _marc8_bare_standalone_replacement(match: "re.Match[str]") -> str:
     return _MARC8_BARE_STANDALONE_BYTES.get(byte, match.group())
 
 
+_MARC8_SIGNATURES_NOTE_PREFIXES = ("signatures:", "signature:")
+
+
 def _fix_marc8_diacritics_in_text(text: str) -> str:
+    # Early-printed-book "Signatures: A-C⁴ D²." collation notes
+    # (ESTC-style) reuse this same escape machinery for a lost
+    # superscript leaf-count digit, not a lost diacritic -- the escape
+    # fix can't tell the two apart, so skip it entirely for any
+    # subfield/control-field text that is itself such a note. Confirmed
+    # empirically: excludes all 8 confirmed false positives in
+    # working/WTS_bibs_2026-10-01.out and 0 genuine fixes in
+    # working/GTU_bibs.mrc's 310,036 (its lone "Signatures:" match is
+    # the identical false positive, not a loss). See
+    # docs/MARC8_DIACRITIC_HANDLING.md.
+    if text.lstrip().lower().startswith(_MARC8_SIGNATURES_NOTE_PREFIXES):
+        return text
     text = _MARC8_DIACRITIC_ESCAPE_RE.sub(_marc8_diacritic_replacement, text)
     text = _MARC8_BARE_COMBINING_RE.sub(_marc8_bare_combining_replacement, text)
     text = _MARC8_BARE_STANDALONE_RE.sub(_marc8_bare_standalone_replacement, text)

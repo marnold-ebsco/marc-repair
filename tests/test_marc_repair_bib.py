@@ -448,6 +448,28 @@ class TestFixMarc8DiacriticEscapes:
         assert len(details) == 1
         assert parsed.fields[0].subfields == [("a", "mot\x1b(B Haur\xe2eau")]
 
+    def test_does_not_mistake_signatures_note_leaf_count_for_diacritic(self):
+        # Real production example (working/WTS_bibs_2026-10-01.out): an
+        # early-printed-book "Signatures:" collation note records a
+        # lost superscript leaf-count digit (e.g. "D⁴") using the
+        # same escape machinery as a lost ANSEL diacritic -- there is
+        # no diacritic anywhere in this note. Before this guard, the
+        # fixer spliced a bogus macron onto "C", producing nonsense
+        # ("A-\xe5C D...") on a note about book gatherings, not accents.
+        # Confirmed empirically (working/check_signature_label_fast.py)
+        # this "starts with Signatures:/Signature:" check excludes all
+        # 8 such false positives in that corpus and 0 genuine fixes in
+        # working/GTU_bibs.mrc's 310,036 -- see
+        # docs/MARC8_DIACRITIC_HANDLING.md.
+        raw = "Signatures: A-C\x1b(QE \x1b(BD\x1b(QC.\x1b(B"
+        parsed = self._record(raw)
+        assert m.fix_marc8_diacritic_escapes(parsed) == []
+        assert parsed.fields[0].subfields == [("a", raw)]
+
+    def test_signatures_note_guard_is_case_insensitive_and_allows_leading_space(self):
+        parsed = self._record("  SIGNATURE: A\x1b(QE \x1b(BB.")
+        assert m.fix_marc8_diacritic_escapes(parsed) == []
+
     def test_recovers_cedilla_under_basic_arabic_charset(self):
         parsed = self._record("Franc\x1b(3L\x1b(Bois")
         details = m.fix_marc8_diacritic_escapes(parsed)

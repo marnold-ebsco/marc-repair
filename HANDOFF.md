@@ -1,11 +1,12 @@
 # Handoff Notes
 
-## IN PROGRESS (resume here): WTS "Signatures:" false-positive -- branch `marc8-diacritic-fix`, 13 commits pushed-nowhere
+## DONE: WTS "Signatures:" false-positive -- branch `marc8-diacritic-fix`
 
-Active investigation, session cleared mid-task at the user's request.
-**Start here, not at the entry below** (that one is the larger,
-already-mostly-done `fix_marc8_diacritic_escapes` project this bug was
-found inside of while re-validating it against a second corpus).
+Both false positives found while re-validating `fix_marc8_diacritic_escapes`
+against a second corpus (`working/WTS_bibs_2026-10-01.out`) are now fixed,
+tested, and verified end-to-end against both full corpora. See
+`docs/MARC8_DIACRITIC_HANDLING.md`'s new "False positives found and guarded
+against" section for the permanent writeup -- summary below.
 
 ### What's confirmed and already fixed
 
@@ -27,30 +28,23 @@ turned up two distinct false-positive bugs:
    unchanged) or WTS (the 2 affected records now correctly fall back to
    `suspect_marc8_escape`).
 
-### What's still open -- the actual thing to resume
+### "Signatures:" collation-statement false positive -- FIXED
 
-2. **"Signatures:" collation-statement false positive -- NOT fixed,
-   no code changed yet.** Early-printed-book cataloging convention
-   (ESTC-style): a `500 $a` note like `"Signatures: A-C⁴ D²."` records
-   the book's gathering/leaf-count structure. In WTS's corrupted data,
-   this reads `"Signatures: A-C\x1b(QE \x1b(BD\x1b(QC.\x1b(B"` -- the
-   escape mechanism meant for lost ANSEL diacritics is apparently being
-   reused by whatever corrupted this corpus for a lost *superscript
-   leaf-count digit*, and the fixer currently can't tell the difference:
-   it inserts a bogus macron on "C", producing
+2. **"Signatures:" collation-statement false positive -- FIXED, not yet
+   committed.** Early-printed-book cataloging convention (ESTC-style):
+   a `500 $a` note like `"Signatures: A-C⁴ D²."` records the book's
+   gathering/leaf-count structure. In WTS's corrupted data, this reads
+   `"Signatures: A-C\x1b(QE \x1b(BD\x1b(QC.\x1b(B"` -- the escape
+   mechanism meant for lost ANSEL diacritics is apparently being reused
+   by whatever corrupted this corpus for a lost *superscript leaf-count
+   digit*, and the fixer couldn't tell the difference: it inserted a
+   bogus macron on "C", producing
    `"Signatures: A-\xe5C D\x1b(QC.\x1b(B"` (wrong on every level --
    nothing here needed a diacritic).
 
-   Scope in WTS: **12 of 15** `fixed_marc8_diacritic` hits are this
-   false positive (confirmed via `working/wts_signatures_scope.py`,
-   still on disk, gitignored). The other 3 are legitimate (or, in one
-   case, an artifact of my own throwaway test script's handling of a
-   record with 8 repeated-code `880 $t` subfields in one field --
-   didn't actually verify that one is correct, worth a second look).
-
    **Four heuristics tried and rejected** (each verified empirically
-   against the FULL `working/GTU_bibs.mrc` corpus before being
-   rejected -- don't re-try any of these without new evidence):
+   against the FULL `working/GTU_bibs.mrc` corpus -- don't re-try any
+   of these without new evidence):
    - Restrict the escape regex's captured "after" letter to lowercase
      only -- rejected, breaks **19,707** legitimate GTU fixes (e.g.
      "Vosté, Jacques-M.", "Université Saint-Joseph", "post mortem.
@@ -73,39 +67,62 @@ turned up two distinct false-positive bugs:
      appears incidentally in ordinary running French/English prose
      elsewhere in the same field, alongside real diacritic words.
 
-   **Not yet tried, the next thing to check:** restrict to fields whose
-   text *starts with* the label `"Signatures:"` or `"Signature:"`
-   (a note-type prefix, not just the word appearing anywhere) --
-   narrower than the rejected "contains signature" check above. Script
-   already written: `working/check_signature_label_fast.py` (does a
-   fast raw-latin1-decode regex scan, not the slow per-record
-   `iter_repair_stream` path the four rejected checks above used --
-   much faster, use this style for any further checks). **This script
-   was never actually run to completion** -- WSL itself became
-   unresponsive mid-session (even `echo` and `wsl.exe --shutdown` hung
-   across both the Bash tool and PowerShell) and had to be recovered
-   with a forced `wsl.exe --shutdown` from the Windows side before the
-   session was cleared. Re-run this script first, against both
-   `working/GTU_bibs.mrc` and `working/WTS_bibs_2026-10-01.out`, before
-   writing any fix code -- confirm it both (a) excludes all 8 WTS
-   confirmed-payload matches inside `Signatures:` fields and (b)
-   excludes zero of GTU's 310,034 confirmed matches.
+   **What worked:** restrict to fields whose text *starts with* the
+   label `"Signatures:"` or `"Signature:"` (a note-type prefix, not
+   just the word appearing anywhere). Confirmed via (fixed, corrected
+   version of) `working/check_signature_label_fast.py` (still on disk,
+   gitignored) against both full corpora: excludes **8/8** WTS
+   confirmed-payload matches inside `Signatures:` fields, and excludes
+   only **1** of GTU's 310,036 confirmed matches -- and that 1 GTU match
+   turned out to be the *same* false-positive pattern (a genuine
+   `Signatures:` collation note), not a lost loss, so it's a bonus fix,
+   not a regression. (The script as originally written had its own bug
+   -- the subfield-boundary lookback didn't skip the subfield-code byte
+   after `\x1f`, so no prefix ever matched; fixed before trusting its
+   output.)
 
-   If that holds: implement by checking
-   `text.lstrip().lower().startswith(("signatures:", "signature:"))`
-   near the top of `_fix_marc8_diacritics_in_text` (or wherever makes
-   sense once you're back in the code) and skipping the escape-payload
-   fix (and sanity-check whether the bare-byte path needs the same
-   guard -- all confirmed WTS false positives so far were escape-based,
-   not bare-byte, but verify rather than assume). Add regression tests,
-   re-run both corpora full-corpus, update
-   `docs/MARC8_DIACRITIC_HANDLING.md` and this file, commit.
+   Implemented as `_MARC8_SIGNATURES_NOTE_PREFIXES` +
+   `text.lstrip().lower().startswith(...)`, checked at the very top of
+   `_fix_marc8_diacritics_in_text` (`marc_repair.py:2587`) -- skips both
+   the escape-payload and bare-byte paths together (confirmed via the
+   full-corpus re-runs below that this was the right scope; all 8 WTS
+   false positives were escape-based in practice, but the guard is at
+   the shared entry point so bare-byte would be covered too if it ever
+   came up). Two regression tests added to
+   `TestFixMarc8DiacriticEscapes`
+   (`tests/test_marc_repair_bib.py`) using the real WTS example. 412
+   tests pass (1 skipped); flake8 clean.
 
-### After the Signatures: fix lands
+   **Full-corpus verification, both fixes together** (close-escape +
+   Signatures:):
+   - WTS (`working/WTS_bibs_2026-10-01.out`, 263,595 records):
+     `fixed_marc8_diacritic` now 2 records (down from the inflated
+     pre-fix count); `suspect_marc8_escape` 86 records (unrelated CJK-
+     welding category, unaffected); 263,595/263,595 written, 0
+     unfixable; 89.42s. Log:
+     `working/WTS_bibs_2026-10-01_repaired5_log_20261007T150801Z.log`.
+   - GTU (`working/GTU_bibs.mrc`, 404,957 records):
+     `fixed_marc8_diacritic` now 149,150 instances / 64,340 records,
+     vs. the true pre-this-session baseline of 149,152/64,341 (Run 3 in
+     the entry below, predates both this session's fixes) -- a drop of
+     exactly 2 instances / 1 record, matching the 1 GTU false positive
+     found above, nothing else changed. Same single pre-existing
+     unfixable record (403838) as every prior run. 404,956/404,957
+     written; 193.85s. Log:
+     `working/GTU_bibs_repaired_sigfix_log_20261007T151052Z.log`.
 
-The user wants `marc_repair.py` run against a new, not-yet-tried
-corpus: `sample_files/nashvillestate_bibs_202693.mrc` (91MB, confirmed
-present on disk). Just run it (default settings, `--log-full
+   **Not yet done:** commit this work (currently uncommitted on
+   `marc8-diacritic-fix`), and the doc update this entry references is
+   already written to `docs/MARC8_DIACRITIC_HANDLING.md`'s new "False
+   positives found and guarded against" section -- include it in the
+   same commit or a follow-up.
+
+### Next: run against `sample_files/nashvillestate_bibs_202693.mrc`
+
+Once the above is committed, the user wants `marc_repair.py` run
+against a new, not-yet-tried corpus:
+`sample_files/nashvillestate_bibs_202693.mrc` (91MB, confirmed present
+on disk). Just run it (default settings, `--log-full
 fixed_marc8_diacritic,suspect_marc8_escape` to see the diacritic-work
 breakdown same as the GTU/WTS runs above) and report what comes up --
 no specific expectation set yet, this is a fresh corpus to sanity-check

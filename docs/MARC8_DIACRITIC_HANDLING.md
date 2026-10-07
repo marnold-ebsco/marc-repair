@@ -160,6 +160,49 @@ right, so this doesn't change the "leave `0xA6` unconfirmed" decision
 the specific word shape that already defeated the fix mechanism on
 syntactic grounds alone.
 
+## False positives found and guarded against
+
+Both found by re-running `fix_marc8_diacritic_escapes` against a second,
+different-library corpus (`working/WTS_bibs_2026-10-01.out`) as a sanity
+check after the table above was confirmed against GTU alone.
+
+**A close escape's own "B" byte mistaken for real text.** When a close
+escape (`\x1b(B`) sits immediately next to a different, confirmed-payload
+escape with no real letter between them, the "before letter" capture could
+match the close escape's own "B" as if it were text, splicing a mark onto
+escape machinery itself rather than real content (found on a WTS
+"Imperfect:" note about damaged book signatures, nowhere near a
+diacritic). Fixed with `_MARC8_NOT_ESCAPE_DESIGNATOR_LOOKBEHIND`, a
+negative lookbehind for `\x1b\(` applied to both regexes that capture a
+before-letter.
+
+**Early-printed-book "Signatures:" collation notes.** ESTC-style
+cataloging convention: a `500 $a` note like `"Signatures: A-C⁴ D²."`
+records a book's gathering/leaf-count structure, using a superscript digit
+per gathering. In WTS's corrupted data this reads `"Signatures: A-C` +
+`<escape>` + `D` + `<escape>` + `".\x1b(B"` -- the escape mechanism meant
+for a lost diacritic is apparently reused by whatever corrupted this
+corpus for a lost superscript leaf-count digit instead, and the fix
+mechanism can't tell the difference: it inserted a bogus mark on the
+nearest letter, producing nonsense on a note that was never about accents.
+
+Four heuristics based on the surrounding letters' case/position were tried
+and rejected -- each verified against the full `working/GTU_bibs.mrc`
+corpus, each broke between 25 and 19,707 legitimate fixes (genuine accented
+words are routinely followed by a capitalized next word, and the
+single-letter French word "à" immediately before a capitalized proper noun
+is syntactically identical to the false-positive shape). What works instead:
+skip the escape-payload/bare-byte fix entirely whenever the enclosing
+subfield or control-field text itself starts with the label `"Signatures:"`
+or `"Signature:"` (case-insensitive, leading whitespace allowed) --
+`_MARC8_SIGNATURES_NOTE_PREFIXES`, checked at the top of
+`_fix_marc8_diacritics_in_text`. Confirmed empirically
+(`working/check_signature_label_fast.py`): excludes all 8 confirmed false
+positives in WTS and 0 genuine fixes in GTU's 310,036 -- GTU's lone
+`"Signatures:"` match is the identical false positive (a lost superscript
+leaf-count mark, not a lost diacritic), so excluding it is a bonus fix, not
+a regression.
+
 ## Rejected approaches
 
 **A static payload -> letter table for the CJK/EACC escape.** Analyzed
