@@ -1220,6 +1220,35 @@ class TestFindSuspectHexEncodedMarc8:
         assert "Ian M. Duguid" in detail
         assert "recovered" in detail
 
+    def test_boundary_shifted_decode_with_leftover_braces_is_not_recoverable(self):
+        # Real production example (WTS_bibs_2026-10-01 record
+        # .b11188236, 880 $b): the decode is "clean" (even hex-digit
+        # count) and >=90% printable, which used to pass the
+        # recoverable heuristic -- but it leaves a second,
+        # differently-shaped brace run behind ("{uD574}{uC11D}{uC790}",
+        # 5 characters per group, not a genuine _HEX_BRACE_GROUP_RE
+        # match) mixed into the otherwise-readable preview. A literal
+        # "{"/"}" surviving the decode is itself evidence of boundary
+        # damage, even though the old printable-ratio/escape checks
+        # alone would have called this "recoverable".
+        raw = (
+            "\x1b$1oU_oR_"
+            "{7b6138}{366635}{317d7b}{343836}{663530}{7d7b34}{613162}"
+            "{32387d}{7b3432}{323032}{387d7b}{316232}{343331}{7d6f56}"
+            "{696f50}{5f1b28}{4229a8}{7b7544}{353734}{7d7b75}{433131}"
+            "{447d7b}{754337}{39307d}{203d20}{496e74}{726f64}{756374}"
+            "{696f6e}{20746f}{206269}{626c69}{63616c}{206865}{726d65}"
+            "{6e6575}{746963}{73202f}{1f631b}{24316f}{54291b}{284220}"
+            "{1b2431}"
+            "oRloQ,\x1b(B \x1b$1oX)oVf\x1b(B."
+        )
+        parsed = self._record(raw)
+        findings = m.find_suspect_hex_encoded_marc8(parsed)
+        assert len(findings) == 1
+        detail = findings[0][1]
+        assert "POSSIBLE DATA LOSS" in detail
+        assert "recovered" not in detail
+
     def test_does_not_flag_plain_text_without_brace_hex_pattern(self):
         parsed = self._record("\x1b$1oWIoKOoLp\x1b(B plain text, no braces")
         assert m.find_suspect_hex_encoded_marc8(parsed) == []

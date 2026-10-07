@@ -3242,10 +3242,25 @@ def _hex_brace_decode_looks_recoverable(decoded: bytes, clean: bool) -> bool:
     finding's "NO DATA LOSS" vs. "POSSIBLE DATA LOSS" call. A dropped
     leftover hex digit (`clean` False) is itself proof at least one
     byte couldn't be reconstructed, so that alone forces "POSSIBLE
-    DATA LOSS" regardless of how the rest decodes."""
+    DATA LOSS" regardless of how the rest decodes.
+
+    A literal "{" or "}" surviving in the decoded text is also treated
+    as unrecoverable, even if the rest of the heuristic below would
+    pass -- real production example (WTS_bibs_2026-10-01 record
+    .b11188236, 880 $b): a boundary-shifted decode left a SECOND,
+    differently-shaped brace run behind ("{uD574}{uC11D}{uC790}",
+    5 characters per group, not `_HEX_BRACE_GROUP_RE`'s 6 hex digits)
+    mixed into otherwise-readable text ("...oP_)· ... = Introduction
+    to biblical hermeneutics /c..."), which the printable-ratio check
+    alone was happy to call "recoverable" even though it plainly isn't
+    -- ordinary MARC-8/plain-text content essentially never contains a
+    literal curly brace, so its presence here is itself the signal.
+    """
     if not clean or not decoded:
         return False
     text = decoded.decode("latin-1")
+    if "{" in text or "}" in text:
+        return False
     if "\x1b" in text:
         return True  # a MARC-8 escape sequence survived the decode
     printable = sum(1 for c in text if c.isprintable() or c in "\t\n")

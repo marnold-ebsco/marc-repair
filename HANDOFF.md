@@ -439,12 +439,30 @@ item left in this file as of this entry.
    [docs/HANDOFF_HISTORY.md](docs/HANDOFF_HISTORY.md) for the full writeup and
    a mocked-up example of the improved log line.
 
-2. **`suspect_hex_encoded_marc8` stays detect-only.** The `{xxxxxx}` hex-brace
-   corruption is never rewritten in output today, even when the decode is
-   confirmed recoverable -- deliberate, since decoding is boundary-sensitive.
-   Three options were scoped with the user (auto-replace when recoverable;
-   same plus strip when not recoverable; leave as-is) with rough token-cost
-   estimates for each, but none chosen yet. User is putting this off. See
+2. **`suspect_hex_encoded_marc8` stays detect-only -- but its "recoverable"
+   heuristic just got tightened first.** Re-scoped with the user: three
+   replace-strategy options (auto-replace when recoverable; same plus strip
+   when not recoverable; leave as-is) were on the table, but picking one was
+   blocked by `_hex_brace_decode_looks_recoverable` itself being unreliable --
+   found a real example (WTS_bibs_2026-10-01 record `.b11188236`, `880 $b`)
+   where it called a boundary-shifted decode "recoverable" even though the
+   preview still had a second, differently-shaped leftover brace run
+   (`"{uD574}{uC11D}{uC790}"`, 5 chars per group, not a genuine
+   `_HEX_BRACE_GROUP_RE` match) mixed into otherwise-readable text. Fixed:
+   the heuristic now treats a literal `"{"`/`"}"` surviving in the decoded
+   text as proof of boundary damage, overriding the escape/printable-ratio
+   checks. Confirmed against the full real `working/WTS_bibs_2026-10-01.out`
+   corpus (`--log-full suspect_hex_encoded_marc8`): still 12 findings/5
+   records, same as before, except `.b11188236` now correctly reads
+   "POSSIBLE DATA LOSS" instead of "recovered" -- the other 11 findings
+   (including the two genuinely clean "recovered" cases, `마가복음`-style
+   Korean and "(Ian M. Duguid)") are unaffected. Regression test added
+   (`TestFindSuspectHexEncodedMarc8.test_boundary_shifted_decode_with_
+   leftover_braces_is_not_recoverable`, using `.b11188236`'s real raw
+   bytes). `pytest` (419 passed, 1 skipped) and `flake8` both clean.
+   **The three replace-strategy options are still undecided** -- that
+   decision is now on firmer ground since "recoverable" means something
+   more trustworthy, but it hasn't been revisited yet. See
    [docs/HANDOFF_HISTORY.md](docs/HANDOFF_HISTORY.md) for the full option
    writeup and cost estimates.
 
