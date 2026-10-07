@@ -197,9 +197,107 @@ ambiguous, same conclusion as before. `0xB3` stays unimplemented.
 Both bytes' table rows and new detail writeups in
 `docs/MARC8_DIACRITIC_HANDLING.md` updated with the corrected counts and
 this breakdown. No code change for either byte -- nothing to re-run
-against the full corpus. **`0xA6` and `0xC1` are the two bytes from the
-original "Investigated, not implemented" table left unconfirmed/
-unre-checked.**
+against the full corpus.
+
+**Started (not finished) `0xA6` and `0xC1` -- the last two bytes from the
+original "Investigated, not implemented" table.** This is an in-progress
+entry; neither byte has a confirmed verdict yet, unlike the fully-closed
+entries above. Picking this back up should re-run the two finder scripts
+below (both gitignored, still on disk) and continue from "Next steps."
+
+`0xA6`: re-ran the existing (pre-close-escape-fix) disambiguation via
+`working/find_0xa6_occurrences.py` (adapted from `working/find_0xb3_occurrences.py`'s
+one-off-regex approach, since `0xA6` isn't in `_MARC8_BARE_COMBINING_BYTES`
+either): 265 occurrences across 144 records (not the old 267/145 --
+same small stale-count correction as `0xA4`/`0xA5`/`0xA8`). Grouping by
+before-letter (`working/0xA6_occurrences.tsv`) surfaced a **materially
+different picture than the existing writeup below**, which only ever
+discussed `a` (Polish ogonek) vs `c` (Portuguese/French cedilla) as two
+roughly-comparable readings: `s` (79) and `t` (62) are actually the two
+largest groups, both overwhelmingly Romanian cedilla/comma-below words
+never mentioned before ("Bucureşti", "Timişoara", "Colecţia",
+"Mehedinţu", "Nopţi", "şi" = "and") -- `c`/`s`/`t` combined are 214/265
+(81%) and all three read correctly under the *same* ANSEL cedilla byte
+(`\xf0`) already used for `0xA7`'s French `ç`, not a new mark. `a`
+(Polish ogonek, the byte's originally-documented reading) is only 6
+occurrences (2%) -- a minority, not a comparably-sized alternative as
+the old writeup implied.
+
+**Not yet safe to implement as an override -- found a real off-by-one
+case while spot-checking, same shape as `0xAE`'s Akkadian cluster and
+`0xA4`'s "Jónsson."** Most `s`/`t` occurrences attach cleanly (the
+captured before-letter is the letter immediately needing the mark, e.g.
+`Bucures<esc>...>ti` -> `Bucureşti`), but record `.b11564295`, field
+`710 $b` ("Serviciul Relati<esc>...>i Externe Bisericest<esc>...>i") has
+two occurrences in one string: the first's captured before-letter is the
+*wrong* letter by one position (`Relati` + mark + `i` -- correct target
+is `Relaţii`, mark belongs on the `t` one position earlier, not the
+captured final `i`), and the second looks superficially clean (`t`
+captured, word is "Bisericeşti") but the literal text already contains
+both an `s` *and* a `t` before the junk where the correct word only has
+`ş` (one letter) -- meaning this one is also not a simple before-letter
+attach once inspected closely. **Before adding `s`/`t`/`c` to
+`_MARC8_BARE_COMBINING_BEFORE_OVERRIDES`, every occurrence in
+`working/GTU_bibs_0xA6_sample.mrc` needs the same full-field diff
+check (fix on vs. off) the Lessons Learned section above mandates --
+not done yet this session.** The non-Romanian contaminants (`Baş/Basra`,
+`Upanişad`/Sanskrit retroflex-ş, `al-Muhtaşar`) also need to be confirmed
+as a small, droppable minority rather than a sign the `s`/`t` groups are
+mixed the way `0xA4`'s `l`/`t` groups were.
+
+`0xC1`: the standard one-off regex (`working/find_0xc1_occurrences.py`,
+same template) found **zero** occurrences -- confirming the original
+doc's hedge that this byte's corruption "may not even be the same
+mechanism" as the rest of the table; it genuinely isn't reachable by the
+stray-junk-before-letter shape at all. A direct raw-byte scan over
+`working/GTU_bibs.mrc` (no regex, just `'\xc1' in rec_text`) instead
+found 118 occurrences across 55 records, splitting into two unrelated
+shapes neither matching the usual mechanism:
+
+- The large majority are a **bare, escape-free two-byte pair**
+  (`\xc3\xc1`, i.e. `pymarc.marc8_to_unicode` reads the individual bytes
+  as `©` + `ℓ`, which is nonsense) sitting directly in otherwise-plain
+  ASCII text with no escape sequence anywhere nearby -- confirmed via
+  record `.b14104076`'s `245`: `"SigurÃ°ur HafÃÁo<esc>p+<esc>s<esc>(QB<esc>(Brsson"`,
+  an Icelandic name ("Sigurður Hafþórsson") where `Ã°` (`\xc3\xb0`) is a
+  genuine, valid UTF-8 encoding of eth (`ð`) but the adjacent `ÃÁ`
+  (`\xc3\xc1`) is **not** valid UTF-8 (`\xc1` can't be a continuation
+  byte) and isn't the UTF-8 encoding of thorn (`þ` is `\xc3\xbe`, not
+  `\xc3\xc1`) either -- the root byte-mapping producing thorn from this
+  exact pair is still unexplained, confirmed only by reading the
+  reconstructed word, not by any known encoding rule. Leader byte 9 is
+  `' '` (declared MARC-8, not UTF-8) for every record checked, so this
+  isn't simply an embedded-UTF-8 field.
+- The minority matches the original doc's note (`\x1b(QB\x1b(B` close-escape
+  fragment immediately before the bare byte, e.g. record `.b10309858`'s
+  245: `"...eis ât<esc>(QB<esc>(BÁen texa..."`, Greek "tēn" -- Greek
+  before-letters, always right after a close escape with no letter
+  between, which `_MARC8_NOT_ESCAPE_DESIGNATOR_LOOKBEHIND` correctly
+  excludes as not a real "before" letter since there's nothing for a
+  mark to attach to).
+
+**No safe fix path identified for either shape -- the root corruption
+mechanism for the dominant bare-pair shape isn't understood yet (it's
+not UTF-8, not a known ANSEL byte, not the escape-junk pattern this
+codebase's whole mechanism is built around), so there's nothing to add
+to `_MARC8_BARE_COMBINING_BEFORE_OVERRIDES` or
+`_MARC8_BARE_COMBINING_BYTES` yet.** This needs dedicated investigation
+into where the `\xc3\xc1`/`\xc3\xb0` pairs actually come from (likely
+worth checking against a handful of other `Ã`-prefixed bytes in the
+corpus to see if there's a consistent `\xc3 + X -> Icelandic letter`
+table, not just these two) before any code change is even on the table.
+
+**Next steps for whoever resumes this:**
+1. `0xA6`: full-field diff (fix on vs. off, monkeypatching a trial
+   `_MARC8_BARE_COMBINING_BEFORE_OVERRIDES["\xa6"]` entry for `c`/`s`/`t`
+   -> cedilla) over every record in `working/GTU_bibs_0xA6_sample.mrc`,
+   same method as the `0xA5`/`h` rejection above -- expect to find and
+   exclude the `.b11564295`-style off-by-one cases, then decide if the
+   remaining clean majority is still large/clean enough to add.
+2. `0xC1`: grep `working/GTU_bibs.mrc` for other `\xc3`-prefixed pairs
+   (`\xc3\xb0` eth, `\xc3\xc1` unexplained-thorn, others?) to see if
+   there's a discoverable, consistent byte-pair table before concluding
+   this is unfixable like `0xB3`'s sigla.
 
 **Lessons learned this session (read before starting `0xAE`):**
 
