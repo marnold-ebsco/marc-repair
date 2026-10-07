@@ -410,6 +410,44 @@ class TestFixMarc8DiacriticEscapes:
         assert len(details) == 1
         assert parsed.fields[0].subfields == [("a", "si\xe1ecle")]
 
+    def test_does_not_treat_a_close_escapes_b_as_a_real_before_letter(self):
+        # Real production example (working/WTS_bibs_2026-10-01.out,
+        # record .b11749192, an "Imperfect:" note listing damaged
+        # signatures -- no diacritic anywhere near it): a close escape
+        # (\x1b(B) immediately followed by a *different*, confirmed-
+        # payload escape (\x1b(3L...\x1b(B, cedilla) with no real letter
+        # in between. Before the fix, the close escape's own "B" byte
+        # got mistaken for the letter that lost its mark, splicing a
+        # cedilla onto the escape machinery itself ("...QRR\x1b(B" became
+        # "...QR\xf0B\x1b(QRR" -- wrong on every level: cedilla doesn't
+        # belong anywhere here, and "B" was never real text).
+        raw = "\x1b(QS\x1b(B\x1b(3L\x1b(B\x1b(QRR. \x1b(B"
+        parsed = self._record(raw)
+        assert m.fix_marc8_diacritic_escapes(parsed) == []
+        assert parsed.fields[0].subfields == [("a", raw)]
+
+    def test_does_not_treat_a_close_escapes_b_as_before_letter_for_bare_byte(self):
+        # Same root cause as the test above, but for the bare-byte path
+        # (real production example working/WTS_bibs_2026-10-01.out,
+        # record .b11162946): a close escape immediately followed by
+        # stray junk and a bare combining byte, with no real letter
+        # between the close escape and the junk.
+        raw = "\x1b(B\x1bp+\x1bs\xa3ujjah"
+        parsed = self._record(raw)
+        assert m.fix_marc8_diacritic_escapes(parsed) == []
+        assert parsed.fields[0].subfields == [("a", raw)]
+
+    def test_still_fixes_real_letter_immediately_after_a_close_escape(self):
+        # Confirms the close-escape-"B" exclusion only excludes the
+        # designator byte itself -- a genuine letter sitting right
+        # after a close escape (e.g. two adjacent escaped words, one
+        # ending right where the next one's lost diacritic begins)
+        # still gets fixed normally.
+        parsed = self._record("mot\x1b(B Haure\x1bp+\x1bs\x1b(QB\x1b(Bau")
+        details = m.fix_marc8_diacritic_escapes(parsed)
+        assert len(details) == 1
+        assert parsed.fields[0].subfields == [("a", "mot\x1b(B Haur\xe2eau")]
+
     def test_recovers_cedilla_under_basic_arabic_charset(self):
         parsed = self._record("Franc\x1b(3L\x1b(Bois")
         details = m.fix_marc8_diacritic_escapes(parsed)
@@ -873,7 +911,10 @@ class TestFindSuspectMarc8Escapes:
         parsed = self._record(
             "x",
             fields=[
-                m.Field_("100", "1 ", [("a", "Haure\x1b(QB\x1b(Bau, B."), ("q", "Barthe\x1b(QB\x1b(Blemy)")]),
+                m.Field_(
+                    "100", "1 ",
+                    [("a", "Haure\x1b(QB\x1b(Bau, B."), ("q", "Barthe\x1b(QB\x1b(Blemy)")],
+                ),
             ],
         )
         findings = m.find_suspect_marc8_escapes(parsed)

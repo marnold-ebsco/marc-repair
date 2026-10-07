@@ -2481,8 +2481,22 @@ _MARC8_STRAY_ESCAPE_JUNK = (
     r"(?:\x1b(?!\()[^\x1b" + re.escape(_MARC8_BARE_TRIGGER_BYTES) + r"]{1,2})*?"
 )
 
+#: Excludes a "before letter" that's actually the trailing byte of a
+#: `\x1b(X` escape sequence (most commonly the "B" of a `\x1b(B` close,
+#: but any single-byte charset designator works the same way) rather
+#: than real text. Without this, back-to-back script-switches with no
+#: real letter between them (e.g. "...\x1b(B\x1b(3L\x1b(B..." -- a close,
+#: immediately followed by a *different*, confirmed-payload escape) let
+#: the designator byte itself ("B" in that example) get mistaken for the
+#: letter that lost its mark, attaching a real mark to a byte that was
+#: never text at all -- confirmed against a real production example
+#: (working/WTS_bibs_2026-10-01.out record .b11749192, an "Imperfect:"
+#: note listing damaged signatures, no diacritic anywhere near it) where
+#: this silently spliced a cedilla mark onto the escape machinery itself.
+_MARC8_NOT_ESCAPE_DESIGNATOR_LOOKBEHIND = r"(?<!\x1b\()"
+
 _MARC8_DIACRITIC_ESCAPE_RE = re.compile(
-    r"([A-Za-z])" + _MARC8_STRAY_ESCAPE_JUNK
+    _MARC8_NOT_ESCAPE_DESIGNATOR_LOOKBEHIND + r"([A-Za-z])" + _MARC8_STRAY_ESCAPE_JUNK
     + r"\x1b\(([" + "".join(re.escape(c) for c, _ in _MARC8_DIACRITIC_PAYLOADS) + r"])(.)"
     # The payload byte is sometimes followed by extra plain-ASCII
     # punctuation/whitespace *before* the closing \x1b(B, instead of
@@ -2543,7 +2557,7 @@ _MARC8_STRAY_ESCAPE_JUNK_NONEMPTY = (
 )
 
 _MARC8_BARE_COMBINING_RE = re.compile(
-    r"([A-Za-z])" + _MARC8_STRAY_ESCAPE_JUNK_NONEMPTY
+    _MARC8_NOT_ESCAPE_DESIGNATOR_LOOKBEHIND + r"([A-Za-z])" + _MARC8_STRAY_ESCAPE_JUNK_NONEMPTY
     + r"([" + "".join(re.escape(b) for b in _MARC8_BARE_COMBINING_BYTES) + r"])"
 )
 
