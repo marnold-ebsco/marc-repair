@@ -439,12 +439,20 @@ item left in this file as of this entry.
    [docs/HANDOFF_HISTORY.md](docs/HANDOFF_HISTORY.md) for the full writeup and
    a mocked-up example of the improved log line.
 
-2. **`suspect_hex_encoded_marc8` stays detect-only.** Its "recoverable"
-   heuristic was tightened and shipped (`d4caade`), but auto-replacing even
-   the "recoverable" cases turned out to be unsafe, confirmed against every
-   real occurrence in the corpus -- see the full account below. Decision:
-   stay detect-only; a real fix would need external verification (a
-   different, bigger feature), not a decoder tweak. Not started.
+2. **CLOSED -- `suspect_hex_encoded_marc8` stays detect-only, auto-replace
+   not started.** Its "recoverable" heuristic was tightened and shipped
+   (`d4caade`), but auto-replacing even the "recoverable" cases turned out
+   to be unsafe, confirmed against every real occurrence in the corpus --
+   see the full account below. **Decision: stay detect-only. Not
+   started, and not picked back up unless item #1's external-authority
+   lookup is built first** -- a real fix here needs the same external
+   verification, not a decoder tweak, and the scope is small either way:
+   this category only ever fires on 4-5 records out of roughly 670,000
+   checked across both real corpora (`working/GTU_bibs.mrc`: 0 occurrences;
+   `working/WTS_bibs_2026-10-01.out`: 11 findings across 4 records once the
+   tightened heuristic excludes `.b11188236`). State-tracking wouldn't grow
+   that set -- it only changes what text a candidate produces, and per
+   Step 2 below, it makes every one of them worse, not more trustworthy.
 
    **Step 1, shipped (`d4caade`): tightened the "recoverable" heuristic.**
    Three replace-strategy options were on the table (auto-replace when
