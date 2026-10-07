@@ -379,6 +379,424 @@ class TestParseDirectoryTerminatorCoincidence:
 # transcode_marc8_to_utf8 -- ANSEL diacritics -> Unicode
 # ---------------------------------------------------------------------------
 
+class TestFixMarc8DiacriticEscapes:
+    def _record(self, raw_a, tag="880", fields=None):
+        leader = list(_SYNTHETIC_LEADER)
+        leader[9] = " "  # declare MARC-8
+        return m.ParsedRecord(
+            leader="".join(leader),
+            entries=[],
+            fields=fields if fields is not None else [m.Field_(tag, "10", [("a", raw_a)])],
+        )
+
+    def test_recovers_acute_accent_with_stray_junk_before_real_escape(self):
+        # Real production example (working/GTU_bibs.mrc, record .b10000094,
+        # tag 100): "Haure" + stray unrecognized escape bytes `\x1bp+\x1bs`
+        # + the real, recognized Extended-Cyrillic escape `\x1b(QB\x1b(B`
+        # + "au, B." -- the base letter "e" survives intact; only the
+        # acute mark was lost. The escape is replaced with the genuine
+        # ANSEL combining-acute byte (0xE2), placed *before* its base
+        # letter per real MARC-8 convention, not a precomposed "é" --
+        # the record is still MARC-8 at this point (leader[9] == " "),
+        # left for transcode_marc8_to_utf8 to turn into real UTF-8.
+        parsed = self._record("Haure\x1bp+\x1bs\x1b(QB\x1b(Bau, B.")
+        details = m.fix_marc8_diacritic_escapes(parsed)
+        assert len(details) == 1
+        assert parsed.fields[0].subfields == [("a", "Haur\xe2eau, B.")]
+
+    def test_recovers_grave_accent_no_stray_junk(self):
+        parsed = self._record("sie\x1b(QA\x1b(Bcle")
+        details = m.fix_marc8_diacritic_escapes(parsed)
+        assert len(details) == 1
+        assert parsed.fields[0].subfields == [("a", "si\xe1ecle")]
+
+    def test_does_not_treat_a_close_escapes_b_as_a_real_before_letter(self):
+        # Real production example (working/WTS_bibs_2026-10-01.out,
+        # record .b11749192, an "Imperfect:" note listing damaged
+        # signatures -- no diacritic anywhere near it): a close escape
+        # (\x1b(B) immediately followed by a *different*, confirmed-
+        # payload escape (\x1b(3L...\x1b(B, cedilla) with no real letter
+        # in between. Before the fix, the close escape's own "B" byte
+        # got mistaken for the letter that lost its mark, splicing a
+        # cedilla onto the escape machinery itself ("...QRR\x1b(B" became
+        # "...QR\xf0B\x1b(QRR" -- wrong on every level: cedilla doesn't
+        # belong anywhere here, and "B" was never real text).
+        raw = "\x1b(QS\x1b(B\x1b(3L\x1b(B\x1b(QRR. \x1b(B"
+        parsed = self._record(raw)
+        assert m.fix_marc8_diacritic_escapes(parsed) == []
+        assert parsed.fields[0].subfields == [("a", raw)]
+
+    def test_does_not_treat_a_close_escapes_b_as_before_letter_for_bare_byte(self):
+        # Same root cause as the test above, but for the bare-byte path
+        # (real production example working/WTS_bibs_2026-10-01.out,
+        # record .b11162946): a close escape immediately followed by
+        # stray junk and a bare combining byte, with no real letter
+        # between the close escape and the junk.
+        raw = "\x1b(B\x1bp+\x1bs\xa3ujjah"
+        parsed = self._record(raw)
+        assert m.fix_marc8_diacritic_escapes(parsed) == []
+        assert parsed.fields[0].subfields == [("a", raw)]
+
+    def test_still_fixes_real_letter_immediately_after_a_close_escape(self):
+        # Confirms the close-escape-"B" exclusion only excludes the
+        # designator byte itself -- a genuine letter sitting right
+        # after a close escape (e.g. two adjacent escaped words, one
+        # ending right where the next one's lost diacritic begins)
+        # still gets fixed normally.
+        parsed = self._record("mot\x1b(B Haure\x1bp+\x1bs\x1b(QB\x1b(Bau")
+        details = m.fix_marc8_diacritic_escapes(parsed)
+        assert len(details) == 1
+        assert parsed.fields[0].subfields == [("a", "mot\x1b(B Haur\xe2eau")]
+
+    def test_does_not_mistake_signatures_note_leaf_count_for_diacritic(self):
+        # Real production example (working/WTS_bibs_2026-10-01.out): an
+        # early-printed-book "Signatures:" collation note records a
+        # lost superscript leaf-count digit (e.g. "D⁴") using the
+        # same escape machinery as a lost ANSEL diacritic -- there is
+        # no diacritic anywhere in this note. Before this guard, the
+        # fixer spliced a bogus macron onto "C", producing nonsense
+        # ("A-\xe5C D...") on a note about book gatherings, not accents.
+        # Confirmed empirically (working/check_signature_label_fast.py)
+        # this "starts with Signatures:/Signature:" check excludes all
+        # 8 such false positives in that corpus and 0 genuine fixes in
+        # working/GTU_bibs.mrc's 310,036 -- see
+        # docs/MARC8_DIACRITIC_HANDLING.md.
+        raw = "Signatures: A-C\x1b(QE \x1b(BD\x1b(QC.\x1b(B"
+        parsed = self._record(raw)
+        assert m.fix_marc8_diacritic_escapes(parsed) == []
+        assert parsed.fields[0].subfields == [("a", raw)]
+
+    def test_signatures_note_guard_is_case_insensitive_and_allows_leading_space(self):
+        parsed = self._record("  SIGNATURE: A\x1b(QE \x1b(BB.")
+        assert m.fix_marc8_diacritic_escapes(parsed) == []
+
+    def test_recovers_cedilla_under_basic_arabic_charset(self):
+        parsed = self._record("Franc\x1b(3L\x1b(Bois")
+        details = m.fix_marc8_diacritic_escapes(parsed)
+        assert len(details) == 1
+        assert parsed.fields[0].subfields == [("a", "Fran\xf0cois")]
+
+    def test_recovered_ansel_bytes_transcode_to_correct_utf8(self):
+        # End-to-end: the ANSEL bytes this function emits are exactly
+        # what transcode_marc8_to_utf8 (run right after it in the real
+        # pipeline) needs to produce the actual accented letter --
+        # confirming the fix isn't just escape-removal, it recovers
+        # the real character once the normal transcoding step runs.
+        parsed = self._record("Haure\x1bp+\x1bs\x1b(QB\x1b(Bau, B.")
+        m.fix_marc8_diacritic_escapes(parsed)
+        m.transcode_marc8_to_utf8(parsed)
+        assert parsed.fields[0].subfields == [("a", "Hauréau, B.")]
+
+    def test_leaves_unconfirmed_payload_untouched_for_human_review(self):
+        # Charset "S" (Basic Greek) isn't in _MARC8_DIACRITIC_PAYLOADS at
+        # all -- stays untouched here, still reaches
+        # find_suspect_marc8_escapes for a human to review.
+        raw = "Le\x1b(SA\x1b(Bonidas"
+        parsed = self._record(raw)
+        details = m.fix_marc8_diacritic_escapes(parsed)
+        assert details == []
+        assert parsed.fields[0].subfields == [("a", raw)]
+        findings = m.find_suspect_marc8_escapes(parsed)
+        assert len(findings) == 1
+
+    def test_fixed_escape_no_longer_flagged_by_suspect_marc8_escape(self):
+        parsed = self._record("Haure\x1bp+\x1bs\x1b(QB\x1b(Bau, B.")
+        m.fix_marc8_diacritic_escapes(parsed)
+        assert m.find_suspect_marc8_escapes(parsed) == []
+
+    def test_skipped_for_record_already_declaring_utf8(self):
+        leader = list(_SYNTHETIC_LEADER)
+        leader[9] = "a"  # already UTF-8
+        parsed = m.ParsedRecord(
+            leader="".join(leader), entries=[],
+            fields=[m.Field_("880", "10", [("a", "Haure\x1b(QB\x1b(Bau")])],
+        )
+        assert m.fix_marc8_diacritic_escapes(parsed) == []
+
+    def test_control_field_content(self):
+        parsed = self._record(
+            None, tag="500",
+            fields=[m.Field_("500", None, None, "note Haure\x1b(QB\x1b(Bau end")],
+        )
+        details = m.fix_marc8_diacritic_escapes(parsed)
+        assert len(details) == 1
+        assert parsed.fields[0].content == "note Haur\xe2eau end"
+
+    def test_recovers_breve_for_q_g_payload_in_ordinary_context(self):
+        # ("Q", "G") means breve -- confirmed against all 2,920
+        # occurrences in the full working/GTU_bibs.mrc: the
+        # overwhelming majority are Russian "-iĭ" name endings
+        # (Krachkovskii, Georgii) and Korean vowels (Sŏul, Yŏn), not
+        # the rare Arabic exception (see the next test).
+        parsed = self._record("Krachkovskii\x1bp+\x1bs\x1b(QG, \x1b(BI. I.")
+        details = m.fix_marc8_diacritic_escapes(parsed)
+        assert len(details) == 1
+        assert parsed.fields[0].subfields == [("a", "Krachkovski\xe6i, I. I.")]
+
+    def test_q_g_payload_left_unfixed_near_arabic_al_article(self):
+        # Checked against the full corpus: of 2,920 ("Q", "G")
+        # occurrences, only 8 are genuinely Arabic (needing macron, not
+        # breve) -- and every one of those 8 has the literal "al-"
+        # article within a few characters, which Korean/Russian words
+        # never do (real example: working/GTU_bibs.mrc, Ibn Gabirol
+        # record, "Yanbu" + this escape + more stray junk + ayn + " al-
+        # h..." = "Yanbū' al-Ḥayāh"). That's checked as a narrow
+        # exception rather than removing the whole payload from the
+        # table -- see _MARC8_AMBIGUOUS_NEAR_AL_PAYLOADS.
+        raw = "Yanbu\x1bp+\x1bs\x1b(QG\x1b(B\x1bp(\x1bs\xbb al-haya"
+        parsed = self._record(raw)
+        details = m.fix_marc8_diacritic_escapes(parsed)
+        # the ayn (standalone, unambiguous) still gets fixed; only the
+        # ambiguous Q/G escape right before it is left alone
+        assert len(details) == 1
+        assert parsed.fields[0].subfields == [
+            ("a", "Yanbu\x1bp+\x1bs\x1b(QG\x1b(B\xb0 al-haya")
+        ]
+
+    def test_recovers_bare_combining_dot_below(self):
+        # Real production example (record .b10001785, tag 600 $t):
+        # "al-h" + stray junk `\x1bp+\x1bs` + a bare, un-escaped byte
+        # (0xA3) standing in for ANSEL combining dot-below -- no
+        # recognized \\x1b(..)\\x1b(B switch at all, unlike the main
+        # diacritic-escape case. "h" survives; only the dot-below mark
+        # was lost.
+        parsed = self._record("al-h\x1bp+\x1bs\xa3ujjah")
+        details = m.fix_marc8_diacritic_escapes(parsed)
+        assert len(details) == 1
+        assert parsed.fields[0].subfields == [("a", "al-\xf2hujjah")]
+
+    def test_recovers_bare_standalone_hamza_and_ayn(self):
+        # Real production example (record .b10001463, tag 500): hamza
+        # (hamza modifier-apostrophe) after "Ihya", ayn (modifier
+        # turned-comma) before "ulum" -- both standalone letters, not
+        # combining marks, so they don't move relative to their
+        # neighbors the way the dot-below case does.
+        parsed = self._record("Ihya\x1bp+\x1bs\xbc al-\x1bp(\x1bs\xbbulum")
+        details = m.fix_marc8_diacritic_escapes(parsed)
+        assert len(details) == 1
+        assert parsed.fields[0].subfields == [("a", "Ihya\xae al-\xb0ulum")]
+
+    def test_recovers_bare_combining_cedilla(self):
+        # Real production example (working/GTU_bibs.mrc, 6,182
+        # occurrences): "franc" + stray junk + bare byte 0xA7 + "ais"
+        # -> "français". 0xA7 is itself a valid, unrelated ANSEL byte
+        # (U+02B9 MODIFIER LETTER PRIME) when not preceded by the junk
+        # signal -- see _MARC8_BARE_STANDALONE_BYTES's own 0xB9 entry
+        # for the mark it actually represents standalone.
+        parsed = self._record("franc\x1bp+\x1bs\xa7ais")
+        details = m.fix_marc8_diacritic_escapes(parsed)
+        assert len(details) == 1
+        assert parsed.fields[0].subfields == [("a", "fran\xf0cais")]
+
+    def test_recovers_bare_standalone_prime_soft_sign(self):
+        # Real production example (working/GTU_bibs.mrc, 2,948
+        # occurrences): Russian "soft sign" romanizations, e.g.
+        # "Il" + stray junk + bare byte 0xB9 + "ich" -> "Il'ich".
+        parsed = self._record("Il\x1bp(\x1bs\xb9ich")
+        details = m.fix_marc8_diacritic_escapes(parsed)
+        assert len(details) == 1
+        assert parsed.fields[0].subfields == [("a", "Il\xa7ich")]
+
+    def test_bare_combining_cedilla_transcodes_to_correct_utf8(self):
+        parsed = self._record("franc\x1bp+\x1bs\xa7ais")
+        m.fix_marc8_diacritic_escapes(parsed)
+        m.transcode_marc8_to_utf8(parsed)
+        assert parsed.fields[0].subfields == [("a", "français")]
+
+    def test_bare_standalone_prime_transcodes_to_correct_utf8(self):
+        parsed = self._record("Il\x1bp(\x1bs\xb9ich")
+        m.fix_marc8_diacritic_escapes(parsed)
+        m.transcode_marc8_to_utf8(parsed)
+        assert parsed.fields[0].subfields == [("a", "Ilʹich")]
+
+    def test_recovers_bare_combining_ogonek_restricted_to_a_e_u(self):
+        # Real production examples (working/GTU_bibs.mrc): 0xA8 is
+        # overloaded -- confirmed by volume as ogonek only after a/e
+        # (Polish, 64+173 of 324 occurrences) or u (Lithuanian, 11 of
+        # 324) -- see _MARC8_BARE_COMBINING_RESTRICTED_BEFORE's own
+        # comment for the full breakdown and the other before-letters
+        # (c/o/s/etc.) that need a *different* mark and must NOT fire.
+        parsed = self._record("Ksia\x1bp+\x1bs\xa8zka")
+        details = m.fix_marc8_diacritic_escapes(parsed)
+        assert len(details) == 1
+        assert parsed.fields[0].subfields == [("a", "Ksi\xf1azka")]
+
+        parsed = self._record("We\x1bp+\x1bs\xa8gierski")
+        details = m.fix_marc8_diacritic_escapes(parsed)
+        assert len(details) == 1
+        assert parsed.fields[0].subfields == [("a", "W\xf1egierski")]
+
+        parsed = self._record("Kataliku\x1bp+\x1bs\xa8 baznyczios")
+        details = m.fix_marc8_diacritic_escapes(parsed)
+        assert len(details) == 1
+        assert parsed.fields[0].subfields == [("a", "Katalik\xf1u baznyczios")]
+
+    def test_bare_combining_ogonek_restriction_skips_other_before_letters(self):
+        # Same byte (0xA8), but after "c" the real correction is a
+        # cedilla, not ogonek (e.g. "Franc<junk>ais" -> "français",
+        # already covered by 0xA7) -- must stay unfixed here rather
+        # than guess wrong.
+        raw = "Franc\x1bp+\x1bs\xa8ais"
+        parsed = self._record(raw)
+        assert m.fix_marc8_diacritic_escapes(parsed) == []
+        assert parsed.fields[0].subfields == [("a", raw)]
+
+    def test_bare_combining_ogonek_transcodes_to_correct_utf8(self):
+        parsed = self._record("We\x1bp+\x1bs\xa8gierski")
+        m.fix_marc8_diacritic_escapes(parsed)
+        m.transcode_marc8_to_utf8(parsed)
+        assert parsed.fields[0].subfields == [("a", "Węgierski")]
+
+    def test_recovers_bare_combining_dot_below_second_byte_restricted_to_h(self):
+        # Real production examples (working/GTU_bibs.mrc): 0xAE is a
+        # second corrupted-byte representation of the same dot-below
+        # mark 0xA3 already handles, but confirmed by volume only after
+        # "h" (109 of 135 occurrences -- Near Eastern/biblical names
+        # like "Hammurabi", "Yarih"); other before-letters are a
+        # scatter of unconfirmed words and must not fire.
+        parsed = self._record("H\x1bp+\x1bs\xaeammurabi")
+        details = m.fix_marc8_diacritic_escapes(parsed)
+        assert len(details) == 1
+        assert parsed.fields[0].subfields == [("a", "\xf2Hammurabi")]
+
+    def test_bare_combining_dot_below_second_byte_restriction_skips_other_before_letters(self):
+        raw = "Ha\x1bp+\x1bs\xaettusa"
+        parsed = self._record(raw)
+        assert m.fix_marc8_diacritic_escapes(parsed) == []
+        assert parsed.fields[0].subfields == [("a", raw)]
+
+    def test_bare_combining_dot_below_second_byte_transcodes_to_correct_utf8(self):
+        parsed = self._record("H\x1bp+\x1bs\xaeammurabi")
+        m.fix_marc8_diacritic_escapes(parsed)
+        m.transcode_marc8_to_utf8(parsed)
+        assert parsed.fields[0].subfields == [("a", "Ḥammurabi")]
+
+    def test_recovers_bare_combining_dot_below_third_byte_restricted_to_r(self):
+        # Real production examples (working/GTU_bibs.mrc): 0xA5 is a
+        # third corrupted-byte representation of the same dot-below
+        # mark, confirmed by volume only after "r" (251 of 318
+        # occurrences -- Sanskrit IAST vocalic r, e.g. "Rgveda" ->
+        # "Rgveda" with dot-below r, a textbook-unambiguous word).
+        parsed = self._record("R\x1bp+\x1bs\xa5gveda")
+        details = m.fix_marc8_diacritic_escapes(parsed)
+        assert len(details) == 1
+        assert parsed.fields[0].subfields == [("a", "\xf2Rgveda")]
+
+    def test_bare_combining_dot_below_third_byte_restriction_skips_other_before_letters(self):
+        raw = "veltim\x1bp+\x1bs\xa5en"
+        parsed = self._record(raw)
+        assert m.fix_marc8_diacritic_escapes(parsed) == []
+        assert parsed.fields[0].subfields == [("a", raw)]
+
+    def test_bare_combining_dot_below_third_byte_transcodes_to_correct_utf8(self):
+        parsed = self._record("R\x1bp+\x1bs\xa5gveda")
+        m.fix_marc8_diacritic_escapes(parsed)
+        m.transcode_marc8_to_utf8(parsed)
+        assert parsed.fields[0].subfields == [("a", "Ṛgveda")]
+
+    def test_recovers_bare_combining_diaeresis_restricted_to_u(self):
+        # Real production examples (working/GTU_bibs.mrc): 0xA4 is
+        # overloaded -- confirmed by volume as diaeresis only after
+        # "u" (10 of 93 occurrences -- German u-umlaut, e.g.
+        # "Ubersetzung" -> "Ubersetzung" with u-diaeresis). Every other
+        # before-letter in the full occurrence list needs an ACUTE
+        # accent instead (Spanish/Hungarian/Icelandic names), which
+        # isn't in this table at all -- must not fire there.
+        parsed = self._record("U\x1bp+\x1bs\xa4bersetzung")
+        details = m.fix_marc8_diacritic_escapes(parsed)
+        assert len(details) == 1
+        assert parsed.fields[0].subfields == [("a", "\xe8Ubersetzung")]
+
+    def test_bare_combining_diaeresis_restriction_skips_other_before_letters(self):
+        raw = "Calder\x1bp+\x1bs\xa4n"
+        parsed = self._record(raw)
+        assert m.fix_marc8_diacritic_escapes(parsed) == []
+        assert parsed.fields[0].subfields == [("a", raw)]
+
+    def test_bare_combining_diaeresis_transcodes_to_correct_utf8(self):
+        parsed = self._record("U\x1bp+\x1bs\xa4bersetzung")
+        m.fix_marc8_diacritic_escapes(parsed)
+        m.transcode_marc8_to_utf8(parsed)
+        assert parsed.fields[0].subfields == [("a", "Übersetzung")]
+
+    def test_recovers_escape_diacritic_immediately_followed_by_bare_byte(self):
+        # Real production example (record .b10001463, tag 500):
+        # "Ihya" + macron escape + more stray junk leading straight
+        # into a bare hamza byte, with no plain letter in between the
+        # escape and the hamza. Regression test for a bug found while
+        # building this: the escape-diacritic regex's "after" group
+        # originally required a plain [A-Za-z] letter, silently
+        # failing to match (and dropping the macron) whenever a second
+        # corruption like this sat directly against it.
+        parsed = self._record("Ih\x1bp+\x1bs\xa3ya\x1bp+\x1bs\x1b(QE\x1b(B\x1bp(\x1bs\xbc")
+        details = m.fix_marc8_diacritic_escapes(parsed)
+        assert len(details) == 1
+        assert parsed.fields[0].subfields == [("a", "I\xf2hy\xe5a\xae")]
+
+    def test_bare_byte_fix_does_not_touch_genuine_unescaped_ansel_byte(self):
+        # 0xA3/0xBC/0xBB/0xA7/0xB9 are themselves valid (if unrelated)
+        # ANSEL bytes -- must only be touched when the distinctive
+        # ESC-byte junk run precedes them (the actual corruption
+        # signal), never on their own, or genuine unrelated content
+        # would be corrupted.
+        for raw in ("plain\xa3text", "plain\xa7text", "plain\xb9text"):
+            parsed = self._record(raw)
+            assert m.fix_marc8_diacritic_escapes(parsed) == []
+            assert parsed.fields[0].subfields == [("a", raw)]
+
+    def test_bare_combining_recovered_bytes_transcode_to_correct_utf8(self):
+        parsed = self._record("al-h\x1bp+\x1bs\xa3ujjah")
+        m.fix_marc8_diacritic_escapes(parsed)
+        m.transcode_marc8_to_utf8(parsed)
+        assert parsed.fields[0].subfields == [("a", "al-ḥujjah")]
+
+    def test_bare_standalone_recovered_bytes_transcode_to_correct_utf8(self):
+        parsed = self._record("Ihya\x1bp+\x1bs\xbc al-\x1bp(\x1bs\xbbulum")
+        m.fix_marc8_diacritic_escapes(parsed)
+        m.transcode_marc8_to_utf8(parsed)
+        assert parsed.fields[0].subfields == [("a", "Ihyaʼ al-ʻulum")]
+
+    def test_recovers_punctuation_trapped_inside_escape_close(self):
+        # Real production example (working/GTU_bibs.mrc): the closing
+        # \x1b(B and the plain ASCII space that should follow it got
+        # swapped, trapping the space *inside* the escape --
+        # "Facolta" + grave + " " (trapped) + close + "di lettere"
+        # should read "Facoltà di lettere" (a common Italian phrase).
+        # ~81,000 occurrences of this shape exist in the full corpus.
+        parsed = self._record("la Facolta\x1bp+\x1bs\x1b(QA \x1b(Bdi lettere")
+        details = m.fix_marc8_diacritic_escapes(parsed)
+        assert len(details) == 1
+        assert parsed.fields[0].subfields == [("a", "la Facolt\xe1a di lettere")]
+
+    def test_trapped_punctuation_case_transcodes_to_correct_utf8(self):
+        parsed = self._record("la Facolta\x1bp+\x1bs\x1b(QA \x1b(Bdi lettere")
+        m.fix_marc8_diacritic_escapes(parsed)
+        m.transcode_marc8_to_utf8(parsed)
+        assert parsed.fields[0].subfields == [("a", "la Facoltà di lettere")]
+
+    def test_trapped_punctuation_run_can_be_several_characters(self):
+        # Two escapes back to back, the second with a 2-char trapped
+        # run (comma + space) instead of just one -- confirms the
+        # capture isn't limited to a single trapped character.
+        parsed = self._record(
+            "The\x1bp+\x1bs\x1b(QB\x1b(Bre\x1bp+\x1bs\x1b(QA, \x1b(Bthe little"
+        )
+        details = m.fix_marc8_diacritic_escapes(parsed)
+        assert len(details) == 1
+        assert parsed.fields[0].subfields == [("a", "Th\xe2er\xe1e, the little")]
+
+    def test_does_not_treat_high_bit_byte_after_payload_as_trapped_punctuation(self):
+        # The trapped-punctuation capture is restricted to the plain
+        # ASCII range (0x20-0x7E) specifically so it can never scoop up
+        # a high-bit byte that might be genuine multi-character
+        # foreign-script content under the same charset switch -- stays
+        # unfixed/for human review rather than guessing.
+        raw = "Haure\x1bp+\x1bs\x1b(QB\xa0\x1b(Bau"
+        parsed = self._record(raw)
+        assert m.fix_marc8_diacritic_escapes(parsed) == []
+        assert parsed.fields[0].subfields == [("a", raw)]
+
+
 class TestFindSuspectMarc8Escapes:
     def _record(self, raw_a, tag="880", fields=None):
         leader = list(_SYNTHETIC_LEADER)
@@ -515,7 +933,10 @@ class TestFindSuspectMarc8Escapes:
         parsed = self._record(
             "x",
             fields=[
-                m.Field_("100", "1 ", [("a", "Haure\x1b(QB\x1b(Bau, B."), ("q", "Barthe\x1b(QB\x1b(Blemy)")]),
+                m.Field_(
+                    "100", "1 ",
+                    [("a", "Haure\x1b(QB\x1b(Bau, B."), ("q", "Barthe\x1b(QB\x1b(Blemy)")],
+                ),
             ],
         )
         findings = m.find_suspect_marc8_escapes(parsed)
