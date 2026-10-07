@@ -1,6 +1,119 @@
 # Handoff Notes
 
-## IN PROGRESS: `fix_marc8_diacritic_escapes` -- branch `marc8-diacritic-fix`, 4 commits pushed-nowhere
+## IN PROGRESS (resume here): WTS "Signatures:" false-positive -- branch `marc8-diacritic-fix`, 13 commits pushed-nowhere
+
+Active investigation, session cleared mid-task at the user's request.
+**Start here, not at the entry below** (that one is the larger,
+already-mostly-done `fix_marc8_diacritic_escapes` project this bug was
+found inside of while re-validating it against a second corpus).
+
+### What's confirmed and already fixed
+
+Running `fix_marc8_diacritic_escapes` against
+`working/WTS_bibs_2026-10-01.out` (a second corpus, different library,
+to sanity-check the work already done against `working/GTU_bibs.mrc`)
+turned up two distinct false-positive bugs:
+
+1. **Close-escape "B" mistaken for real text -- FIXED, commit
+   `46c08f4`.** When a close escape (`\x1b(B`) sat immediately next to
+   a different, confirmed-payload escape with no real letter between
+   them, the "before letter" capture matched the close escape's own
+   "B" byte as if it were text, splicing a real mark onto escape
+   machinery (confirmed on record `.b11749192`, an "Imperfect:" note
+   about damaged book signatures, nowhere near a diacritic). Fixed with
+   `_MARC8_NOT_ESCAPE_DESIGNATOR_LOOKBEHIND`, a negative lookbehind for
+   `\x1b\(` applied to both regexes that capture a before-letter. 3
+   regression tests added. Confirmed fix doesn't regress GTU (counts
+   unchanged) or WTS (the 2 affected records now correctly fall back to
+   `suspect_marc8_escape`).
+
+### What's still open -- the actual thing to resume
+
+2. **"Signatures:" collation-statement false positive -- NOT fixed,
+   no code changed yet.** Early-printed-book cataloging convention
+   (ESTC-style): a `500 $a` note like `"Signatures: A-C⁴ D²."` records
+   the book's gathering/leaf-count structure. In WTS's corrupted data,
+   this reads `"Signatures: A-C\x1b(QE \x1b(BD\x1b(QC.\x1b(B"` -- the
+   escape mechanism meant for lost ANSEL diacritics is apparently being
+   reused by whatever corrupted this corpus for a lost *superscript
+   leaf-count digit*, and the fixer currently can't tell the difference:
+   it inserts a bogus macron on "C", producing
+   `"Signatures: A-\xe5C D\x1b(QC.\x1b(B"` (wrong on every level --
+   nothing here needed a diacritic).
+
+   Scope in WTS: **12 of 15** `fixed_marc8_diacritic` hits are this
+   false positive (confirmed via `working/wts_signatures_scope.py`,
+   still on disk, gitignored). The other 3 are legitimate (or, in one
+   case, an artifact of my own throwaway test script's handling of a
+   record with 8 repeated-code `880 $t` subfields in one field --
+   didn't actually verify that one is correct, worth a second look).
+
+   **Four heuristics tried and rejected** (each verified empirically
+   against the FULL `working/GTU_bibs.mrc` corpus before being
+   rejected -- don't re-try any of these without new evidence):
+   - Restrict the escape regex's captured "after" letter to lowercase
+     only -- rejected, breaks **19,707** legitimate GTU fixes (e.g.
+     "Vosté, Jacques-M.", "Université Saint-Joseph", "post mortem.
+     Aphorismi" -- genuine diacritic words are routinely followed by a
+     capitalized next word/sentence).
+   - Require the "before" letter to be an isolated single-character
+     token (preceded by a non-letter) AND the "after" letter
+     uppercase -- rejected, breaks **2,941** legitimate GTU fixes, all
+     the single-letter French word "à" (grave accent) immediately
+     followed by a capitalized proper noun ("à Kempis", "à Descartes",
+     "à Paris") -- syntactically *identical* shape to the false
+     positive, genuinely ambiguous without more context.
+   - Same as above but also require the "before" letter itself be
+     uppercase -- rejected, breaks **293** legitimate GTU fixes, mostly
+     French/Czech capitalized initials with an accent immediately
+     followed by a capitalized surname ("É. Delaruelle", "Ú.CN").
+   - Skip the fix whenever the enclosing subfield text contains the
+     word "signature" anywhere (case-insensitive) -- rejected, too
+     broad: **25** legitimate GTU fixes sit in fields where "signature"
+     appears incidentally in ordinary running French/English prose
+     elsewhere in the same field, alongside real diacritic words.
+
+   **Not yet tried, the next thing to check:** restrict to fields whose
+   text *starts with* the label `"Signatures:"` or `"Signature:"`
+   (a note-type prefix, not just the word appearing anywhere) --
+   narrower than the rejected "contains signature" check above. Script
+   already written: `working/check_signature_label_fast.py` (does a
+   fast raw-latin1-decode regex scan, not the slow per-record
+   `iter_repair_stream` path the four rejected checks above used --
+   much faster, use this style for any further checks). **This script
+   was never actually run to completion** -- WSL itself became
+   unresponsive mid-session (even `echo` and `wsl.exe --shutdown` hung
+   across both the Bash tool and PowerShell) and had to be recovered
+   with a forced `wsl.exe --shutdown` from the Windows side before the
+   session was cleared. Re-run this script first, against both
+   `working/GTU_bibs.mrc` and `working/WTS_bibs_2026-10-01.out`, before
+   writing any fix code -- confirm it both (a) excludes all 8 WTS
+   confirmed-payload matches inside `Signatures:` fields and (b)
+   excludes zero of GTU's 310,034 confirmed matches.
+
+   If that holds: implement by checking
+   `text.lstrip().lower().startswith(("signatures:", "signature:"))`
+   near the top of `_fix_marc8_diacritics_in_text` (or wherever makes
+   sense once you're back in the code) and skipping the escape-payload
+   fix (and sanity-check whether the bare-byte path needs the same
+   guard -- all confirmed WTS false positives so far were escape-based,
+   not bare-byte, but verify rather than assume). Add regression tests,
+   re-run both corpora full-corpus, update
+   `docs/MARC8_DIACRITIC_HANDLING.md` and this file, commit.
+
+### After the Signatures: fix lands
+
+The user wants `marc_repair.py` run against a new, not-yet-tried
+corpus: `sample_files/nashvillestate_bibs_202693.mrc` (91MB, confirmed
+present on disk). Just run it (default settings, `--log-full
+fixed_marc8_diacritic,suspect_marc8_escape` to see the diacritic-work
+breakdown same as the GTU/WTS runs above) and report what comes up --
+no specific expectation set yet, this is a fresh corpus to sanity-check
+against, same spirit as the WTS re-validation that found the two bugs
+above. Note `sample_files/` is a different directory from `working/`
+(sibling, both directly under the project root) -- don't confuse them.
+
+## IN PROGRESS: `fix_marc8_diacritic_escapes` -- branch `marc8-diacritic-fix`, 13 commits pushed-nowhere
 
 Started as a prototype requested by the user after a long discussion
 (triggered by manually comparing `working/GTU_bibs.mrc` record
@@ -16,10 +129,11 @@ fresh session (after a context clear) can pick this up without
 re-deriving any of it.
 
 **Everything described in this entry is now committed** (`47919ac`,
-`1308d8f`, `d61cce0`, `0593bbe`, `92d8fdb`, `5cc917c` -- all on this
-branch, not on `main`, not pushed anywhere). All 407 tests pass (1
-skipped), flake8 clean on `marc_repair.py` (`--max-line-length=100`,
-per README.md).
+`1308d8f`, `d61cce0`, `0593bbe`, `92d8fdb`, `5cc917c`, plus later
+commits through `10a016c` -- see the IN PROGRESS entry above for the
+most recent work and what's still open -- all on this branch, not on
+`main`, not pushed anywhere). All 410 tests pass (1 skipped), flake8
+clean on `marc_repair.py` (`--max-line-length=100`, per README.md).
 
 ### Branch / commit state
 
