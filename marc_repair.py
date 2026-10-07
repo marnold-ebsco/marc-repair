@@ -2163,6 +2163,94 @@ class _Marc8MultibyteTruncated(Exception):
         self.byte_pos = byte_pos
 
 
+#: One escape-sequence byte run, recognized or not: either a
+#: `_MARC8_SCRIPT_ESCAPE`-shaped switch all the way through its own
+#: closing "\x1b(B" (first alternative -- payload bounded to 6 bytes,
+#: well above the longest real payload, 3 bytes for CJK/EACC), or (if
+#: that doesn't close within a few bytes) a bare `\x1b` plus up to 3
+#: more bytes, which is what real corrupted data's stray/unrecognized
+#: escape bytes look like (see docs/MARC8_ESCAPE_ANALYSIS.md and
+#: `_marc8_escape_run_clusters`'s docstring below). Purely cosmetic/
+#: clustering use -- never used to decide whether something IS a
+#: defect, only to find the full extent of escape noise around one
+#: already-validated via `_MARC8_SCRIPT_ESCAPE` below.
+_MARC8_ANY_ESCAPE_RUN_RE = re.compile(r"\x1b(?:[^\x1b]{1,6}?\x1b\(B|[^\x1b]{0,3})")
+_REPEATED_MASK_RE = re.compile(r"(?:\[\?\])+")
+
+
+def _marc8_escape_run_clusters(text: str) -> list[tuple[int, int]]:
+    """Every escape-sequence byte run in `text` -- recognized MARC-8
+    script switches and any other `\x1b`-led bytes that don't parse as
+    one -- as (start, end) spans, with any immediately-adjacent runs
+    merged into one. Real corrupted data mixes stray unrecognized
+    escape bytes directly against the one genuine script-switching
+    escape (confirmed on real production data -- see
+    docs/MARC8_ESCAPE_ANALYSIS.md and HANDOFF.md): e.g. "Haure" +
+    `\x1bp+` + `\x1bs` (unrecognized) + `\x1b(QB\x1b(B` (the real,
+    recognized Extended-Cyrillic escape) + "au". Treating the whole
+    run as one cluster is what lets `find_suspect_marc8_escapes` find
+    the real surrounding word ("Haure"/"au") instead of stopping at a
+    stray escape byte that happens to look like an ASCII letter
+    ("s", from `\x1bs`)."""
+    spans = [m.span() for m in _MARC8_ANY_ESCAPE_RUN_RE.finditer(text)]
+    clusters: list[tuple[int, int]] = []
+    for start, end in spans:
+        if clusters and clusters[-1][1] == start:
+            clusters[-1] = (clusters[-1][0], end)
+        else:
+            clusters.append((start, end))
+    return clusters
+
+
+def _cluster_containing(clusters: list[tuple[int, int]], pos: int) -> tuple[int, int]:
+    for start, end in clusters:
+        if start <= pos < end:
+            return start, end
+    return pos, pos  # pos is always inside some escape run in practice
+
+
+def _mask_marc8_escapes(s: str) -> str:
+    """Replace every escape-sequence byte run in `s` with a single
+    "[?]" marker, collapsing adjacent runs into one -- for a
+    human-readable log context window. Used on the text surrounding an
+    already-validated finding, so it may also mask *other* escapes
+    nearby (a neighboring defect, or genuine multi-character foreign
+    content) -- that's intentional: raw `\x1b`/high-bit bytes are
+    unreadable in a log line regardless of what they decode to, and
+    masking them doesn't create a new finding for them."""
+    return _REPEATED_MASK_RE.sub("[?]", _MARC8_ANY_ESCAPE_RUN_RE.sub("[?]", s))
+
+
+def _record_lccn(parsed: ParsedRecord) -> str | None:
+    """Field 010 $a (LCCN), stripped -- or None. Surfaced on
+    `suspect_marc8_escape` findings so a cataloger (or a future
+    external-authority lookup -- see HANDOFF.md) has an identifier to
+    check the record's real text against, without a separate lookup."""
+    field = next((f for f in parsed.fields if f.tag == "010"), None)
+    if field is None:
+        return None
+    value = next((d for c, d in field.subfields if c == "a"), None)
+    return value.strip() if value else None
+
+
+_OCLC_PREFIX_RE = re.compile(r"\(OCoLC\)\s*")
+
+
+def _record_oclc(parsed: ParsedRecord) -> str | None:
+    """Field 035 $a's OCLC number (the "(OCoLC)1234" form), prefix
+    stripped -- or None. See `_record_lccn`."""
+    for f in parsed.fields:
+        if f.tag != "035":
+            continue
+        for code, data in f.subfields:
+            if code != "a":
+                continue
+            m = _OCLC_PREFIX_RE.match(data)
+            if m:
+                return data[m.end():].strip()
+    return None
+
+
 def find_suspect_marc8_escapes(
     parsed: ParsedRecord,
     corpus_index: "_Marc8CorpusIndex | None" = None,
@@ -2184,26 +2272,42 @@ def find_suspect_marc8_escapes(
     there's no safe way to guess what the original character should
     have been; category "suspect_marc8_escape" is for a human to
     review and correct the source cataloging record. Each finding
-    includes a "suggested fix" -- a hypothesis, not a correction:
-    "...'s" at a word boundary reads as a miskeyed apostrophe (e.g.
-    "who's"); anything else is framed as a likely lost accented letter
-    in the surrounding word (e.g. "Schrodinger", "Leonidas"), with a
-    prompt to verify against another edition or an authority record
-    rather than an invented replacement -- unless `corpus_index` (see
+    includes a suggestion -- a hypothesis, not a correction: "...'s"
+    at a word boundary reads as a miskeyed apostrophe (e.g. "who's");
+    anything else is framed as a likely lost accented letter in the
+    surrounding word (e.g. "Schrodinger", "Leonidas"), with a prompt
+    to verify against another edition or an authority record rather
+    than an invented replacement -- unless `corpus_index` (see
     `build_marc8_corpus_index`) resolves the surrounding fragment to
     exactly one word already spelled correctly elsewhere in this same
     file, in which case the suggestion names that word specifically.
+
+    Measured against a real 404,957-record file: same-file corpus
+    matching only resolves ~2% of findings this way (see HANDOFF.md);
+    the rest need an external authority source this tool doesn't
+    attempt to reach, so `_record_lccn`/`_record_oclc` surface
+    whatever identifier the record already carries instead.
+
+    All findings for one record are merged into a single (category,
+    detail) entry, not one per occurrence: the same broken word often
+    repeats verbatim across more than one field in the same record
+    (e.g. a name in both 100 and 245, or a series title duplicated in
+    245 and 830) -- these collapse onto one line listing every tag it
+    appears in, rather than repeating the full line per tag. When
+    every distinct defect in the record carries the same suggestion,
+    that suggestion (and the record's LCCN/OCLC) is stated once as a
+    header rather than repeated per defect line.
     """
-    findings: list[tuple[str, str]] = []
     if parsed.leader[9:10] == UNICODE_ENCODING_BYTE:
-        return findings  # already UTF-8 -- no raw MARC-8 escapes to find
-    _CONTEXT_CHARS = 10
+        return []  # already UTF-8 -- no raw MARC-8 escapes to find
+    _CONTEXT_CHARS = 25
+    occurrences: list[tuple[str, str, str]] = []  # (window, suggestion, tag)
     for f in parsed.fields:
         texts = [f.content] if f.is_control() else [d for _, d in f.subfields]
         for text in texts:
             if not text or "\x1b" not in text:
                 continue
-            occurrences: list[tuple[str, str, str, str, str]] = []
+            clusters = _marc8_escape_run_clusters(text)
             for match in _MARC8_SCRIPT_ESCAPE.finditer(text):
                 bytes_per_char, charset_name = _MARC8_SCRIPT_CHARSETS[match.group(2)]
                 span_start = match.end()
@@ -2218,74 +2322,121 @@ def find_suspect_marc8_escapes(
                 # guess at where the closing escape actually ends
                 if text[close:close + 3] != "\x1b(B":
                     continue
-                before = text[match.start() - 1:match.start()]
-                after = text[close + 3:close + 4]
-                if before.isalpha() and before.isascii() and after.isalpha() and after.isascii():
-                    word_before_match = re.search(r"[A-Za-z]+$", text[:match.start()])
-                    word_after_match = re.match(r"[A-Za-z]+", text[close + 3:])
-                    word_before = word_before_match.group() if word_before_match else before
-                    word_after = word_after_match.group() if word_after_match else after
-                    next_char = text[close + 3 + len(word_after):close + 4 + len(word_after)]
-                    # "...s" ending a word, itself at a word boundary
-                    # (not followed by another letter) reads as a
-                    # contraction/possessive far more often than an
-                    # accented letter would -- e.g. "who's", "it's".
-                    # Anything else is more likely an accented vowel
-                    # lost from a proper noun (Schrodinger, Leonidas).
-                    resolved_word = None
-                    if word_after == "s" and not next_char.isalpha():
+                region_start, region_end = _cluster_containing(clusters, match.start())
+                before = text[region_start - 1:region_start]
+                after = text[region_end:region_end + 1]
+                if not (
+                    before.isalpha() and before.isascii()
+                    and after.isalpha() and after.isascii()
+                ):
+                    continue
+                word_before_match = re.search(r"[A-Za-z]+$", text[:region_start])
+                word_after_match = re.match(r"[A-Za-z]+", text[region_end:])
+                word_before = word_before_match.group() if word_before_match else before
+                word_after = word_after_match.group() if word_after_match else after
+                next_char = text[region_end + len(word_after):region_end + len(word_after) + 1]
+                # "...s" ending a word, itself at a word boundary (not
+                # followed by another letter) reads as a contraction/
+                # possessive far more often than an accented letter
+                # would -- e.g. "who's", "it's". Anything else is more
+                # likely an accented vowel lost from a proper noun
+                # (Schrodinger, Leonidas).
+                resolved_word = None
+                if word_after == "s" and not next_char.isalpha():
+                    suggestion = (
+                        f"likely a miskeyed apostrophe, probably "
+                        f"\"{word_before}'s\""
+                    )
+                else:
+                    if corpus_index is not None:
+                        resolved_word = lookup_marc8_corpus_word(
+                            corpus_index, charset_name, word_before, word_after,
+                        )
+                    if resolved_word is not None:
                         suggestion = (
-                            f"suggested fix: likely a miskeyed apostrophe -- "
-                            f"probably \"{word_before}'s\""
+                            f"likely {resolved_word!r} (found spelled "
+                            "correctly elsewhere in this file)"
+                        )
+                    elif charset_name == "CJK/EACC":
+                        suggestion = (
+                            "likely an accented letter and the letter "
+                            "right after it (e.g. ö, é, ñ, ü); verify "
+                            "against another source"
                         )
                     else:
-                        if corpus_index is not None:
-                            resolved_word = lookup_marc8_corpus_word(
-                                corpus_index, charset_name, word_before, word_after,
-                            )
-                        if resolved_word is not None:
-                            suggestion = (
-                                f"suggested fix: likely {resolved_word!r} -- "
-                                "found spelled correctly elsewhere in this file"
-                            )
-                        elif charset_name == "CJK/EACC":
-                            suggestion = (
-                                "suggested fix: likely an accented letter and "
-                                "the letter right after it (e.g. ö, é, ñ, ü) "
-                                f"in \"{word_before}[?]{word_after}\" -- verify "
-                                "against another source"
-                            )
-                        else:
-                            suggestion = (
-                                "suggested fix: likely a miskeyed accented letter "
-                                "(e.g. ö, é, ñ, ü) in "
-                                f"\"{word_before}[?]{word_after}\" -- verify "
-                                "against another source"
-                            )
-                    problem_start = match.start() - 1
-                    problem_end = close + 4
-                    window_start = max(0, problem_start - _CONTEXT_CHARS)
-                    window_end = min(len(text), problem_end + _CONTEXT_CHARS)
-                    # replace the raw escape bytes with a short readable
-                    # marker -- repr()'ing them as-is (\x1b, high-bit
-                    # charset bytes) is unreadable in the log
-                    window = (
-                        text[window_start:match.start()]
-                        + "<escape>"
-                        + text[close + 3:window_end]
-                    )
-                    occurrences.append((window, charset_name, before, after, suggestion))
-            if not occurrences:
-                continue
-            for window, charset_name, before, after, suggestion in occurrences:
-                findings.append((
-                    "suspect_marc8_escape",
-                    f"tag {f.tag}: single {charset_name} character embedded "
-                    f"mid-word ({before!r}<escape>{after!r}) -- likely a "
-                    f"miskeyed diacritic; {suggestion}; "
-                    f"context: {window!r}",
-                ))
-    return findings
+                        suggestion = (
+                            "likely a miskeyed accented letter (e.g. ö, "
+                            "é, ñ, ü); verify against another source"
+                        )
+                window_start = max(0, region_start - _CONTEXT_CHARS)
+                window_end = min(len(text), region_end + _CONTEXT_CHARS)
+                # a fixed-width window can cut a *neighboring* escape
+                # run in half, leaving a leading-\x1b-less fragment
+                # that _mask_marc8_escapes can no longer recognize as
+                # noise -- snap each boundary out to that cluster's
+                # own edge so it's always included whole (and masked
+                # whole) rather than left as a raw partial leftover.
+                cluster_start, _ = _cluster_containing(clusters, window_start)
+                window_start = min(window_start, cluster_start)
+                if window_end > 0:
+                    _, cluster_end = _cluster_containing(clusters, window_end - 1)
+                    window_end = max(window_end, cluster_end)
+                window = (
+                    _mask_marc8_escapes(text[window_start:region_start])
+                    + "[?]"
+                    + _mask_marc8_escapes(text[region_end:window_end])
+                )
+                occurrences.append((window, suggestion, f.tag))
+    if not occurrences:
+        return []
+
+    merged: dict[tuple[str, str], list[str]] = {}
+    order: list[tuple[str, str]] = []
+    for window, suggestion, tag in occurrences:
+        key = (window, suggestion)
+        if key not in merged:
+            merged[key] = []
+            order.append(key)
+        if tag not in merged[key]:
+            merged[key].append(tag)
+
+    identifier_parts = []
+    lccn = _record_lccn(parsed)
+    if lccn:
+        identifier_parts.append(f"LCCN: {lccn}")
+    oclc = _record_oclc(parsed)
+    if oclc:
+        identifier_parts.append(f"OCLC: {oclc}")
+    identifiers = ". ".join(identifier_parts)
+
+    defect_lines = []
+    for window, suggestion in order:
+        tags = merged[(window, suggestion)]
+        tag_word = "tags" if len(tags) > 1 else "tag"
+        defect_lines.append((f"{tag_word} {', '.join(tags)}: {window!r}", suggestion))
+
+    if len(defect_lines) == 1:
+        body, suggestion = defect_lines[0]
+        detail = f"{body} -- {suggestion}"
+        if identifiers:
+            detail += f". {identifiers}"
+    else:
+        distinct_suggestions = {s for _, s in defect_lines}
+        lines: list[str] = []
+        if len(distinct_suggestions) == 1:
+            header = next(iter(distinct_suggestions))
+            if identifiers:
+                header += f". {identifiers}"
+            lines.append(header)
+            lines.extend(f"\t{body}" for body, _ in defect_lines)
+        else:
+            if identifiers:
+                lines.append(identifiers)
+            for body, suggestion in defect_lines:
+                line = f"{body} -- {suggestion}"
+                lines.append(line if not lines else f"\t{line}")
+        detail = "\n".join(lines)
+    return [("suspect_marc8_escape", detail)]
 
 
 #: (ascii_before, ascii_after) -> set of resolved words, where

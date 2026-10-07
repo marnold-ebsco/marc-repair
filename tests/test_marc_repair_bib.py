@@ -380,13 +380,13 @@ class TestParseDirectoryTerminatorCoincidence:
 # ---------------------------------------------------------------------------
 
 class TestFindSuspectMarc8Escapes:
-    def _record(self, raw_a):
+    def _record(self, raw_a, tag="880", fields=None):
         leader = list(_SYNTHETIC_LEADER)
         leader[9] = " "  # declare MARC-8
         return m.ParsedRecord(
             leader="".join(leader),
             entries=[],
-            fields=[m.Field_("880", "10", [("a", raw_a)])],
+            fields=fields if fields is not None else [m.Field_(tag, "10", [("a", raw_a)])],
         )
 
     def test_flags_single_cjk_char_welded_to_ascii_letters(self):
@@ -397,11 +397,7 @@ class TestFindSuspectMarc8Escapes:
         assert len(findings) == 1
         category, detail = findings[0]
         assert category == "suspect_marc8_escape"
-        assert "CJK" in detail
-        assert (
-            "suggested fix: likely an accented letter and the letter "
-            "right after it" in detail
-        )
+        assert "likely an accented letter and the letter right after it" in detail
         assert "Schr[?]inger" in detail
 
     def test_flags_single_greek_char_welded_to_ascii_letters_single_byte_wording(self):
@@ -412,8 +408,7 @@ class TestFindSuspectMarc8Escapes:
         findings = m.find_suspect_marc8_escapes(parsed)
         assert len(findings) == 1
         detail = findings[0][1]
-        assert "Greek" in detail
-        assert "suggested fix: likely a miskeyed accented letter" in detail
+        assert "likely a miskeyed accented letter" in detail
         assert "Le[?]onidas" in detail
 
     def test_flags_single_cyrillic_char_welded_to_ascii_letters(self):
@@ -423,8 +418,7 @@ class TestFindSuspectMarc8Escapes:
         findings = m.find_suspect_marc8_escapes(parsed)
         assert len(findings) == 1
         detail = findings[0][1]
-        assert "Cyrillic" in detail
-        assert "suggested fix: likely a miskeyed apostrophe" in detail
+        assert "likely a miskeyed apostrophe" in detail
         assert "who's" in detail
 
     def test_does_not_flag_genuine_multi_character_cjk(self):
@@ -439,6 +433,22 @@ class TestFindSuspectMarc8Escapes:
         parsed = self._record("see also \x1b(2k\x1b(B (in Hebrew)")
         assert m.find_suspect_marc8_escapes(parsed) == []
 
+    def test_ignores_unrecognized_escape_noise_adjacent_to_the_real_one(self):
+        # Real production example (GTU_bibs.mrc, .b10000094, tag 100):
+        # the field is "Haure" + an *unrecognized* stray escape
+        # ("\x1bp+\x1bs", intermediate bytes this tool doesn't parse)
+        # immediately followed by the real, recognized Extended-
+        # Cyrillic escape, then "au". Without absorbing that stray
+        # escape into the same noise region, word_before resolves to
+        # "s" (the stray escape's own trailing byte) instead of the
+        # real word "Haure".
+        parsed = self._record("Haure\x1bp+\x1bs\x1b(QB\x1b(Bau, B.")
+        findings = m.find_suspect_marc8_escapes(parsed)
+        assert len(findings) == 1
+        detail = findings[0][1]
+        assert "Haure[?]au, B." in detail
+        assert "'s[?]au'" not in detail
+
     def test_corpus_match_names_specific_word_for_cjk_finding(self):
         # "T" + <CJK escape> + "ingen" is missing the swallowed "ub" --
         # if the corpus index (built elsewhere in this same file) has
@@ -450,7 +460,7 @@ class TestFindSuspectMarc8Escapes:
         findings = m.find_suspect_marc8_escapes(parsed, corpus_index=corpus_index)
         assert len(findings) == 1
         detail = findings[0][1]
-        assert "suggested fix: likely 'Tübingen'" in detail
+        assert "likely 'Tübingen'" in detail
         assert "found spelled correctly elsewhere in this file" in detail
 
     def test_corpus_no_match_keeps_generic_hint(self):
@@ -460,10 +470,7 @@ class TestFindSuspectMarc8Escapes:
         parsed = self._record("T\x1b$1abc\x1b(Bingen")
         findings = m.find_suspect_marc8_escapes(parsed, corpus_index=corpus_index)
         detail = findings[0][1]
-        assert (
-            "suggested fix: likely an accented letter and the letter "
-            "right after it" in detail
-        )
+        assert "likely an accented letter and the letter right after it" in detail
         assert "found spelled correctly elsewhere" not in detail
 
     def test_corpus_ambiguous_match_keeps_generic_hint(self):
@@ -473,10 +480,7 @@ class TestFindSuspectMarc8Escapes:
         parsed = self._record("T\x1b$1abc\x1b(Bingen")
         findings = m.find_suspect_marc8_escapes(parsed, corpus_index=corpus_index)
         detail = findings[0][1]
-        assert (
-            "suggested fix: likely an accented letter and the letter "
-            "right after it" in detail
-        )
+        assert "likely an accented letter and the letter right after it" in detail
         assert "found spelled correctly elsewhere" not in detail
 
     def test_no_op_when_already_unicode(self):
@@ -486,6 +490,80 @@ class TestFindSuspectMarc8Escapes:
             fields=[m.Field_("880", "10", [("a", "Schr\x1b$1)36\x1b(Binger")])],
         )
         assert m.find_suspect_marc8_escapes(parsed) == []
+
+    def test_identical_defect_in_two_tags_merges_into_one_line(self):
+        # Real production pattern: a series title duplicated verbatim
+        # across 245 and 830 carries the same corruption in both --
+        # one merged line listing both tags, not two separate lines
+        # repeating the same context and suggestion.
+        raw = "Schr\x1b$1)36\x1b(Binger"
+        parsed = self._record(
+            raw,
+            fields=[m.Field_("245", "10", [("a", raw)]), m.Field_("830", "0 ", [("a", raw)])],
+        )
+        findings = m.find_suspect_marc8_escapes(parsed)
+        assert len(findings) == 1
+        detail = findings[0][1]
+        assert "tags 245, 830" in detail
+        assert detail.count("Schr[?]inger") == 1
+
+    def test_distinct_defects_in_same_record_share_hoisted_suggestion(self):
+        # Two different broken words in the same record, both hitting
+        # the same generic suggestion -- stated once as a header, not
+        # repeated on every defect line (real example: GTU_bibs.mrc,
+        # .b10000094, "Hauréau"/"Barthélemy" in the same 100 field).
+        parsed = self._record(
+            "x",
+            fields=[
+                m.Field_("100", "1 ", [("a", "Haure\x1b(QB\x1b(Bau, B."), ("q", "Barthe\x1b(QB\x1b(Blemy)")]),
+            ],
+        )
+        findings = m.find_suspect_marc8_escapes(parsed)
+        assert len(findings) == 1
+        detail = findings[0][1]
+        lines = detail.splitlines()
+        assert len(lines) == 3  # header + 2 defect lines
+        assert lines[0].startswith("likely a miskeyed accented letter")
+        assert detail.count("likely a miskeyed accented letter") == 1
+        assert "Haure[?]au, B." in detail
+        assert "Barthe[?]lemy)" in detail
+
+    def test_mixed_suggestions_in_same_record_stay_per_line(self):
+        # One defect resolves via the apostrophe heuristic, the other
+        # doesn't -- the messages differ, so each defect line keeps
+        # its own suggestion instead of hoisting either one.
+        parsed = self._record(
+            "x",
+            fields=[
+                m.Field_("100", "1 ", [("a", "Haure\x1b(QB\x1b(Bau, B.")]),
+                m.Field_("490", "0 ", [("a", "who\x1b(QS\x1b(Bs ever")]),
+            ],
+        )
+        findings = m.find_suspect_marc8_escapes(parsed)
+        assert len(findings) == 1
+        detail = findings[0][1]
+        assert "-- likely a miskeyed accented letter" in detail
+        assert "-- likely a miskeyed apostrophe" in detail
+
+    def test_appends_lccn_and_oclc_when_present(self):
+        parsed = self._record(
+            "x",
+            fields=[
+                m.Field_("010", "  ", [("a", "68121324")]),
+                m.Field_("035", "  ", [("a", "(OCoLC)4359914")]),
+                m.Field_("100", "1 ", [("a", "Haure\x1b(QB\x1b(Bau, B.")]),
+            ],
+        )
+        findings = m.find_suspect_marc8_escapes(parsed)
+        detail = findings[0][1]
+        assert "LCCN: 68121324" in detail
+        assert "OCLC: 4359914" in detail
+
+    def test_omits_identifiers_when_absent(self):
+        parsed = self._record("Haure\x1b(QB\x1b(Bau, B.", tag="100")
+        detail = m.find_suspect_marc8_escapes(parsed)[0][1]
+        assert "LCCN" not in detail
+        assert "OCLC" not in detail
 
 
 class TestMarc8CorpusIndex:
@@ -561,7 +639,7 @@ class TestMarc8CorpusLookupCli:
         ])
         assert rc == 0
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert "suggested fix: likely 'Tübingen'" in content
+        assert "likely 'Tübingen'" in content
         assert "found spelled correctly elsewhere in this file" in content
 
     def test_no_marc8_corpus_lookup_flag_keeps_generic_hint(self, tmp_path):
@@ -578,7 +656,7 @@ class TestMarc8CorpusLookupCli:
         content = _resolve_log(log).read_text(encoding="utf-8")
         assert "found spelled correctly elsewhere" not in content
         assert (
-            "suggested fix: likely an accented letter and the letter "
+            "likely an accented letter and the letter "
             "right after it" in content
         )
 
