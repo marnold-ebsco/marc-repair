@@ -93,12 +93,26 @@ confirmed is clean. Outside that context they're left alone for
 - `0xA5`: 251 of 318 occurrences (79%) are `r` + dot-below (Sanskrit IAST
   vocalic r -- "Ṛgveda", "Kṛṣṇa", both textbook-unambiguous). The rest are
   Greek/Tibetan/Arabic transliteration that don't share one mark.
-- `0xA8`: 248 of 324 occurrences (76%) are `a`/`e` + ogonek (Polish) or `u`
-  + ogonek (Lithuanian, e.g. "Katalikų"). The same byte also appears after
-  `c` (needs cedilla, not ogonek -- the same word `0xA7` already covers),
-  after `o` (needs a tilde two letters earlier in a Spanish name, not
-  ogonek on "o" at all), and after `s` (needs breve or dot-below depending
-  on the word).
+- `0xA8`: 248 of 260 occurrences (95% -- recounted after the close-escape
+  fix removed 64 stale false-positive matches from the original 324, same
+  stale-count effect as `0xA4`'s 93 -> 79) are `a`/`e` + ogonek (Polish) or
+  `u` + ogonek (Lithuanian, e.g. "Katalikų"). Re-investigated the remaining
+  12 the same way `0xA4`'s leftovers were, looking for a second confirmed
+  override like `z` turned out to be for `0xA4` -- none of the four
+  leftover groups qualify: 4 `c` occurrences need cedilla (e.g.
+  "Franc`<byte>`ais" -> "français"), but the unrestricted `0xA7` row
+  already produces that, so adding it under `0xA8` too would be redundant,
+  not new; 3 occurrences (`o`/`o`/`i`: "Muo`<byte>`z" -> "Muñoz",
+  "Qui`<byte>`ones" -> "Quiñones") are the destroyed-base-letter failure
+  mode already confirmed for `0xA4` (the missing "ñ" sits two letters
+  before the junk, not attachable to the letter immediately before it);
+  1 `o` occurrence ("nieuwe series o`<byte>`f" -> "...of Verhandelingen")
+  needs no diacritic at all; and the last 4 (`s`/`S`/`r`/`d`/`h`, one pair
+  of words) mix a singleton cedilla ("Karakas`<byte>`oglu" ->
+  "Karakaşoğlu"), a singleton dot below ("S`<byte>`uhbat" -> "Ṣuḥbat"),
+  and three occurrences in one title too garbled to confirm at all
+  ("Ar`<byte>`hd`<byte>`zerh`<byte>`n bar`<byte>`haran"). No override
+  added -- `0xA8` stays restricted to `a`/`e`/`u`.
 - `0xA4`: 10 of 79 occurrences (13%) are `u` + diaeresis (German
   "Übersetzung", "Beschlüsse", "Seegrün"); a further 21 (27%) are `z` + dot
   below (Persian/Arabic transliteration, e.g. "Riza" -> "Riẕa", "Murtaza"

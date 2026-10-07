@@ -63,6 +63,30 @@ and its two tests in `tests/test_marc_repair_bib.py`); docs
 wrong-mark case), and this counting-metric caveat for anyone re-verifying a
 similar override against a full-corpus run in the future.
 
+Re-ran the same disambiguation methodology against `0xA8` (one of the three
+bytes the HOWTO below flagged as not yet re-checked for a hidden second
+override). Built `working/0xA8_occurrences.tsv` and
+`working/GTU_bibs_0xA8_sample.mrc` via `working/find_0xa8_occurrences.py`
+(adapted from the `0xA4` script, still on disk, gitignored): 260 occurrences
+across 154 records in `working/GTU_bibs.mrc` (not 324 -- same stale-count
+effect the close-escape fix already explained for `0xA4`'s 93 -> 79). 248
+(95%) are the already-confirmed `a`/`e`/`u` + ogonek. **Unlike `0xA4`, the
+remaining 12 did NOT turn up a new confirmed override** -- they split
+across four small groups, none clean or large enough: 4 `c` occurrences
+need cedilla, but `0xA7` already produces that unrestricted, so adding it
+under `0xA8` would be redundant, not new; 3 (`o`/`o`/`i`: "Muñoz",
+"Quiñones") are the destroyed-base-letter failure mode (missing "ñ" two
+letters before the junk, not attachable to the letter immediately before
+it, same shape as ~48 of `0xA4`'s leftovers); 1 `o` occurrence needs no
+diacritic at all ("...series of Verhandelingen"); and the last 4
+(`s`/`S`/`r`/`d`/`h`) are a singleton cedilla, a singleton dot below, and
+three occurrences in one title too garbled to confirm. No code change --
+`0xA8` stays restricted to `a`/`e`/`u`, same as before this check.
+`marc_repair.py`'s `0xA8` comment block and
+`docs/MARC8_DIACRITIC_HANDLING.md`'s table updated with the corrected
+counts and this breakdown. `0xAE` and `0xA5` still haven't had this
+re-check done -- see the HOWTO below.
+
 ## Open items (deferred, not forgotten)
 
 1. **`suspect_marc8_escape` stays detect-only.** ~52,847 distinct records (258,202
@@ -114,17 +138,22 @@ similar override against a full-corpus run in the future.
    belongs to an unrelated project/library, not a fair substitute. Deferred by
    the user. Not started.
 
-## HOWTO: re-run the 0xA4 disambiguation methodology for 0xAE, 0xA5, 0xA8
+## HOWTO: re-run the 0xA4 disambiguation methodology for 0xAE, 0xA5
 
 Worked end-to-end for `0xA4` this session (confirmed `z` -> dot below as a new
 override; see `_MARC8_BARE_COMBINING_BEFORE_OVERRIDES` in `marc_repair.py` and
-`docs/MARC8_DIACRITIC_HANDLING.md`). `0xAE`, `0xA5`, and `0xA8` are each
-already restricted to one confirmed before-letter (`h`, `r`, and `a`/`e`/`u`
-respectively -- see `_MARC8_BARE_COMBINING_RESTRICTED_BEFORE`) with a chunk of
-real occurrences left unconfirmed outside that restriction (26/135, 67/318,
-76/324 -- see `docs/MARC8_DIACRITIC_HANDLING.md`'s table). This is the same
-kind of "is there a second confirmed mark hiding in the leftovers" question
-`0xA4` just answered for `z` -- not yet done for these three. **Not started;
+`docs/MARC8_DIACRITIC_HANDLING.md`), and for `0xA8` in a later session (no new
+override -- the 12 leftover occurrences split across four small, unrelated
+groups, none clean/large enough; see the "Current state" entry above and
+`docs/MARC8_DIACRITIC_HANDLING.md`'s table). `0xAE` and `0xA5` are each still
+restricted to one confirmed before-letter (`h` and `r` respectively -- see
+`_MARC8_BARE_COMBINING_RESTRICTED_BEFORE`) with a chunk of real occurrences
+left unconfirmed outside that restriction (26/135, 67/318 as of the last
+count -- re-verify, since `0xA8`'s 76/324 figure turned out stale by the time
+it was actually re-checked; see `docs/MARC8_DIACRITIC_HANDLING.md`'s table).
+This is the same kind of "is there a second confirmed mark hiding in the
+leftovers" question `0xA4` answered for `z` and `0xA8` answered (in the
+negative) for its leftovers -- not yet done for these two. **Not started;
 not scoped as "do this automatically" -- read the whole thing before running
 anything, since step 4 below is where the real judgment calls are.**
 

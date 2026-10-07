@@ -2386,16 +2386,32 @@ _MARC8_AMBIGUOUS_CONTEXT_RADIUS = 15
 #:   "Ṛgveda", "Kr<junk>\xa5s<junk>\xa3n<junk>\xa3a" -> "Kṛṣṇa", both
 #:   textbook-unambiguous). Other before-letters are a scatter of Greek/
 #:   Tibetan/Arabic transliteration that don't share one consistent mark.
-#: - 0xA8: ogonek, but only after "a", "e", or "u" (248 of 324
-#:   occurrences, 76%) -- confirmed-by-volume Polish a/e ogonek
-#:   ("Ksia<junk>\xa8zka" -> "Książka", "We<junk>\xa8gierski" ->
-#:   "Węgierski") and Lithuanian u ogonek ("Kataliku<junk>\xa8" ->
-#:   "Katalikų"). The same byte also turns up after "c" (needs cedilla,
-#:   e.g. "Franc<junk>\xa8ais" -> "français" -- same corruption 0xA7
-#:   already covers), after "o" (needs tilde two letters earlier in a
-#:   Spanish name, not ogonek on "o" at all), and after "s" (needs
-#:   breve/dot-below depending on the word) -- genuinely different marks
-#:   depending on context, left alone.
+#: - 0xA8: ogonek, but only after "a", "e", or "u" (248 of 260
+#:   occurrences, 95% -- recounted after the close-escape fix removed
+#:   64 stale false-positive matches from the original 324, the same
+#:   stale-count effect already seen for 0xA4) -- confirmed-by-volume
+#:   Polish a/e ogonek ("Ksia<junk>\xa8zka" -> "Książka",
+#:   "We<junk>\xa8gierski" -> "Węgierski") and Lithuanian u ogonek
+#:   ("Kataliku<junk>\xa8" -> "Katalikų"). Unlike 0xA4's "z", the
+#:   remaining 12 occurrences (re-investigated via the same methodology)
+#:   do NOT cluster into one new confirmed mark -- they split across
+#:   four small, unrelated groups, none large or clean enough to add as
+#:   an override: 4 "c" occurrences need cedilla, not ogonek (e.g.
+#:   "Franc<junk>\xa8ais" -> "français") but that's already produced by
+#:   the unrestricted 0xA7 row, so an 0xA8 override here would be
+#:   redundant, not new; 3 occurrences ("o", "o", "i" -- "Muo<junk>\xa8z"
+#:   -> "Muñoz", "Qui<junk>\xa8ones" -> "Quiñones") are the
+#:   destroyed-base-letter failure mode already documented for 0xA4 (the
+#:   missing "ñ" sits two letters before the junk, not attachable to the
+#:   "o"/"i" immediately before it); 1 "o" occurrence ("nieuwe series
+#:   o<junk>\xa8f" -> "...of Verhandelingen") needs no diacritic at all;
+#:   and the last 4 ("s"/"S"/"r"/"d"/"h", one pair of words) are a mix of
+#:   a confirmed-but-singleton cedilla ("Karakas<junk>\xa8oglu" ->
+#:   "Karakaşoğlu"), a confirmed-but-singleton dot below
+#:   ("S<junk>\xa8uhbat" -> "Ṣuḥbat"), and three occurrences in one
+#:   heavily-garbled title ("Ar<junk>\xa8hd<junk>\xa8zerh<junk>\xa8n
+#:   bar<junk>\xa8haran") too corrupted to confirm at all. No override
+#:   added for 0xA8; left restricted to a/e/u as before.
 #: - 0xA4: diaeresis, but only after "u" (10 of 79 occurrences, 13% --
 #:   recounted after the close-escape fix below removed 14 false-positive
 #:   matches from the original 93) -- confirmed-by-volume German ü
