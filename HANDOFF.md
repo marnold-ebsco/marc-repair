@@ -439,32 +439,116 @@ item left in this file as of this entry.
    [docs/HANDOFF_HISTORY.md](docs/HANDOFF_HISTORY.md) for the full writeup and
    a mocked-up example of the improved log line.
 
-2. **`suspect_hex_encoded_marc8` stays detect-only -- but its "recoverable"
-   heuristic just got tightened first.** Re-scoped with the user: three
-   replace-strategy options (auto-replace when recoverable; same plus strip
-   when not recoverable; leave as-is) were on the table, but picking one was
-   blocked by `_hex_brace_decode_looks_recoverable` itself being unreliable --
-   found a real example (WTS_bibs_2026-10-01 record `.b11188236`, `880 $b`)
-   where it called a boundary-shifted decode "recoverable" even though the
-   preview still had a second, differently-shaped leftover brace run
-   (`"{uD574}{uC11D}{uC790}"`, 5 chars per group, not a genuine
-   `_HEX_BRACE_GROUP_RE` match) mixed into otherwise-readable text. Fixed:
-   the heuristic now treats a literal `"{"`/`"}"` surviving in the decoded
-   text as proof of boundary damage, overriding the escape/printable-ratio
-   checks. Confirmed against the full real `working/WTS_bibs_2026-10-01.out`
-   corpus (`--log-full suspect_hex_encoded_marc8`): still 12 findings/5
-   records, same as before, except `.b11188236` now correctly reads
-   "POSSIBLE DATA LOSS" instead of "recovered" -- the other 11 findings
-   (including the two genuinely clean "recovered" cases, `마가복음`-style
-   Korean and "(Ian M. Duguid)") are unaffected. Regression test added
-   (`TestFindSuspectHexEncodedMarc8.test_boundary_shifted_decode_with_
+2. **`suspect_hex_encoded_marc8` stays detect-only.** Its "recoverable"
+   heuristic was tightened and shipped (`d4caade`), but auto-replacing even
+   the "recoverable" cases turned out to be unsafe, confirmed against every
+   real occurrence in the corpus -- see the full account below. Decision:
+   stay detect-only; a real fix would need external verification (a
+   different, bigger feature), not a decoder tweak. Not started.
+
+   **Step 1, shipped (`d4caade`): tightened the "recoverable" heuristic.**
+   Three replace-strategy options were on the table (auto-replace when
+   recoverable; same plus strip when not recoverable; leave as-is), but
+   picking one was blocked by `_hex_brace_decode_looks_recoverable` itself
+   being unreliable -- found a real example (WTS_bibs_2026-10-01 record
+   `.b11188236`, `880 $b`) where it called a boundary-shifted decode
+   "recoverable" even though the preview still had a second,
+   differently-shaped leftover brace run (`"{uD574}{uC11D}{uC790}"`, 5
+   chars per group, not a genuine `_HEX_BRACE_GROUP_RE` match) mixed into
+   otherwise-readable text. Fixed: the heuristic now treats a literal
+   `"{"`/`"}"` surviving in the decoded text as proof of boundary damage,
+   overriding the escape/printable-ratio checks. Confirmed against the full
+   real `working/WTS_bibs_2026-10-01.out` corpus (`--log-full
+   suspect_hex_encoded_marc8`): still 12 findings/5 records, same as
+   before, except `.b11188236` now correctly reads "POSSIBLE DATA LOSS"
+   instead of "recovered" -- the other 11 findings (including the two
+   then-presumed-clean "recovered" cases, `마가복음`-style Korean and "(Ian
+   M. Duguid)") were unaffected by this particular change. Regression test
+   added (`TestFindSuspectHexEncodedMarc8.test_boundary_shifted_decode_with_
    leftover_braces_is_not_recoverable`, using `.b11188236`'s real raw
    bytes). `pytest` (419 passed, 1 skipped) and `flake8` both clean.
-   **The three replace-strategy options are still undecided** -- that
-   decision is now on firmer ground since "recoverable" means something
-   more trustworthy, but it hasn't been revisited yet. See
-   [docs/HANDOFF_HISTORY.md](docs/HANDOFF_HISTORY.md) for the full option
-   writeup and cost estimates.
+
+   **Step 2, attempted and reverted: auto-replace when recoverable.**
+   Implemented `fix_hex_encoded_marc8` (splice the decoded hex-brace bytes
+   back into the field, guarded by a new `--no-fix-hex-encoded-marc8`
+   flag, category `fixed_hex_encoded_marc8`) and ran it against a real
+   integration test built around `.b11165406`'s `246-02` `880 $a` occurrence
+   (the same record `transcode_marc8_to_utf8`'s per-subfield isolation was
+   originally built for -- see `docs/HANDOFF_HISTORY.md`'s "Stage 1-3"
+   entry). The existing `test_bib_pipeline_logs_removed_untranscodable_
+   subfield` test failed: instead of the expected `removed_untranscodable_
+   subfield`, the record transcoded cleanly end-to-end with no warning at
+   all -- but the recovered 880 text was `"마태        "` (Matthew, with
+   trailing blank padding), not the `"마가복음"` (Gospel of Mark) the
+   isolated preview had shown moments earlier for the exact same bytes.
+
+   Tracing this down: `_marc8_bytes_to_readable_preview` (used for the log
+   preview) and the old `_hex_brace_decode_looks_recoverable` heuristic
+   both decode the hex-brace run's bytes *in isolation*, starting from a
+   fresh MARC-8 G0/G1 state. But every real occurrence sits inside a field
+   that already has its own open CJK/EACC escape (`\x1b$1...`) surrounding
+   it. Splicing the "recoverable" bytes back in and transcoding the *whole*
+   field (not just the isolated payload) checks out against every real
+   finding in the corpus (`working/WTS_bibs_2026-10-01.out`, all 12):
+
+   | record | isolated preview | spliced into full field |
+   |---|---|---|
+   | `.b11227394` `880 $c` | `"(Ian M. Duguid)"` | `"伊恩          著 ; 郭熙安譯."` |
+   | `.b11165406` `880 $a` (×6) | `"마가복음"`, `"요한복음"`, `"로마서"`, `"요한계시록"`, etc. | `"마태        "`, `"누가        "`, `"사도행전       "`, `"일반서신         "`, etc. |
+   | `.b11077347` `880 $c` | `"= J. Gresham Machen"` | `"(美) J. 格雷山姆          "` |
+   | `.b11257982` `880 $a` (×2) | `"나 "` | long runs of real-looking Korean text, different words |
+
+   **Every single one of the 12 real findings -- including the one
+   previously treated as the safest, purely-ASCII example -- produces
+   completely different (and largely nonsensical) text once the splice
+   respects the real surrounding escape state, instead of decoding fresh.**
+   None of these differences raise a warning or exception; pymarc's own
+   truncation detector only catches "ran out of bytes mid-multi-byte-char,"
+   not "syntactically valid but semantically wrong because the original
+   hex-chunking didn't line up with character boundaries." Reverted the
+   implementation (`git checkout -- marc_repair.py`) before committing
+   anything unsafe; nothing from Step 2 shipped.
+
+   **What this proves, and what it would actually take to fix properly
+   (asked and answered separately, logged here per instruction):** the
+   natural assumption is that the bug is "we decoded the payload out of
+   context, with the wrong escape state" -- and that threading the real
+   state through is a big, separate feature. That assumption is only half
+   right. The engineering cost of state-correct decoding is actually LOW:
+   pymarc's `MARC8ToUnicode` class (`venv/.../pymarc/marc8.py`) already
+   supports resuming from explicit state -- its constructor takes
+   `G0`/`G1` parameters, and `.translate()` mutates `self.g0`/`self.g1` as
+   it scans. In practice, splicing the recovered raw bytes into the whole
+   field and running ONE ordinary `marc8_to_unicode()` call over the
+   result (exactly what `transcode_marc8_to_utf8` already does for
+   everything else) already respects the real state correctly -- this is
+   exactly what the "spliced into full field" column above *is*. No
+   vendored state machine or reimplementation needed; maybe 20-30 lines,
+   largely already written during Step 2.
+
+   **That state-correct decode is exactly what produced the table above --
+   and it's still wrong.** Respecting the real escape state didn't produce
+   something trustworthy; it produced a *different* syntactically-valid
+   decode (Chinese characters instead of an English name; the wrong Bible
+   book padded with blanks). This proves the actual bottleneck was never
+   "we forgot to track escape state" -- it's that the upstream hex-encoding
+   /brace-wrapping already destroyed or shifted byte boundaries before this
+   tool ever saw the record (the category's own docstring already warned
+   "a stray byte or an incomplete trailing hex digit commonly survives at a
+   chunk's edge"). A syntactically valid, state-correct decode of
+   boundary-damaged bytes is still just *a* decode, not evidence it's *the*
+   original one. No amount of care on the decoding side recovers
+   information that's already gone upstream.
+
+   **What would actually be needed to trust an auto-replace:** external
+   verification -- matching the candidate decoded text against something
+   outside the corrupted bytes themselves (the record's own title/
+   cross-reference fields, or an LC/OCLC lookup). That's the same shape of
+   feature as open item #1 above (`suspect_marc8_escape`'s
+   external-authority lookup) -- network calls, matching logic, probably
+   still needing a human to sign off per record -- not a decoder fix. Worth
+   scoping together with item #1 if ever picked up, rather than as its own
+   smaller task.
 
 3. **`install.sh`'s self-update/re-run story.** A minimal-fetch install
    directory (`curl | bash -s -- --dir .`) never gets its own copy of
