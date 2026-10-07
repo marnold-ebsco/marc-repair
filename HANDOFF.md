@@ -139,6 +139,26 @@ whitespace, 617 default-245, 6 duplicate identifiers across
 pre-existing categories behaving as documented in
 `docs/REPAIR_CATEGORIES.md` -- nothing new to report there either.
 
+### DONE: ran against `sample_files/Bucknell00000448.mrc` -- clean, already UTF-8
+
+Ran the same way: `python3 marc_repair.py
+sample_files/Bucknell00000448.mrc -o
+working/Bucknell00000448_repaired.mrc --log-full
+fixed_marc8_diacritic,suspect_marc8_escape`. Result: **1,000/1,000
+records written, 0 unfixable**, 0.60s. Log:
+`working/Bucknell00000448_repaired_log_20261007T151732Z.log`.
+
+Both diacritic-related categories are **0 records** -- not a gap,
+expected: this corpus's leader byte 9 is already `'a'` (declared
+UTF-8), so `fix_marc8_diacritic_escapes`/`find_suspect_marc8_escapes`
+both correctly skip every record (same guard `transcode_marc8_to_utf8`
+uses; confirmed via a quick `pymarc` check of record 0's leader, and
+`transcoded_marc8` itself is also 0 records in this log, consistent).
+Other findings (1 record with an empty-`$a` 010, 1 record with 4
+empty-`$a` 880s, 3 records with smart-character normalization) are
+all pre-existing, already-documented categories at small scale --
+nothing new.
+
 **Nothing further queued from the user for this session as of this
 entry.**
 
