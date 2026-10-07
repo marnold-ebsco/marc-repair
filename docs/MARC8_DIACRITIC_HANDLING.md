@@ -234,8 +234,8 @@ interpretation. No code handles them; they still reach
 |---|---|---|
 | `0xA6` | 267 (145 records) | Overloaded *and* structurally broken -- see writeup below. |
 | `0xBA` | 69 (37 records) | Means Hungarian double-acute (ő/ű -- "felelős", "György") in roughly half its occurrences and Russian hard sign (ʺ -- "obʺedinenii") in the rest, with no reliable split by surrounding letter. |
-| `0xB2` | 745 (398 records) | Murky: frequently tangled with multiple macron escapes within the same word, and at least one occurrence ("JohannesVerl...") appears to need no diacritic fix at all -- a likely false-positive match for the detection shape itself. |
-| `0xB3` | 49 (21 records) | Two unrelated phenomena sharing one byte: Dead Sea Scroll sigla superscripts (e.g. "1QIsaᵃ" -- would need a letter-to-Unicode-superscript substitution, a different fix mechanism entirely, not a mark insertion) and what looks like a Korean name needing a breve ("Yŏn Presbyterian"). |
+| `0xB2` | 832 (396 records) | Dominant clusters need an *inserted* vowel-with-mark (German ö, Dravidian macron-n̄, etc.) between the matched before-letter and the following text, not a mark combined onto the before-letter itself -- the before-letter mechanism structurally can't produce that shape. See writeup below. |
+| `0xB3` | 48 (20 records) | Two unrelated phenomena sharing one byte: Dead Sea Scroll/philological sigla superscripts (e.g. "1QIsaᵃ" -- would need a letter-to-Unicode-superscript substitution, a different fix mechanism entirely, not a mark insertion), ~92% of occurrences, and a single ambiguous Korean name case needing a breve ("Yŏn Presbyterian"). See writeup below. |
 | `0xC1` | 8 (3 records) | Tiny sample with an escape structure (`\x1bb8`/`\x1bb9` fragments) not seen anywhere else in the corpus -- may not even be the same corruption mechanism as the rest of this table. |
 
 **`0xA6`, in detail.** Means ogonek in some Polish words (GTU record
@@ -276,6 +276,66 @@ right, so this doesn't change the "leave `0xA6` unconfirmed" decision
 -- it reinforces it. Even the authoritative source is inconsistent for
 the specific word shape that already defeated the fix mechanism on
 syntactic grounds alone.
+
+**`0xB2`, in detail.** `0xB2` is not in `_MARC8_BARE_COMBINING_BYTES` or
+`_MARC8_BARE_STANDALONE_BYTES` -- it never got a first confirmed
+before-letter at all, so `_MARC8_BARE_COMBINING_RE` doesn't match it.
+Re-scanned `working/GTU_bibs.mrc` with a one-off regex built from the
+same reusable pieces (`_MARC8_NOT_ESCAPE_DESIGNATOR_LOOKBEHIND` +
+`([A-Za-z])` + `_MARC8_STRAY_ESCAPE_JUNK_NONEMPTY` + the literal byte;
+see `working/find_0xb2_occurrences.py`, gitignored): 832 occurrences
+across 396 records (not 745 -- the close-escape fix changed the count
+here too, same as it did for `0xA4`/`0xA5`/`0xA8`, just upward instead
+of downward this time). No single before-letter dominates (highest is
+`n` at 129/832, 15%) -- confirming the original "murky" read, not
+overturning it.
+
+The largest clusters (`G`/71, `K`/47, `k`/39, `g`/47, many `n`/`l`/`d`/
+`s` occurrences) are overwhelmingly German (Göcke, Körper, könnte,
+Köhler, Königsherrschaft, göttliche, zeitgenössischen, religiöser,
+persönliche) plus a smaller Dravidian/Tamil cluster (Murukan̄). Tested
+the diaeresis hypothesis directly via `pymarc.marc8.marc8_to_unicode`
+(ANSEL order, mark byte before base-letter byte): for a clean case like
+`\xe8` + `G` + `cke`, the decoder correctly produces a single
+diaeresis-bearing letter -- but that letter is `G̈`, not `ö`. The real
+words all need a whole **inserted** `ö` as its own letter between the
+matched before-letter and the following consonants (`zeitgen` + `ö` +
+`ssischen` = `zeitgenössischen`), not a mark fused onto the
+before-letter itself. `_MARC8_BARE_COMBINING_BEFORE_OVERRIDES`'s whole
+mechanism (`mark + before`, producing one combined character) cannot
+produce this shape -- same structural "destroyed base letter" failure
+mode already confirmed for roughly half of `0xA4`'s leftovers and part
+of `0xA8`'s, just the dominant pattern here rather than a minority one.
+The remaining smaller groups (Arabic "dhimmi", the Korean/Arabic
+singletons, the suspected false-positive "JohannesVerl...") don't add up
+to a second confirmable cluster either. **No code change** -- `0xB2`
+stays unimplemented, now with a concrete mechanism explanation instead
+of just "murky."
+
+**`0xB3`, in detail.** Also not in either BARE dict; same one-off-regex
+treatment (`working/find_0xb3_occurrences.py`, gitignored): 48
+occurrences across 20 records (not 49 -- one occurrence's stale count,
+same close-escape-fix effect). Grouping by before-letter (`e`/12, `a`/9,
+`c`/5, `b`/5, `o`/4, ...) looked promising at first glance, but reading
+every context line shows the shape is near-identical across almost all
+of them: `<letter>` + `\x1bp+\x1bs` + `\xb3` immediately preceding or
+following a philological siglum -- Dead Sea Scroll manuscript sigla
+("1QIsa" + byte, "4QSamuel" + byte, "4QpaleoExod" + byte, "11QPs" +
+byte), a Qumran scroll cave reference, and similar superscript-letter
+notation in Semitic-studies titles/notes (44 of 48 occurrences, ~92%).
+None of these are a diacritic at all -- the byte is standing in for a
+superscript Roman letter (e.g. "1QIsaᵃ"), which this tool's mark-
+insertion mechanism (`_MARC8_BARE_COMBINING_BEFORE_OVERRIDES`) cannot
+produce regardless of which mark is chosen; it would need a dedicated
+letter-to-Unicode-superscript substitution, a different fix entirely.
+The one exception, record `.b1122034x` ("Ye" + byte + "n Presbyterian",
+alternate title for "We Presbyterians = Yŏn Presbyterian"), tested
+against the breve hypothesis (`\xe6` + `e` + `n Presbyterian`) decodes
+to `ĕn Presbyterian`, not `Yŏn` -- the before-letter captured (`e`)
+isn't the vowel the title actually needs the breve on (`o`), the same
+mismatch shape as `0xA6`'s "współczesną" case. Genuinely ambiguous,
+same conclusion as before. **No code change** -- `0xB3` stays
+unimplemented.
 
 ## False positives found and guarded against
 

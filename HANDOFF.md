@@ -151,26 +151,55 @@ corpus was not re-run this session -- verification stayed scoped to the
 83-record `working/GTU_bibs_0xAE_sample.mrc`. **All three bytes the HOWTO
 originally flagged (`0xA8`, `0xA5`, `0xAE`) are now re-checked.**
 
-**Next up: `0xB2` and `0xB3`.** Not started. These are two of the four
-bytes already sitting in the "Investigated, not implemented" table in
-`docs/MARC8_DIACRITIC_HANDLING.md` (`0xA6`, `0xBA`, `0xB2`, `0xB3`, `0xC1`)
--- unlike `0xA8`/`0xA5`/`0xAE`, these never got a *first* confirmed
-before-letter at all, so this isn't a re-check of existing leftovers, it's
-the original disambiguation pass (HOWTO steps 1-4 below) run for the first
-time. From the existing table: `0xB2` has 745 occurrences (398 records)
-and was flagged "murky" -- frequently tangled with multiple macron escapes
-within the same word, plus at least one occurrence ("JohannesVerl...")
-that looks like it needs no diacritic fix at all (possible false-positive
-match on the detection shape itself, worth checking early). `0xB3` has 49
-occurrences (21 records) and was flagged as two unrelated phenomena
-sharing one byte: Dead Sea Scroll sigla superscripts (e.g. "1QIsaᵃ" --
-would need a letter-to-Unicode-superscript substitution, a different fix
-mechanism entirely, not a mark insertion) and what looks like a Korean
-name needing a breve ("Yŏn Presbyterian"). Both need the TSV-report +
-sample-file treatment (HOWTO steps 1-3) before any disambiguation
-judgment calls -- the existing counts/notes above predate the
-close-escape fix and may be stale, same as `0xA4`'s original 93 (actual
-79) and `0xA8`'s original 324 (actual 260).
+Ran the original disambiguation pass (HOWTO steps 1-4 below, first time
+for both bytes -- unlike `0xA8`/`0xA5`/`0xAE`, neither ever got a first
+confirmed before-letter) against `0xB2` and `0xB3`, the next two of the
+four bytes in the "Investigated, not implemented" table
+(`docs/MARC8_DIACRITIC_HANDLING.md`). Neither is in
+`_MARC8_BARE_COMBINING_BYTES`/`_MARC8_BARE_STANDALONE_BYTES`, so
+`_MARC8_BARE_COMBINING_RE` doesn't match either byte -- built a one-off
+scan regex for each from the same reusable pieces
+(`_MARC8_NOT_ESCAPE_DESIGNATOR_LOOKBEHIND` + `([A-Za-z])` +
+`_MARC8_STRAY_ESCAPE_JUNK_NONEMPTY` + the literal byte) instead of
+reusing `_MARC8_BARE_COMBINING_RE` itself:
+`working/find_0xb2_occurrences.py` / `working/find_0xb3_occurrences.py`
+(gitignored, adapted from `find_0xae_occurrences.py`). Built
+`working/0xB2_occurrences.tsv` + `working/GTU_bibs_0xB2_sample.mrc` (832
+occurrences / 396 records, not the old 745/398 -- same close-escape-fix
+stale-count effect as `0xA4`/`0xA5`/`0xA8`, just upward this time) and
+`working/0xB3_occurrences.tsv` + `working/GTU_bibs_0xB3_sample.mrc` (48/20,
+not 49/21). Both sample files verified to parse clean (0 unresolved).
+
+**`0xB2`: no new override.** No before-letter dominates (highest is `n`
+at 15%), confirming the "murky" read. The largest clusters are German
+words (Göcke, Körper, könnte, Köhler, Königsherrschaft, göttliche,
+zeitgenössischen, religiöser, persönliche) needing an *inserted* `ö` as
+its own letter, not a mark fused onto the matched before-letter --
+confirmed via `pymarc.marc8.marc8_to_unicode` on the ANSEL byte order
+(mark-byte-before-base-letter-byte): attaching diaeresis to `G` decodes
+to `G̈`, not `ö`, so the mechanism's `mark + before` single-combined-
+character model structurally can't produce this shape (same "destroyed
+base letter" failure mode as roughly half of `0xA4`'s and part of
+`0xA8`'s leftovers, just the dominant pattern here). `0xB2` stays
+unimplemented.
+
+**`0xB3`: no new override.** 44 of 48 occurrences (~92%) are Dead Sea
+Scroll/philological sigla superscripts ("1QIsa"+byte, "4QSamuel"+byte,
+etc.) -- not a diacritic at all, would need a letter-to-superscript
+substitution mechanism this tool doesn't have. The one exception
+(record `.b1122034x`, "Ye"+byte+"n Presbyterian", alternate title for
+"Yŏn Presbyterian") tested against the breve hypothesis and decoded to
+`ĕn Presbyterian`, not `Yŏn` -- the captured before-letter (`e`) isn't
+the vowel (`o`) the title actually needs the mark on, same mismatch
+shape as `0xA6`'s already-documented "współczesną" case. Genuinely
+ambiguous, same conclusion as before. `0xB3` stays unimplemented.
+
+Both bytes' table rows and new detail writeups in
+`docs/MARC8_DIACRITIC_HANDLING.md` updated with the corrected counts and
+this breakdown. No code change for either byte -- nothing to re-run
+against the full corpus. **`0xA6` and `0xC1` are the two bytes from the
+original "Investigated, not implemented" table left unconfirmed/
+unre-checked.**
 
 **Lessons learned this session (read before starting `0xAE`):**
 
