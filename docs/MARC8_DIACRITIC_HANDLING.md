@@ -73,6 +73,7 @@ content and must not be touched. See `_MARC8_BARE_COMBINING_BYTES`/
 | `0xA7` | cedilla | combining | none | "franc`<byte>`ais" -> "français" |
 | `0xA8` | ogonek | combining | only after `a`, `e`, or `u` | "Ksia`<byte>`zka" -> "Książka" |
 | `0xA4` | diaeresis (default); dot below after `z` (override) | combining | only after `u`, or `z` with its own mark | "U`<byte>`bersetzung" -> "Übersetzung"; "Raz`<byte>`a" -> "Raẕa" |
+| `0xA6` | cedilla (2nd byte) | combining | only after `c` | "franc`<byte>`ois" -> "François" |
 | `0xBC` | hamza (modifier apostrophe) | standalone | none | "Ihya`<byte>`" -> "Ihyāʼ" |
 | `0xBB` | ayn (modifier turned comma) | standalone | none | "`<byte>`ulum" -> "ʻulum" |
 | `0xB9` | prime (Russian soft sign) | standalone | none | "Il`<byte>`ich" -> "Ilʹich" |
@@ -222,6 +223,45 @@ confirmed is clean. Outside that context they're left alone for
   this kind of fix landed -- diff the actual field text instead (confirmed
   by diffing `working/GTU_bibs_0xA4_sample.mrc` with the override on vs.
   off: instance count identical, 21 real text differences, all correct).
+- `0xA6`: cedilla, but only after `c` -- the SAME mark `0xA7` already
+  produces, not a new one. Confirmed by a full-field diff (fix on vs.
+  off, every record in `working/GTU_bibs_0xA6_sample.mrc`, 144 records):
+  57 changed subfields for `c`, all correct French/Occitan/Portuguese/
+  Turkish/Sanskrit-transliteration cedilla insertions ("français",
+  "revelação", "Kaçar", "Çârîraka"), zero regressions. Unlike every
+  other overloaded byte above, `c` is a *minority* before-letter for
+  this byte -- the dominant ones are `s` and `t` (Romanian `ş`/`ţ`
+  comma-below/cedilla, e.g. "Bucureşti", "Colecţia"), which were trialed
+  the same way and **rejected**, despite looking just as clean at first
+  glance: the same full-field diff found two different real regressions
+  specific to `s`/`t` that `c` didn't have --
+  - An off-by-one mark placement, found in two different records
+    (`.b11564295`, `.b13281069`): the junk sometimes lands one letter
+    later than the letter that actually needs the mark (correct target
+    "Bisericeşti"/"Bucureşti" needs the mark on `s`, but the captured
+    before-letter is `t`, one position later) -- same shape as `0xAE`'s
+    Akkadian cluster, just via `t` instead of `h`. Confirmed this isn't
+    a fixable regex ordering issue: `.b13281069`'s "Bucureşti" has the
+    junk shifted by one letter compared to every *other* "Bucureşti" in
+    the corpus, which all fix correctly -- the underlying corruption
+    itself is inconsistent about where the junk lands for this cluster.
+  - A decoder-state regression (`.b12911008`): applying the trial
+    override there doesn't just misplace one mark, it leaves pymarc's
+    `marc8_to_unicode` decoder stuck, turning a long stretch of the
+    subfield after the first mark into unreadable combining-mark debris
+    -- the same failure mode already documented for `0xA5`'s rejected
+    `h` case above, just triggered by `s`/`t` instead.
+
+  `s`/`t` stay unfixed, same as `0xA6`'s other non-`c` occurrences
+  always have. Full-corpus re-run after adding the `c` override
+  (`--log-full fixed_marc8_diacritic`): `fixed_marc8_diacritic` rose
+  from 149,150/64,340 (the figure after the `0xA4` session) to
+  149,166 instances / 64,348 records -- a modest +16/+8, consistent
+  with the same counting-metric quirk documented for `0xA4`'s `z`
+  above (most `c` occurrences share a subfield with an already-counted
+  fix). `suspect_marc8_escape` stayed at 1,258 records, unchanged --
+  expected, since almost every record with a `c` occurrence also has
+  an unfixed `s`/`t` occurrence still flagging it.
 
 ## Investigated, not implemented -- genuinely ambiguous or insufficient evidence
 
@@ -232,20 +272,21 @@ interpretation. No code handles them; they still reach
 
 | byte | occurrences | why it's unresolved |
 |---|---|---|
-| `0xA6` | 267 (145 records) | Overloaded *and* structurally broken -- see writeup below. |
 | `0xBA` | 69 (37 records) | Means Hungarian double-acute (ő/ű -- "felelős", "György") in roughly half its occurrences and Russian hard sign (ʺ -- "obʺedinenii") in the rest, with no reliable split by surrounding letter. |
 | `0xB2` | 832 (396 records) | Dominant clusters need an *inserted* vowel-with-mark (German ö, Dravidian macron-n̄, etc.) between the matched before-letter and the following text, not a mark combined onto the before-letter itself -- the before-letter mechanism structurally can't produce that shape. See writeup below. |
 | `0xB3` | 48 (20 records) | Two unrelated phenomena sharing one byte: Dead Sea Scroll/philological sigla superscripts (e.g. "1QIsaᵃ" -- would need a letter-to-Unicode-superscript substitution, a different fix mechanism entirely, not a mark insertion), ~92% of occurrences, and a single ambiguous Korean name case needing a breve ("Yŏn Presbyterian"). See writeup below. |
 | `0xC1` | 8 (3 records) | Tiny sample with an escape structure (`\x1bb8`/`\x1bb9` fragments) not seen anywhere else in the corpus -- may not even be the same corruption mechanism as the rest of this table. |
 
-**`0xA6`, in detail.** Means ogonek in some Polish words (GTU record
-`.b10016855`, "filozofią") but cedilla in Portuguese/Romanian words
-(GTU record `.b1031037x`, "revelação") -- confirmed against both
-records' real Sierra catalog display. Worse, in at least one
-occurrence (the same `.b10016855` record, "współczesną") the byte sits
-*before* the vowel that needs the mark rather than after it -- the fix
-mechanism (attach to the letter before the junk) can't handle that
-shape at all, regardless of which mark is intended.
+**`0xA6`'s residual `a` (ogonek) minority, in detail.** `0xA6` after
+`c` is now fixed (cedilla -- see the "Overloaded" section above); this
+writeup is about the small `a` minority that isn't. Means ogonek in
+some Polish words (GTU record `.b10016855`, "filozofią") but cedilla in
+Portuguese/Romanian words (GTU record `.b1031037x`, "revelação") --
+confirmed against both records' real Sierra catalog display. Worse, in
+at least one occurrence (the same `.b10016855` record, "współczesną")
+the byte sits *before* the vowel that needs the mark rather than after
+it -- the fix mechanism (attach to the letter before the junk) can't
+handle that shape at all, regardless of which mark is intended.
 
 Checked against the Library of Congress's own authoritative catalog
 records for both titles (not Sierra's display, which the user didn't
@@ -272,10 +313,10 @@ LC-cataloged works with an LCCN:
   plain, unambiguous cedilla on "revelação".
 
 Net effect: both of the original readings (ogonek vs. cedilla) were
-right, so this doesn't change the "leave `0xA6` unconfirmed" decision
--- it reinforces it. Even the authoritative source is inconsistent for
-the specific word shape that already defeated the fix mechanism on
-syntactic grounds alone.
+right, so this doesn't change the "leave the `a` minority unfixed"
+decision -- it reinforces it. Even the authoritative source is
+inconsistent for the specific word shape that already defeated the fix
+mechanism on syntactic grounds alone.
 
 **`0xB2`, in detail.** `0xB2` is not in `_MARC8_BARE_COMBINING_BYTES` or
 `_MARC8_BARE_STANDALONE_BYTES` -- it never got a first confirmed

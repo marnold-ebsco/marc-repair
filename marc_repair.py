@@ -2504,6 +2504,41 @@ _MARC8_AMBIGUOUS_CONTEXT_RADIUS = 15
 #:     -> "Khuṭba" needs dot-below, but "Cat<junk>\xa4lica" is
 #:     destroyed-vowel) -- can't be generalized by before-letter alone
 #:     the way the confirmed overrides above can.
+#: - 0xA6: cedilla (the SAME mark 0xA7 above already produces, not a new
+#:   one), but only after "c" (57 of the 97 changed-subfield diffs found
+#:   when confirming this, ~59% -- occurrence counts for this byte are
+#:   not directly comparable to the others above since "s"/"t" below
+#:   were trialed and rejected rather than left uncounted) --
+#:   confirmed-by-volume French/Occitan/Portuguese/Turkish words
+#:   ("franc<junk>\xa6ais" -> "français", "revelac<junk>\xa6a<junk>\xa8o"
+#:   -> "revelação", "Kac<junk>\xa6ar" -> "Kaçar") -- the full-field diff
+#:   (fix on vs. off, every record in working/GTU_bibs_0xA6_sample.mrc)
+#:   found zero regressions for "c" specifically. Unlike every other
+#:   overloaded byte above, this one's dominant before-letters were
+#:   actually "s" and "t" (Romanian "ş"/"ţ" comma-below/cedilla, e.g.
+#:   "Bucures<junk>\xa6ti" -> "Bucureşti", "Colect<junk>\xa6ia" ->
+#:   "Colecţia" -- the same ANSEL cedilla byte 0xF0 Romanian conventionally
+#:   reuses for ş/ţ) -- a much larger, cleaner-*looking* cluster than "c"
+#:   itself, but NOT added: the same full-field diff found real
+#:   regressions the "c" cluster didn't. Record .b11564295 ("Serviciul
+#:   Relati<junk>\xa6i Externe Bisericest<junk>\xa6i") has the junk
+#:   landing one letter later than the letter that actually needs the
+#:   mark in both of its two occurrences (correct target is "Bisericeşti"
+#:   -- mark on "s", but the captured before-letter is "t", one position
+#:   later) -- the same off-by-one shape already documented for 0xAE's
+#:   Akkadian cluster, just discovered via "t" here instead of "h".
+#:   Record .b13281069 ("Bucurest<junk>\xa6i :") has the identical
+#:   off-by-one on the SAME word ("Bucureşti") that fixes correctly
+#:   everywhere else in the corpus -- i.e. the underlying corruption
+#:   itself places the junk inconsistently for this cluster, not just
+#:   this fixer's regex, so no before-letter refinement can make "t"
+#:   safe here. Record .b12911008 is worse: applying the trial override
+#:   there doesn't just mis-place one mark, it leaves pymarc's
+#:   marc8_to_unicode decoder stuck, turning a long stretch of the
+#:   subfield after the first mark into unreadable combining-mark debris
+#:   -- the same decoder-interaction regression already documented for
+#:   0xA5's rejected "h" case, just via "s"/"t" instead. "s"/"t" stay
+#:   unfixed; see HANDOFF.md for the full diff output this is based on.
 #:
 #: Combining (modifies the letter immediately before the junk run, same
 #: mark-before-letter ANSEL order as `_MARC8_DIACRITIC_PAYLOADS`):
@@ -2514,6 +2549,7 @@ _MARC8_BARE_COMBINING_BYTES: dict[str, str] = {
     "\xa5": "\xf2",  # -> ANSEL combining dot below, restricted (e.g. r -> ṛ)
     "\xa8": "\xf1",  # -> ANSEL combining ogonek, restricted (e.g. a -> ą)
     "\xa4": "\xe8",  # -> ANSEL combining diaeresis, restricted (e.g. u -> ü)
+    "\xa6": "\xf0",  # -> ANSEL combining cedilla, restricted (e.g. c -> ç)
 }
 
 #: Byte -> the lowercase before-letters it's safe to fire on, for the
@@ -2527,6 +2563,7 @@ _MARC8_BARE_COMBINING_RESTRICTED_BEFORE: dict[str, str] = {
     "\xa5": "r",
     "\xa8": "aeu",
     "\xa4": "u",
+    "\xa6": "c",
 }
 
 #: Byte -> {before-letter (lowercase): the DIFFERENT mark that specific

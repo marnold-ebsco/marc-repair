@@ -766,6 +766,41 @@ class TestFixMarc8DiacriticEscapes:
         m.transcode_marc8_to_utf8(parsed)
         assert parsed.fields[0].subfields == [("a", "qaẓiyya")]
 
+    def test_recovers_bare_combining_cedilla_restricted_to_c_for_0xa6(self):
+        # Real production example (working/GTU_bibs.mrc, record
+        # .b10746468): 0xA6 after "c" is the same cedilla mark 0xA7
+        # already produces -- "Franc<junk>ois" -> "François". Confirmed
+        # by a full-field diff (fix on vs. off) over every record in
+        # working/GTU_bibs_0xA6_sample.mrc: zero regressions for "c"
+        # specifically. 0xA6's dominant before-letters ("s"/"t",
+        # Romanian ş/ţ) were trialed the same way and rejected instead
+        # -- see the next test and HANDOFF.md.
+        parsed = self._record("Franc\x1bp+\x1bs\xa6ois")
+        details = m.fix_marc8_diacritic_escapes(parsed)
+        assert len(details) == 1
+        assert parsed.fields[0].subfields == [("a", "Fran\xf0cois")]
+
+    def test_bare_combining_cedilla_restriction_skips_other_before_letters(self):
+        # "s"/"t" (Romanian ş/ţ, the dominant before-letters for this
+        # byte) were NOT added despite looking clean at a glance: the
+        # same full-field diff that confirmed "c" found two different
+        # real regressions for "s"/"t" -- an off-by-one mark placement
+        # (record .b11564295/.b13281069, "Bucurest<junk>i" -> wrong
+        # "Bucuresţi" instead of "Bucureşti", mark belongs on "s" one
+        # letter earlier) and a decoder-state regression that garbles
+        # an entire subfield (record .b12911008, same shape as 0xA5's
+        # rejected "h" case). See HANDOFF.md for the full diff output.
+        raw = "Bucures\x1bp+\x1bs\xa6ti"
+        parsed = self._record(raw)
+        assert m.fix_marc8_diacritic_escapes(parsed) == []
+        assert parsed.fields[0].subfields == [("a", raw)]
+
+    def test_bare_combining_cedilla_0xa6_transcodes_to_correct_utf8(self):
+        parsed = self._record("Franc\x1bp+\x1bs\xa6ois")
+        m.fix_marc8_diacritic_escapes(parsed)
+        m.transcode_marc8_to_utf8(parsed)
+        assert parsed.fields[0].subfields == [("a", "François")]
+
     def test_recovers_escape_diacritic_immediately_followed_by_bare_byte(self):
         # Real production example (record .b10001463, tag 500):
         # "Ihya" + macron escape + more stray junk leading straight

@@ -199,20 +199,15 @@ Both bytes' table rows and new detail writeups in
 this breakdown. No code change for either byte -- nothing to re-run
 against the full corpus.
 
-**Started (not finished) `0xA6` and `0xC1` -- the last two bytes from the
-original "Investigated, not implemented" table.** This is an in-progress
-entry; neither byte has a confirmed verdict yet, unlike the fully-closed
-entries above. Picking this back up should re-run the two finder scripts
-below (both gitignored, still on disk) and continue from "Next steps."
-
-`0xA6`: re-ran the existing (pre-close-escape-fix) disambiguation via
-`working/find_0xa6_occurrences.py` (adapted from `working/find_0xb3_occurrences.py`'s
-one-off-regex approach, since `0xA6` isn't in `_MARC8_BARE_COMBINING_BYTES`
-either): 265 occurrences across 144 records (not the old 267/145 --
-same small stale-count correction as `0xA4`/`0xA5`/`0xA8`). Grouping by
+**`0xA6` resolved -- new "c" -> cedilla restriction added; `0xC1` still
+open.** `0xA6` re-disambiguation (`working/find_0xa6_occurrences.py`,
+adapted from `working/find_0xb3_occurrences.py`'s one-off-regex
+approach, since `0xA6` isn't in `_MARC8_BARE_COMBINING_BYTES` either):
+265 occurrences across 144 records (not the old 267/145 -- same small
+stale-count correction as `0xA4`/`0xA5`/`0xA8`). Grouping by
 before-letter (`working/0xA6_occurrences.tsv`) surfaced a **materially
-different picture than the existing writeup below**, which only ever
-discussed `a` (Polish ogonek) vs `c` (Portuguese/French cedilla) as two
+different picture than the old writeup**, which only ever discussed `a`
+(Polish ogonek) vs `c` (Portuguese/French cedilla) as two
 roughly-comparable readings: `s` (79) and `t` (62) are actually the two
 largest groups, both overwhelmingly Romanian cedilla/comma-below words
 never mentioned before ("Bucureşti", "Timişoara", "Colecţia",
@@ -223,27 +218,51 @@ never mentioned before ("Bucureşti", "Timişoara", "Colecţia",
 occurrences (2%) -- a minority, not a comparably-sized alternative as
 the old writeup implied.
 
-**Not yet safe to implement as an override -- found a real off-by-one
-case while spot-checking, same shape as `0xAE`'s Akkadian cluster and
-`0xA4`'s "Jónsson."** Most `s`/`t` occurrences attach cleanly (the
-captured before-letter is the letter immediately needing the mark, e.g.
-`Bucures<esc>...>ti` -> `Bucureşti`), but record `.b11564295`, field
-`710 $b` ("Serviciul Relati<esc>...>i Externe Bisericest<esc>...>i") has
-two occurrences in one string: the first's captured before-letter is the
-*wrong* letter by one position (`Relati` + mark + `i` -- correct target
-is `Relaţii`, mark belongs on the `t` one position earlier, not the
-captured final `i`), and the second looks superficially clean (`t`
-captured, word is "Bisericeşti") but the literal text already contains
-both an `s` *and* a `t` before the junk where the correct word only has
-`ş` (one letter) -- meaning this one is also not a simple before-letter
-attach once inspected closely. **Before adding `s`/`t`/`c` to
-`_MARC8_BARE_COMBINING_BEFORE_OVERRIDES`, every occurrence in
-`working/GTU_bibs_0xA6_sample.mrc` needs the same full-field diff
-check (fix on vs. off) the Lessons Learned section above mandates --
-not done yet this session.** The non-Romanian contaminants (`Baş/Basra`,
-`Upanişad`/Sanskrit retroflex-ş, `al-Muhtaşar`) also need to be confirmed
-as a small, droppable minority rather than a sign the `s`/`t` groups are
-mixed the way `0xA4`'s `l`/`t` groups were.
+**Full-field diff (fix on vs. off, every record in
+`working/GTU_bibs_0xA6_sample.mrc`, `working/diff_0xa6_override.py`,
+gitignored) split the `c`/`s`/`t` cluster: `c` confirmed clean, `s`/`t`
+rejected.** `c` alone: 57 changed subfields, zero regressions, all
+correct ("Franc<esc>...>ois" -> "François", "revelac<esc>...>a..." ->
+"revelação") -- added as a new `_MARC8_BARE_COMBINING_RESTRICTED_BEFORE`
+entry (`"\xa6": "c"`) with mark `\xf0` in `_MARC8_BARE_COMBINING_BYTES`,
+plus three regression tests in `TestFixMarc8DiacriticEscapes`
+(`tests/test_marc_repair_bib.py`) mirroring the `0xA4`/`z` ones. `s`/`t`
+tried the same way and **rejected** -- the full diff found two real
+regressions `c` didn't have:
+
+- An off-by-one mark placement (record `.b11564295`, field `710 $b`,
+  "Serviciul Relati<esc>...>i Externe Bisericest<esc>...>i"): the
+  second occurrence looks like a clean `t`-attach ("Bisericeşti") but
+  the literal text already has both an `s` *and* a `t` before the junk
+  where the correct word only has `ş` (one letter) -- the mark
+  actually belongs on the `s`, one position before the captured `t`,
+  same off-by-one shape as `0xAE`'s Akkadian cluster. Confirmed this
+  isn't just this one word's quirk: record `.b13281069` has a
+  *different* "Bucureşti" occurrence with the identical one-letter
+  shift, even though every other "Bucureşti" in the corpus (several of
+  them) fixes correctly as a clean `s`-attach -- the underlying
+  corruption itself places the junk inconsistently for this shape, so
+  no amount of regex refinement makes `t` safe here.
+- A decoder-state regression (record `.b12911008`, field `245 $b`):
+  applying the trial override there doesn't just misplace one mark, it
+  leaves pymarc's `marc8_to_unicode` decoder stuck, turning a long
+  stretch of the subfield after the first mark into unreadable
+  combining-mark debris -- the same failure mode as `0xA5`'s rejected
+  `h` case, just triggered by `s`/`t` instead of `h`.
+
+`s`/`t` stay unfixed. Full-corpus re-run after adding the `c` override
+(`--log-full fixed_marc8_diacritic` against `working/GTU_bibs.mrc`):
+`fixed_marc8_diacritic` rose from 149,150/64,340 (the figure after the
+`0xA4` session) to 149,166 instances / 64,348 records -- a modest
++16/+8, consistent with the same counting-metric quirk `0xA4`'s `z`
+override hit (most `c` occurrences share a subfield with an
+already-counted fix). `suspect_marc8_escape` stayed at 1,258 records,
+unchanged -- expected, since almost every record with a `c` occurrence
+also has an unfixed `s`/`t` occurrence still flagging it. `pytest`
+(266 passed) and `flake8` both clean. `docs/MARC8_DIACRITIC_HANDLING.md`
+updated: `0xA6` moved from "Investigated, not implemented" into the
+"Overloaded" table/writeup, with the residual `a`-minority LC-catalog
+research kept as a trimmed note under the same byte.
 
 `0xC1`: the standard one-off regex (`working/find_0xc1_occurrences.py`,
 same template) found **zero** occurrences -- confirming the original
@@ -287,17 +306,11 @@ worth checking against a handful of other `Ã`-prefixed bytes in the
 corpus to see if there's a consistent `\xc3 + X -> Icelandic letter`
 table, not just these two) before any code change is even on the table.
 
-**Next steps for whoever resumes this:**
-1. `0xA6`: full-field diff (fix on vs. off, monkeypatching a trial
-   `_MARC8_BARE_COMBINING_BEFORE_OVERRIDES["\xa6"]` entry for `c`/`s`/`t`
-   -> cedilla) over every record in `working/GTU_bibs_0xA6_sample.mrc`,
-   same method as the `0xA5`/`h` rejection above -- expect to find and
-   exclude the `.b11564295`-style off-by-one cases, then decide if the
-   remaining clean majority is still large/clean enough to add.
-2. `0xC1`: grep `working/GTU_bibs.mrc` for other `\xc3`-prefixed pairs
-   (`\xc3\xb0` eth, `\xc3\xc1` unexplained-thorn, others?) to see if
-   there's a discoverable, consistent byte-pair table before concluding
-   this is unfixable like `0xB3`'s sigla.
+**Next steps for whoever resumes this:** `0xC1` is the only byte still
+open. Grep `working/GTU_bibs.mrc` for other `\xc3`-prefixed pairs
+(`\xc3\xb0` eth, `\xc3\xc1` unexplained-thorn, others?) to see if
+there's a discoverable, consistent byte-pair table before concluding
+this is unfixable like `0xB3`'s sigla.
 
 **Lessons learned this session (read before starting `0xAE`):**
 
