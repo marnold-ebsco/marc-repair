@@ -462,17 +462,36 @@ class TestFixMarc8DiacriticEscapes:
         assert len(details) == 1
         assert parsed.fields[0].content == "note Haur\xe2eau end"
 
-    def test_q_g_payload_not_in_table_left_for_human_review(self):
-        # ("Q", "G") was removed from _MARC8_DIACRITIC_PAYLOADS: the
-        # same payload means breve in Korean romanization elsewhere in
-        # the corpus, but macron in this real Arabic example
-        # (working/GTU_bibs_sample50.mrc record .b10001888, "Yanbu" +
-        # this escape + "'" = "Yanbū'"). Ambiguous -- must stay
-        # unfixed rather than guess.
-        raw = "Yanbu\x1bp+\x1bs\x1b(QG\x1b(B"
+    def test_recovers_breve_for_q_g_payload_in_ordinary_context(self):
+        # ("Q", "G") means breve -- confirmed against all 2,920
+        # occurrences in the full working/GTU_bibs.mrc: the
+        # overwhelming majority are Russian "-iĭ" name endings
+        # (Krachkovskii, Georgii) and Korean vowels (Sŏul, Yŏn), not
+        # the rare Arabic exception (see the next test).
+        parsed = self._record("Krachkovskii\x1bp+\x1bs\x1b(QG, \x1b(BI. I.")
+        details = m.fix_marc8_diacritic_escapes(parsed)
+        assert len(details) == 1
+        assert parsed.fields[0].subfields == [("a", "Krachkovski\xe6i, I. I.")]
+
+    def test_q_g_payload_left_unfixed_near_arabic_al_article(self):
+        # Checked against the full corpus: of 2,920 ("Q", "G")
+        # occurrences, only 8 are genuinely Arabic (needing macron, not
+        # breve) -- and every one of those 8 has the literal "al-"
+        # article within a few characters, which Korean/Russian words
+        # never do (real example: working/GTU_bibs.mrc, Ibn Gabirol
+        # record, "Yanbu" + this escape + more stray junk + ayn + " al-
+        # h..." = "Yanbū' al-Ḥayāh"). That's checked as a narrow
+        # exception rather than removing the whole payload from the
+        # table -- see _MARC8_AMBIGUOUS_NEAR_AL_PAYLOADS.
+        raw = "Yanbu\x1bp+\x1bs\x1b(QG\x1b(B\x1bp(\x1bs\xbb al-haya"
         parsed = self._record(raw)
-        assert m.fix_marc8_diacritic_escapes(parsed) == []
-        assert parsed.fields[0].subfields == [("a", raw)]
+        details = m.fix_marc8_diacritic_escapes(parsed)
+        # the ayn (standalone, unambiguous) still gets fixed; only the
+        # ambiguous Q/G escape right before it is left alone
+        assert len(details) == 1
+        assert parsed.fields[0].subfields == [
+            ("a", "Yanbu\x1bp+\x1bs\x1b(QG\x1b(B\xb0 al-haya")
+        ]
 
     def test_recovers_bare_combining_dot_below(self):
         # Real production example (record .b10001785, tag 600 $t):
@@ -532,6 +551,46 @@ class TestFixMarc8DiacriticEscapes:
         m.fix_marc8_diacritic_escapes(parsed)
         m.transcode_marc8_to_utf8(parsed)
         assert parsed.fields[0].subfields == [("a", "Ihyaʼ al-ʻulum")]
+
+    def test_recovers_punctuation_trapped_inside_escape_close(self):
+        # Real production example (working/GTU_bibs.mrc): the closing
+        # \x1b(B and the plain ASCII space that should follow it got
+        # swapped, trapping the space *inside* the escape --
+        # "Facolta" + grave + " " (trapped) + close + "di lettere"
+        # should read "Facoltà di lettere" (a common Italian phrase).
+        # ~81,000 occurrences of this shape exist in the full corpus.
+        parsed = self._record("la Facolta\x1bp+\x1bs\x1b(QA \x1b(Bdi lettere")
+        details = m.fix_marc8_diacritic_escapes(parsed)
+        assert len(details) == 1
+        assert parsed.fields[0].subfields == [("a", "la Facolt\xe1a di lettere")]
+
+    def test_trapped_punctuation_case_transcodes_to_correct_utf8(self):
+        parsed = self._record("la Facolta\x1bp+\x1bs\x1b(QA \x1b(Bdi lettere")
+        m.fix_marc8_diacritic_escapes(parsed)
+        m.transcode_marc8_to_utf8(parsed)
+        assert parsed.fields[0].subfields == [("a", "la Facoltà di lettere")]
+
+    def test_trapped_punctuation_run_can_be_several_characters(self):
+        # Two escapes back to back, the second with a 2-char trapped
+        # run (comma + space) instead of just one -- confirms the
+        # capture isn't limited to a single trapped character.
+        parsed = self._record(
+            "The\x1bp+\x1bs\x1b(QB\x1b(Bre\x1bp+\x1bs\x1b(QA, \x1b(Bthe little"
+        )
+        details = m.fix_marc8_diacritic_escapes(parsed)
+        assert len(details) == 1
+        assert parsed.fields[0].subfields == [("a", "Th\xe2er\xe1e, the little")]
+
+    def test_does_not_treat_high_bit_byte_after_payload_as_trapped_punctuation(self):
+        # The trapped-punctuation capture is restricted to the plain
+        # ASCII range (0x20-0x7E) specifically so it can never scoop up
+        # a high-bit byte that might be genuine multi-character
+        # foreign-script content under the same charset switch -- stays
+        # unfixed/for human review rather than guessing.
+        raw = "Haure\x1bp+\x1bs\x1b(QB\xa0\x1b(Bau"
+        parsed = self._record(raw)
+        assert m.fix_marc8_diacritic_escapes(parsed) == []
+        assert parsed.fields[0].subfields == [("a", raw)]
 
 
 class TestFindSuspectMarc8Escapes:

@@ -319,7 +319,9 @@ BIB_ROWS = [
         "standing in for an Arabic transliteration mark (dot-below, "
         "hamza, ayn; see `_MARC8_BARE_COMBINING_BYTES`/"
         "`_MARC8_BARE_STANDALONE_BYTES`) -- both confirmed by volume "
-        "against real production data",
+        "against real production data; also recovers plain ASCII "
+        "punctuation/whitespace trapped inside the escape when it and "
+        "the escape's closing sequence got swapped",
         "Reapplied the mark to (or reinserted it at) the position it "
         "was lost from",
         "Yes (`--no-fix-marc8-diacritic-escapes`)",
