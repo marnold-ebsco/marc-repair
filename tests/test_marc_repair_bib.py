@@ -2209,7 +2209,7 @@ class TestUnfixableErrorFile:
         content = _resolve_log(log).read_text(encoding="utf-8")
         assert "=== UNFIXABLE: unfixable" in content
         assert "no consistent directory found for this record at all" in content
-        assert "Problem filename: out_error.mrc\n" in content
+        assert "Problem filename: out_error.mrc (1 record)" in content
 
     def test_oversized_field_diverted_to_error_file(self, tmp_path):
         raw = self._oversized_field_record()
