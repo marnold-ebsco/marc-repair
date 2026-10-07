@@ -72,7 +72,7 @@ content and must not be touched. See `_MARC8_BARE_COMBINING_BYTES`/
 | `0xA5` | dot below (3rd byte) | combining | only after `r` | "R`<byte>`gveda" -> "Ṛgveda" |
 | `0xA7` | cedilla | combining | none | "franc`<byte>`ais" -> "français" |
 | `0xA8` | ogonek | combining | only after `a`, `e`, or `u` | "Ksia`<byte>`zka" -> "Książka" |
-| `0xA4` | diaeresis | combining | only after `u` | "U`<byte>`bersetzung" -> "Übersetzung" |
+| `0xA4` | diaeresis (default); dot below after `z` (override) | combining | only after `u`, or `z` with its own mark | "U`<byte>`bersetzung" -> "Übersetzung"; "Raz`<byte>`a" -> "Raẕa" |
 | `0xBC` | hamza (modifier apostrophe) | standalone | none | "Ihya`<byte>`" -> "Ihyāʼ" |
 | `0xBB` | ayn (modifier turned comma) | standalone | none | "`<byte>`ulum" -> "ʻulum" |
 | `0xB9` | prime (Russian soft sign) | standalone | none | "Il`<byte>`ich" -> "Ilʹich" |
@@ -99,18 +99,49 @@ confirmed is clean. Outside that context they're left alone for
   after `o` (needs a tilde two letters earlier in a Spanish name, not
   ogonek on "o" at all), and after `s` (needs breve or dot-below depending
   on the word).
-- `0xA4`: only 10 of 79 occurrences (13%) are `u` + diaeresis (German
-  "Übersetzung", "Beschlüsse", "Seegrün"). Every other before-letter needs
-  an **acute accent** instead (Spanish/Hungarian/Icelandic names like
-  "Calderón", "Gastón Espinosa") -- acute isn't in this bare-byte table at
-  all, so those are correctly left unfixed rather than given the wrong
-  mark.
+- `0xA4`: 10 of 79 occurrences (13%) are `u` + diaeresis (German
+  "Übersetzung", "Beschlüsse", "Seegrün"); a further 21 (27%) are `z` + dot
+  below (Persian/Arabic transliteration, e.g. "Riza" -> "Riẕa", "Murtaza"
+  -> "Murtaẕa", "qaziyya" -> "qaẕiyya") -- see
+  `_MARC8_BARE_COMBINING_BEFORE_OVERRIDES` in `marc_repair.py`, which lets
+  this one byte carry two different confirmed marks depending on the
+  before-letter. The remaining ~48 occurrences were investigated and
+  deliberately left unfixed, for two different reasons -- *not* "needs a
+  third mark" the way `z` needed a second one:
+  - Most (Spanish/Hungarian/Icelandic/Portuguese/Polish/Catalan: "Católica",
+    "Gastón Espinosa", "Tóth", "López", "Jerónimos") turn out to have lost
+    an entire base vowel (almost always "ó"), not just its mark -- the same
+    failure mode already known for the 3-byte CJK/EACC escape (see above),
+    just newly confirmed coming through this bare-byte path too. This
+    mechanism has no safe way to reapply a mark to a vowel that no longer
+    exists, so these stay unfixed rather than attaching a mark to the wrong
+    (consonant) letter.
+  - A handful reuse the *same* before-letter for both the dot-below case and
+    the destroyed-vowel case depending on the specific word (`l`/`L`:
+    Tamil "Tamilakam" -> "Tamiḻakam" needs dot-below, but "Theológicos" is a
+    destroyed vowel; `t`: Arabic "Khutba" -> "Khuṭba" needs dot-below, but
+    "Católica" is a destroyed vowel) -- these can't be generalized by
+    before-letter alone the way the `z` override could, so they're left for
+    human review too.
 
   (Recounted after the close-escape fix below: the original 93-occurrence
   figure included 14 false-positive matches where a close escape's own "B"
   byte was misread as the "before" letter -- `_MARC8_NOT_ESCAPE_DESIGNATOR_
   LOOKBEHIND` now excludes those, leaving 79 genuine occurrences. The 10
   confirmed `u` + diaeresis fixes are unaffected either way.)
+
+  **A counting quirk worth knowing if re-verifying this against a full
+  corpus run:** all 21 `z` occurrences happen to sit in a subfield that
+  already contains a *different* diacritic fix (e.g. the `h` in
+  "Muòtahharåi, Murtaza..." was already being fixed by the `0xA3` row
+  above). `fixed_marc8_diacritic` logs (and the CLI's summary count) one
+  `detail` string per *subfield*, not per mark -- so the `z` override
+  firing correctly does not raise the corpus-wide instance count at all;
+  it just enriches a detail line that was already going to be logged. A
+  before/after instance-count diff is therefore the wrong way to confirm
+  this kind of fix landed -- diff the actual field text instead (confirmed
+  by diffing `working/GTU_bibs_0xA4_sample.mrc` with the override on vs.
+  off: instance count identical, 21 real text differences, all correct).
 
 ## Investigated, not implemented -- genuinely ambiguous or insufficient evidence
 

@@ -697,11 +697,14 @@ class TestFixMarc8DiacriticEscapes:
     def test_recovers_bare_combining_diaeresis_restricted_to_u(self):
         # Real production examples (working/GTU_bibs.mrc): 0xA4 is
         # overloaded -- confirmed by volume as diaeresis only after
-        # "u" (10 of 93 occurrences -- German u-umlaut, e.g.
-        # "Ubersetzung" -> "Ubersetzung" with u-diaeresis). Every other
-        # before-letter in the full occurrence list needs an ACUTE
-        # accent instead (Spanish/Hungarian/Icelandic names), which
-        # isn't in this table at all -- must not fire there.
+        # "u" (10 of 79 occurrences -- German u-umlaut, e.g.
+        # "Ubersetzung" -> "Ubersetzung" with u-diaeresis). Most of the
+        # rest of the occurrence list is a harder, different corruption
+        # (an entire base vowel destroyed, not just its mark -- see
+        # docs/MARC8_DIACRITIC_HANDLING.md) that this mechanism can't
+        # safely handle at all; "z" is the one other before-letter with
+        # its own confirmed, different mark -- see the override test
+        # below.
         parsed = self._record("U\x1bp+\x1bs\xa4bersetzung")
         details = m.fix_marc8_diacritic_escapes(parsed)
         assert len(details) == 1
@@ -718,6 +721,25 @@ class TestFixMarc8DiacriticEscapes:
         m.fix_marc8_diacritic_escapes(parsed)
         m.transcode_marc8_to_utf8(parsed)
         assert parsed.fields[0].subfields == [("a", "Übersetzung")]
+
+    def test_recovers_bare_combining_dot_below_override_for_0xa4_after_z(self):
+        # Real production example (working/GTU_bibs.mrc, record
+        # .b14919874): 0xA4 after "z" is a different, confirmed mark
+        # (dot below, Persian/Arabic transliteration) than its default
+        # ("u" -> diaeresis) -- "Raz<junk>a" -> "Raẕa" (part of
+        # "Ahmad Raza", a Persian name). Confirmed against all 21 "z"
+        # occurrences in the full corpus -- see
+        # _MARC8_BARE_COMBINING_BEFORE_OVERRIDES.
+        parsed = self._record("Raz\x1bp+\x1bs\xa4a")
+        details = m.fix_marc8_diacritic_escapes(parsed)
+        assert len(details) == 1
+        assert parsed.fields[0].subfields == [("a", "Ra\xf2za")]
+
+    def test_bare_combining_dot_below_override_transcodes_to_correct_utf8(self):
+        parsed = self._record("qaz\x1bp+\x1bs\xa4iyya")
+        m.fix_marc8_diacritic_escapes(parsed)
+        m.transcode_marc8_to_utf8(parsed)
+        assert parsed.fields[0].subfields == [("a", "qaẓiyya")]
 
     def test_recovers_escape_diacritic_immediately_followed_by_bare_byte(self):
         # Real production example (record .b10001463, tag 500):

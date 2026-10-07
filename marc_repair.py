@@ -2372,7 +2372,10 @@ _MARC8_AMBIGUOUS_CONTEXT_RADIUS = 15
 #: it corrupted, so (unlike 0xA3/0xA7 above) they're only safe to fix
 #: in the specific before-letter context where the evidence is actually
 #: clean; see `_MARC8_BARE_COMBINING_RESTRICTED_BEFORE` below for what
-#: each byte is NOT applied to, and why:
+#: each byte is NOT applied to, and why (and
+#: `_MARC8_BARE_COMBINING_BEFORE_OVERRIDES` for the one case, 0xA4,
+#: where a *different* before-letter needs a genuinely different mark
+#: rather than just being excluded):
 #: - 0xAE: dot below, but only after "h" (109 of 135 occurrences, 81%)
 #:   -- confirmed-by-volume Near Eastern/biblical names ("H<junk>\xaeammurabi"
 #:   -> "Ḥammurabi", "Yarih<junk>\xae" -> "Yariḥ"). The other before-letters
@@ -2397,13 +2400,32 @@ _MARC8_AMBIGUOUS_CONTEXT_RADIUS = 15
 #:   recounted after the close-escape fix below removed 14 false-positive
 #:   matches from the original 93) -- confirmed-by-volume German ü
 #:   ("U<junk>\xa4bersetzung" -> "Übersetzung", "Beschlu<junk>\xa4sse" ->
-#:   "Beschlüsse", "Seegru<junk>\xa4n" -> "Seegrün"). Every other
-#:   before-letter in the full occurrence list needs an ACUTE accent
-#:   instead (Spanish/Hungarian/Icelandic names like
-#:   "Calder<junk>\xa4n" -> "Calderón", "Gastn<junk>\xa4 Espinosa" ->
-#:   "Gastón Espinosa") -- acute isn't in this table at all yet, so those
-#:   stay unfixed/for human review rather than silently (and wrongly)
-#:   getting a diaeresis.
+#:   "Beschlüsse", "Seegru<junk>\xa4n" -> "Seegrün"); dot below after "z"
+#:   instead (21 occurrences, confirmed-by-volume Persian/Arabic
+#:   transliteration -- see `_MARC8_BARE_COMBINING_BEFORE_OVERRIDES`
+#:   for the full word list). The remaining ~48 occurrences were
+#:   investigated and left unfixed, for two different reasons, NOT just
+#:   "needs a different mark" the way the overload above does:
+#:   - A large share (Spanish/Hungarian/Icelandic/Portuguese/Polish/
+#:     Catalan names and terms: "Cat<junk>\xa4lica" -> "Católica",
+#:     "Gastn<junk>\xa4 Espinosa" -> "Gastón Espinosa", "T<junk>\xa4th"
+#:     -> "Tóth", "L<junk>\xa4pez" -> "López", "Jernimos" ->
+#:     "Jerónimos") turned out NOT to be a simple wrong-mark case at
+#:     all on closer reading: the escape destroyed an entire base
+#:     vowel (almost always "ó"), not just a mark -- the same failure
+#:     mode already documented for the 3-byte CJK/EACC escape, just
+#:     never previously confirmed coming through this bare-byte path.
+#:     This mechanism (attach one mark to the letter immediately
+#:     before the junk) has no safe way to handle that; attaching a
+#:     mark to "t" or "n" or "L" here would be wrong on every level.
+#:   - A smaller, genuinely mixed share uses the SAME before-letter for
+#:     BOTH the dot-below case above AND this destroyed-vowel case
+#:     depending on the specific word ("l"/"L": Tamil "Tamil<junk>\xa4akam"
+#:     -> "Tamiḻakam" needs dot-below, but "Theol<junk>\xa4gicos" ->
+#:     "Theológicos" is destroyed-vowel; "t": Arabic "Khut<junk>\xa4ba"
+#:     -> "Khuṭba" needs dot-below, but "Cat<junk>\xa4lica" is
+#:     destroyed-vowel) -- can't be generalized by before-letter alone
+#:     the way the confirmed overrides above can.
 #:
 #: Combining (modifies the letter immediately before the junk run, same
 #: mark-before-letter ANSEL order as `_MARC8_DIACRITIC_PAYLOADS`):
@@ -2427,6 +2449,31 @@ _MARC8_BARE_COMBINING_RESTRICTED_BEFORE: dict[str, str] = {
     "\xa5": "r",
     "\xa8": "aeu",
     "\xa4": "u",
+}
+
+#: Byte -> {before-letter (lowercase): the DIFFERENT mark that specific
+#: before-letter needs instead of the byte's default mark above.
+#: 0xA4 is overloaded with more than one *confirmed* mark depending on
+#: the before-letter, not just "default mark or leave alone": after "z"
+#: it's combining dot below, not diaeresis (confirmed against all 21
+#: occurrences in the full working/GTU_bibs.mrc -- consistently Persian/
+#: Arabic transliteration, e.g. "qaz<junk>\xa4iyya" -> "qaẕiyya",
+#: "Riz<junk>\xa4a" -> "Riẕa", "Ramaz<junk>\xa4a<junk>\xa4n" ->
+#: "Ramaẕān", "Afz<junk>\xa4al" -> "Afẕal", "al-Faz<junk>\xa4l" ->
+#: "al-Faẕl", "Rawz<junk>\xa4at" -> "Rawẕat", "Murtaz<junk>\xa4a" ->
+#: "Murtaẕa"). An entry here is checked before
+#: `_MARC8_BARE_COMBINING_RESTRICTED_BEFORE` and, when it matches,
+#: overrides the byte's default mark/restriction entirely for that
+#: before-letter.
+#:
+#: The other ~48 non-u/z occurrences of 0xA4 in the same corpus were
+#: investigated and deliberately NOT added here -- see
+#: docs/MARC8_DIACRITIC_HANDLING.md's "Investigated, not implemented"
+#: section for why (mostly a different, harder corruption shape this
+#: mechanism can't safely handle at all: the escape destroyed an entire
+#: base vowel, not just its mark).
+_MARC8_BARE_COMBINING_BEFORE_OVERRIDES: dict[str, dict[str, str]] = {
+    "\xa4": {"z": "\xf2"},  # -> ANSEL combining dot below (e.g. z -> ẕ)
 }
 
 #: Standalone (a modifier letter in its own right, not combining with
@@ -2566,6 +2613,9 @@ _MARC8_BARE_COMBINING_RE = re.compile(
 
 def _marc8_bare_combining_replacement(match: "re.Match[str]") -> str:
     before, byte = match.group(1), match.group(2)
+    override_mark = _MARC8_BARE_COMBINING_BEFORE_OVERRIDES.get(byte, {}).get(before.lower())
+    if override_mark is not None:
+        return override_mark + before  # ANSEL order: combining byte precedes its base letter
     mark = _MARC8_BARE_COMBINING_BYTES.get(byte)
     if mark is None:
         return match.group()

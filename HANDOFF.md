@@ -10,7 +10,7 @@ current state and open items.
 
 `marc8-diacritic-fix` was merged into `main` via
 [marc-repair#1](https://github.com/marnold-ebsco/marc-repair/pull/1) and the
-branch deleted (local + remote). Nothing is in progress.
+branch deleted (local + remote).
 
 Since the merge, `marc_repair.py` (tip of `main`) was run against two
 previously-untried corpora as a sanity check, both clean -- no new patterns,
@@ -23,7 +23,45 @@ no code changes needed:
   unfixable. Both MARC-8 diacritic categories are 0 records -- expected, this
   corpus is already declared UTF-8 (leader byte 9 == `'a'`).
 
-**Nothing further queued from the user as of this entry.**
+A new `0xA4` override (`z` -> combining dot below, 21 occurrences, found
+while investigating the 60-record sample `working/GTU_bibs_0xA4_sample.mrc`
+-- see `_MARC8_BARE_COMBINING_BEFORE_OVERRIDES` in `marc_repair.py`) was
+added, and a prior session's full-corpus re-run against `working/GTU_bibs.mrc`
+showed `fixed_marc8_diacritic` completely unchanged at 149,150 instances /
+64,340 records (log: `working/GTU_bibs_repaired_0xa4fix_log_20261007T181616Z.log`),
+which looked like the override wasn't reachable in the real pipeline at all.
+
+**Root-caused and confirmed working -- it's a counting-metric blind spot,
+not a code bug.** `fixed_marc8_diacritic` logs one `detail` string per
+*subfield*, not per mark fixed (`marc_repair.py`, where
+`fix_marc8_diacritic_escapes`'s per-field loop builds `detail`), and the
+corpus-wide "instance" count is just the count of those detail strings. All
+21 real `z` occurrences happen to sit in a subfield that *already* has a
+different diacritic fixed elsewhere in the same subfield (e.g. the `h` in
+"Muòtahharåi, Murtaza..." was already being fixed by the unrelated `0xA3`
+row) -- so the `z` override firing correctly doesn't add a *new* detail
+line, it just enriches one that was already going to be logged and counted.
+The instance count was therefore never going to move, override or no
+override; it was the wrong signal to verify against.
+
+Confirmed directly: diffing `working/GTU_bibs_0xA4_sample.mrc`'s repaired
+text with the override enabled vs. monkeypatched off shows the instance
+count identical (128 either way) but exactly 21 real text differences, all
+correct dot-below insertions (`Riza` -> `Riòza`, `Murtaza` -> `Murtaòza`,
+`qaziyah` -> `qaòzåiyah`, etc.) -- the override is reachable and correct in
+the real multi-escape pipeline, not just the hand-built unit-test fixtures.
+Regex ordering (suspect #1 from the prior entry) turned out fine: the
+escape-payload regex's "before" letter anchors on the letter *after* the
+`0xA4` byte in these records (since `0xA4` itself is excluded from what the
+junk-run can swallow), so it never consumes the `z`+junk+`0xA4` text before
+the bare-combining regex gets to it.
+
+Code change + regression tests committed (`_MARC8_BARE_COMBINING_BEFORE_OVERRIDES`
+and its two tests in `tests/test_marc_repair_bib.py`); docs
+(`docs/MARC8_DIACRITIC_HANDLING.md`) updated to describe the override, the
+~48 remaining unfixed `0xA4` occurrences (destroyed-vowel corruption, not a
+wrong-mark case), and this counting-metric caveat for anyone re-verifying a
+similar override against a full-corpus run in the future.
 
 ## Open items (deferred, not forgotten)
 
@@ -75,3 +113,153 @@ no code changes needed:
    export has been found to check against; the only holdings `.mrc` on disk
    belongs to an unrelated project/library, not a fair substitute. Deferred by
    the user. Not started.
+
+## HOWTO: re-run the 0xA4 disambiguation methodology for 0xAE, 0xA5, 0xA8
+
+Worked end-to-end for `0xA4` this session (confirmed `z` -> dot below as a new
+override; see `_MARC8_BARE_COMBINING_BEFORE_OVERRIDES` in `marc_repair.py` and
+`docs/MARC8_DIACRITIC_HANDLING.md`). `0xAE`, `0xA5`, and `0xA8` are each
+already restricted to one confirmed before-letter (`h`, `r`, and `a`/`e`/`u`
+respectively -- see `_MARC8_BARE_COMBINING_RESTRICTED_BEFORE`) with a chunk of
+real occurrences left unconfirmed outside that restriction (26/135, 67/318,
+76/324 -- see `docs/MARC8_DIACRITIC_HANDLING.md`'s table). This is the same
+kind of "is there a second confirmed mark hiding in the leftovers" question
+`0xA4` just answered for `z` -- not yet done for these three. **Not started;
+not scoped as "do this automatically" -- read the whole thing before running
+anything, since step 4 below is where the real judgment calls are.**
+
+### 1. Find the records (build a TSV report)
+
+Adapt `working/find_0xa4_occurrences.py` (still on disk, gitignored) -- change
+only `TARGET_BYTE` (and the output filenames) for the new byte. The core loop:
+
+```python
+import sys, csv
+sys.path.insert(0, '/home/marnold/scratch/marc_repair')
+import marc_repair as m
+
+PATH = 'working/GTU_bibs.mrc'
+TARGET_BYTE = '\xae'  # or '\xa5', '\xa8'
+
+# ... render_010/render_oclc_035/render_245/render_907a/render_066 helpers,
+# copied verbatim from working/find_0xa4_occurrences.py ...
+
+rows, matched_record_texts = [], []
+for i, (parsed, rec_text) in enumerate(m.iter_repair_stream(PATH)):
+    if parsed.unresolved:
+        continue
+    # ... gather per-record metadata via the render_* helpers ...
+    record_has_match = False
+    for f in parsed.fields:
+        texts = [('', f.content or '')] if f.is_control() else f.subfields
+        for code, data in texts:
+            if data is None:
+                continue
+            for mm in m._MARC8_BARE_COMBINING_RE.finditer(data):
+                before, byte = mm.group(1), mm.group(2)
+                if byte != TARGET_BYTE:
+                    continue
+                # before = the letter immediately preceding the junk run --
+                # this IS the letter a combining mark would attach to, not
+                # the letter after. Don't get this backwards (see step 4).
+                record_has_match = True
+                # ... append a row with record_id/010a/oclc_035/field/
+                # before_letter/context/title_245/907a/066 ...
+    if record_has_match:
+        matched_record_texts.append(rec_text)
+```
+
+Run it with the venv active: `source venv/bin/activate && python3
+working/find_0x<BYTE>_occurrences.py`. Reusing `m._MARC8_BARE_COMBINING_RE`
+(not a hand-rolled regex) matters -- it already has the close-escape-B
+exclusion and junk-fragment caps this session's fixes added; a naive regex
+will overcount, the same way the stale "93" count for `0xA4` did (see
+`docs/HANDOFF_HISTORY.md`).
+
+### 2. Write the report (TSV)
+
+Same `csv.DictWriter` block as `working/find_0xa4_occurrences.py`'s tail --
+columns `record_index, record_id, 010a, oclc_035, field, before_letter,
+context, title_245, 907a, 066`, written to
+`working/0x<BYTE>_occurrences.tsv`. Group by `before_letter` first
+(`cut -f6 ... | sort | uniq -c | sort -rn`) to see the shape of the leftovers
+before reading anything -- that's what surfaced `0xA4`'s "z" cluster (21 of 79
+occurrences, previously invisible inside a generic "everything but u" bucket).
+
+### 3. Create the MARC sample file
+
+Same loop already does this -- `matched_record_texts` collects each
+*matched* record's raw, original `rec_text` (not the parsed/re-rendered
+version) once per record, written out with:
+
+```python
+encoding_used = m.detect_encoding(PATH)
+with open('working/GTU_bibs_0x<BYTE>_sample.mrc', 'wb') as sample_fh:
+    for rec_text in matched_record_texts:
+        sample_fh.write(rec_text.encode(encoding_used, errors='surrogateescape'))
+```
+
+Sanity-check it parses clean before trusting it: re-run `iter_repair_stream`
+over the new sample file and assert `not parsed.unresolved` for every record.
+
+### 4. The actual disambiguation (the part that isn't mechanical)
+
+For each before-letter group in the TSV, reconstruct the candidate word under
+a specific mark hypothesis and check whether it's a real word/name:
+
+```python
+import pymarc
+# mark-before-letter ANSEL order: combining byte goes BEFORE the base letter
+# it modifies, e.g. dot-below (\xf2) + "z" -> "ẕ"
+candidate = (before + '\xf2' + after_fragment).encode('latin-1', errors='replace')
+print(pymarc.marc8.marc8_to_unicode(candidate))
+```
+
+Try each of the already-known marks first (dot below `\xf2`, cedilla `\xf0`,
+ogonek `\xf1`, diaeresis `\xe8`, acute `\xe2`) before assuming a new one is
+needed -- `0xA4`'s "z" cluster turned out to need dot below, the *same* mark
+`0xA3`/`0xAE`/`0xA5` already produce, not a new one.
+
+**Three traps found doing this for `0xA4`, all of which will recur:**
+
+- **Same before-letter, different treatment depending on the word.** `0xA4`'s
+  `l`/`L` needed dot below for Tamil ("Tamil<junk>akam" -> "Tamiḻakam") but
+  was a *different, unfixable* corruption for Spanish ("Theol<junk>gicos" ->
+  "Theológicos" -- see next trap). Same for `t` (Arabic "Khut<junk>ba" ->
+  "Khuṭba" vs. Spanish "Cat<junk>lica" -> "Católica"). If a before-letter
+  group's context lines look linguistically mixed, do NOT add it as a clean
+  override -- it can't be generalized by before-letter alone with this
+  mechanism.
+- **The base letter itself was destroyed, not just its mark** -- this is the
+  big one, and it's why roughly 48 of `0xA4`'s 79 occurrences stayed
+  unfixed. "Cat<junk>lica" is missing the whole "ó" between "t" and "l", not
+  a mark attached to "t" -- same failure mode as the already-known 3-byte
+  CJK/EACC escape case, just showing up through the bare-byte path too. The
+  tell: the reconstructed "before+mark" candidate doesn't read as a real
+  word AT ALL (not just a different accent) once you spell out the rest of
+  the word by hand. `_MARC8_BARE_COMBINING_BYTES`'s whole mechanism assumes
+  the base letter survives right before the junk -- it structurally cannot
+  fix this shape; don't try to force it in via `_MARC8_BARE_COMBINING_BEFORE_OVERRIDES`.
+- **The mark can belong to the letter AFTER the junk, not before.** Found
+  once in `0xA4` ("J<junk>o<esc>nsson" -- the "o" survived, just lost its own
+  accent, so "Jónsson" needs the mark on "o", not "J"). This mechanism only
+  ever attaches to the *before* letter; a before-after case like this needs a
+  different fix entirely and should be left alone, not forced.
+
+### 5. If a byte gets a clean new override
+
+Add it to `_MARC8_BARE_COMBINING_BEFORE_OVERRIDES` (`marc_repair.py`, next to
+the `0xA4`/`z` entry already there) -- `{byte: {before_letter_lowercase:
+mark}}`. Update the byte's own comment block above
+`_MARC8_BARE_COMBINING_BYTES` with the occurrence count and real-word
+examples, same style as the `0xA4` entry. Add regression tests to
+`TestFixMarc8DiacriticEscapes` mirroring
+`test_recovers_bare_combining_dot_below_override_for_0xa4_after_z` /
+`test_bare_combining_dot_below_override_transcodes_to_correct_utf8`
+(`tests/test_marc_repair_bib.py`) -- **double-check the raw test string has
+the before-letter positioned correctly** (immediately before the junk run,
+not after) -- this tripped up the `0xA4` tests twice during this session.
+Update `docs/MARC8_DIACRITIC_HANDLING.md`'s table/restricted-bytes section
+and this file. Re-run full `pytest`/`flake8`, then the full-corpus re-run
+against `working/GTU_bibs.mrc` with `--log-full fixed_marc8_diacritic` to
+confirm the new override's occurrence count and that nothing else moved.
