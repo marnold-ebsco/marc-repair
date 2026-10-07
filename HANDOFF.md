@@ -1,5 +1,71 @@
 # Handoff Notes
 
+## TODO (deferred by user): `suspect_marc8_escape` stays detect-only -- external-authority lookup would be needed to actually fix most of these, not attempted
+
+Follow-up to the `WTS_bibs_2026-10-01.out` analysis in
+`docs/MARC8_ESCAPE_ANALYSIS.md` (which covered 255 findings/150 records in
+that file), now measured against the full `working/GTU_bibs.mrc` run below.
+`suspect_marc8_escape` fires on **52,847 distinct records** in this file
+(258,202 individual findings) -- not a small edge case.
+
+Checked whether the existing same-file corpus-index lookup
+(`build_marc8_corpus_index`/`lookup_marc8_corpus_word`, on by default) covers
+enough of that volume to matter: it resolves a specific word for only
+**1,109 of the 52,847 records (~2%)** -- 298 via an exact corpus match (the
+"Tübingen" mechanism), 800 via the "...'s" apostrophe heuristic, 11 both.
+The remaining **51,738 records (~98%)** get only the generic "could be ö,
+é, ñ, ü -- verify against another source" hint. Unlike the WTS seminary
+file (where "Tübingen" alone recurs correctly 2,546 times), this GTU batch's
+vocabulary doesn't repeat enough internally for same-file matching to carry
+the load.
+
+Confirmed by hand on one example (record 3, `.b10000094`, tag 100 "Haure
++ <bogus escape> + au, B." / tag 245 same word, tag 100 $q "Barthe +
+<bogus escape> + lemy)"): the correct text ("Hauréau" / "(Barthélemy)") is
+recoverable, but only by matching this record's OCLC number
+(`035 $a (OCoLC)4359914`) against an external source -- in this case, LC's
+copy of the same bib (`id.loc.gov`/`search.catalog.loc.gov`, matched via
+LCCN `010 $a 68121324`). Nothing in the GTU record's own bytes encodes the
+lost diacritic; it was destroyed upstream before this file existed (same
+root-cause finding as the WTS analysis).
+
+**Decision: leave `suspect_marc8_escape` as detect-only for now.** Building
+an external-authority lookup (query LC/OCLC by the record's own `010`/`035`
+identifiers, suggest-only, never auto-applied) is a real option given how
+many records have one of those identifiers already in hand, but it's a
+different kind of feature than anything else in this tool -- network calls
+to an external bibliographic utility, matching/parsing another
+institution's MARC, rate limits, auth -- and needs its own scoping
+conversation rather than folding into this session. Not started.
+
+**Separately planned, also not yet implemented:** reformat the
+`suspect_marc8_escape` log line to be more readable and to surface
+whatever identifiers the record already carries, since a cataloger (or a
+future lookup feature) needs them to check against another source:
+
+- Collapse the *entire* escape run between the two real surrounding words
+  into one `[?]` marker in the quoted context, instead of today's raw
+  `\x1b` bytes plus a separate `'before'<escape>'after'` pair. Investigating
+  record 3's raw bytes while writing this note turned up why that pair is
+  often wrong: the field is actually `Haure` + `\x1bp+\x1bs` (an
+  *unrecognized* escape `find_suspect_marc8_escapes` doesn't match) +
+  `\x1b(QB\x1b(B` (the real, recognized Extended-Cyrillic escape) + `au, B.`.
+  The word-boundary search in `find_suspect_marc8_escapes`
+  (`marc_repair.py:2224-2227`) stops at the stray `\x1bs`'s trailing `s`,
+  so `word_before` comes out as `"s"` instead of `"Haure"` -- hence today's
+  misleading `'s'<escape>'a'` / `"s[?]au"` text. A real fix needs the
+  window-building logic to swallow unrecognized escape bytes adjacent to
+  the matched one, not just the matched escape itself.
+- Drop the "single Extended Cyrillic character embedded mid-word" preamble
+  (redundant with the category name + context).
+- Append `LCCN: <010 $a>` and `OCLC: <035 $a (OCoLC)...>` when present on
+  the record (both, if both exist; omit either that's missing) -- this
+  needs no new lookup, both are already in these records.
+
+Mocked up (not implemented):
+
+    record 3 (.b10000094)	tag 100: "Haure[?]au, B." -- likely a miskeyed accented letter (e.g. ö, é, ñ, ü); verify against another source. LCCN: 68121324. OCLC: 4359914
+
 ## DONE: full-corpus run against `working/GTU_bibs.mrc` (527.5MB, 404,957 records)
 
 Ran default settings (`python3 marc_repair.py working/GTU_bibs.mrc`):
