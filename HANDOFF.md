@@ -84,8 +84,81 @@ three occurrences in one title too garbled to confirm. No code change --
 `0xA8` stays restricted to `a`/`e`/`u`, same as before this check.
 `marc_repair.py`'s `0xA8` comment block and
 `docs/MARC8_DIACRITIC_HANDLING.md`'s table updated with the corrected
-counts and this breakdown. `0xAE` and `0xA5` still haven't had this
-re-check done -- see the HOWTO below.
+counts and this breakdown. Re-ran the same methodology against `0xA5`. Built
+`working/0xA5_occurrences.tsv` and `working/GTU_bibs_0xA5_sample.mrc` via
+`working/find_0xa5_occurrences.py` (gitignored): 291 occurrences across 197
+records (not 318 -- same stale-count effect). 251 (86%) are the
+already-confirmed `r` + dot below (Sanskrit vocalic r). Found a tempting
+but ultimately rejected second case -- see the "Lessons learned" entry
+right below this one for the full story, since it's the most important
+thing from this session. Short version: `h` (3 occurrences) reconstructs
+correctly in isolation as the same dot-below mark (Arabic
+"Muh<byte>ammad" -> "Muḥammad"), and was briefly added to
+`_MARC8_BARE_COMBINING_RESTRICTED_BEFORE["\xa5"]` (`"r"` -> `"rh"`) with
+two regression tests -- then reverted after discovering it makes one real
+record's transcoded output *more* garbled, not less, due to an unrelated
+decoder bug interacting with it. `_MARC8_BARE_COMBINING_RESTRICTED_BEFORE["\xa5"]`
+is back to `"r"` only; no net code change for `0xA5` this session beyond
+the comment-block/doc updates recording this investigation. The other 37
+occurrences (before-letters `t`/10, `n`/10, `s`/7, `a`/6, `g`/1, `d`/1,
+`b`/1, `m`/1) don't cluster into another confirmed mark either: `t`/`a`
+(Sanskrit, 16 total) are the vocalic-r mark landing after an entire
+following consonant-vowel run instead of right after the actual "r" it
+belongs to (e.g. "Smrt<byte>i" is "smṛti", not "smrṭi" -- 2 letters too
+far for this before-letter mechanism to reach); `n`/`s` (Greek, 17 total)
+are a destroyed vowel before the junk, not a missing mark on the letter
+immediately before it (e.g. "Orthodoxn<byte>" is "Orthodoxōn", missing
+the whole "ō" -- same destroyed-base-letter failure mode as `0xA4`'s
+leftovers); the last 4 (`g`/`d`/`b`/`m`, one each) are singletons too
+ambiguous to confirm. `marc_repair.py`'s `0xA5` comment block and
+`docs/MARC8_DIACRITIC_HANDLING.md`'s table updated to record all of this.
+Per explicit instruction, the full `working/GTU_bibs.mrc` corpus was never
+re-run this session -- all verification stayed scoped to the 197-record
+`working/GTU_bibs_0xA5_sample.mrc`.
+
+**Lessons learned this session (read before starting `0xAE`):**
+
+1. **A reconstructed word reading correctly in isolation is necessary but
+   not sufficient evidence for a before-letter addition.** The `0xA5`/`h`
+   case above is the concrete example: `"Muh<byte>ammad"` -> `"Muḥammad"`
+   is unambiguous on its own, but the third "h" occurrence in the full
+   corpus (`working/GTU_bibs.mrc`, record `.b18157713`, "Yah<byte> at
+   Elephantine") sits in a `505` subfield that *also* has an unrelated,
+   pre-existing escape-designator corruption earlier in the same string
+   (an unrecognized `\x1bp+\x1b\xe4...` sequence from a mis-encoded German
+   "Ägyptische"). That corruption leaves pymarc's `marc8_to_unicode`
+   stuck in a bad G1 charset state for the rest of the field. Diffing the
+   transcoded subfield with the fix on vs. off showed leaving the bare
+   `0xA5` byte alone happens to let the decoder resync afterward and
+   recover ~100 characters of legible trailing text, while applying the
+   *correct* dot-below substitution keeps the decoder stuck and garbles
+   that same trailing text instead. **Net effect: the semantically
+   correct fix made that specific real record's output worse, not
+   better.** Before adding any before-letter to
+   `_MARC8_BARE_COMBINING_RESTRICTED_BEFORE` (or any entry to
+   `_MARC8_BARE_COMBINING_BEFORE_OVERRIDES`), after confirming the word
+   reconstruction in isolation, also diff full-field transcoded output
+   (fix on vs. off) for *every* real occurrence in the corpus sample, not
+   just the occurrence(s) used to confirm the word -- a low occurrence
+   count (3, here) means it's cheap to check all of them by hand.
+2. **How to catch this:** monkeypatch
+   `_MARC8_BARE_COMBINING_RESTRICTED_BEFORE[byte]` between the old and
+   new value, run `fix_marc8_diacritic_escapes` +
+   `transcode_marc8_to_utf8` over the byte's `working/GTU_bibs_0x<BYTE>_sample.mrc`,
+   and diff every changed record's affected subfield text (not just
+   `len(details)` or an instance count -- those can both stay identical
+   while the actual rendered text gets worse, same caveat as the
+   `0xA4`/`z` instance-count blind spot documented earlier in this file).
+3. A sed-based script adaptation (`find_0xa4_occurrences.py` ->
+   `find_0xa5_occurrences.py`) missed `TARGET_BYTE = '\xa8'` because sed
+   was told to replace the text `0xa8`/`0xA8`, and the byte literal
+   `\xa8` doesn't contain that substring. Caught only because the
+   resulting before-letter distribution looked implausible (majority
+   class flipped entirely). Double-check every constant in a copied
+   script, not just the ones matching the obvious find/replace pattern,
+   when adapting one of these one-off scripts for a new byte.
+
+`0xAE` still hasn't had this re-check done -- see the HOWTO below.
 
 ## Open items (deferred, not forgotten)
 
@@ -138,24 +211,31 @@ re-check done -- see the HOWTO below.
    belongs to an unrelated project/library, not a fair substitute. Deferred by
    the user. Not started.
 
-## HOWTO: re-run the 0xA4 disambiguation methodology for 0xAE, 0xA5
+## HOWTO: re-run the 0xA4 disambiguation methodology for 0xAE
 
 Worked end-to-end for `0xA4` this session (confirmed `z` -> dot below as a new
 override; see `_MARC8_BARE_COMBINING_BEFORE_OVERRIDES` in `marc_repair.py` and
-`docs/MARC8_DIACRITIC_HANDLING.md`), and for `0xA8` in a later session (no new
+`docs/MARC8_DIACRITIC_HANDLING.md`), for `0xA8` in a later session (no new
 override -- the 12 leftover occurrences split across four small, unrelated
 groups, none clean/large enough; see the "Current state" entry above and
-`docs/MARC8_DIACRITIC_HANDLING.md`'s table). `0xAE` and `0xA5` are each still
-restricted to one confirmed before-letter (`h` and `r` respectively -- see
+`docs/MARC8_DIACRITIC_HANDLING.md`'s table), and for `0xA5` in a later session
+(no new override -- `h` looked like a clean addition in isolation, same
+dot-below mark `r` already gets, but was rejected after it was found to
+make a real record's transcoded output worse due to an unrelated decoder
+bug interacting with it; see the "Current state" entry and "Lessons
+learned" above -- **read that before starting `0xAE`**, since the same
+verification gap could hide the same kind of trap there too). `0xAE` is
+still restricted to one confirmed before-letter (`h` -- see
 `_MARC8_BARE_COMBINING_RESTRICTED_BEFORE`) with a chunk of real occurrences
-left unconfirmed outside that restriction (26/135, 67/318 as of the last
+left unconfirmed outside that restriction (26/135 as of the last
 count -- re-verify, since `0xA8`'s 76/324 figure turned out stale by the time
 it was actually re-checked; see `docs/MARC8_DIACRITIC_HANDLING.md`'s table).
 This is the same kind of "is there a second confirmed mark hiding in the
-leftovers" question `0xA4` answered for `z` and `0xA8` answered (in the
-negative) for its leftovers -- not yet done for these two. **Not started;
-not scoped as "do this automatically" -- read the whole thing before running
-anything, since step 4 below is where the real judgment calls are.**
+leftovers" question `0xA4` answered for `z` and `0xA8`/`0xA5` answered (in
+the negative, `0xA5` only after the detour above) -- not yet done
+for `0xAE`. **Not started; not scoped as "do this automatically" -- read
+the whole thing before running anything, since step 4 below is where the
+real judgment calls are.**
 
 ### 1. Find the records (build a TSV report)
 
@@ -274,6 +354,24 @@ needed -- `0xA4`'s "z" cluster turned out to need dot below, the *same* mark
   accent, so "Jónsson" needs the mark on "o", not "J"). This mechanism only
   ever attaches to the *before* letter; a before-after case like this needs a
   different fix entirely and should be left alone, not forced.
+- **A correct reconstruction in isolation can still make a real record
+  worse.** Found for `0xA5`'s `h` (not added, despite reconstructing
+  perfectly as "Muh<junk>ammad" -> "Muḥammad"): a different real "h"
+  occurrence ("Yah<junk> at Elephantine", `.b18157713`) shares a subfield
+  with an unrelated, pre-existing escape-designator corruption that
+  leaves pymarc's `marc8_to_unicode` in a bad charset state for the rest
+  of the field. Leaving the bare byte alone happened to let the decoder
+  resync afterward and recover ~100 characters of legible trailing text;
+  applying the semantically-correct fix kept the decoder stuck and
+  garbled that same trailing text instead. **Before trusting any
+  before-letter group as "confirmed," diff full-field transcoded output
+  (fix on vs. off, via monkeypatching
+  `_MARC8_BARE_COMBINING_RESTRICTED_BEFORE`/`_MARC8_BARE_COMBINING_BEFORE_OVERRIDES`)
+  for every real occurrence in the sample file, not just enough of them
+  to confirm the word** -- checking `len(details)` or an instance count
+  is not enough, same blind spot as the `0xA4`/`z` counting-metric trap
+  documented earlier in this file, just manifesting as a *regression*
+  instead of an invisible no-op this time.
 
 ### 5. If a byte gets a clean new override
 

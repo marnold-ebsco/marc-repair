@@ -674,9 +674,15 @@ class TestFixMarc8DiacriticEscapes:
     def test_recovers_bare_combining_dot_below_third_byte_restricted_to_r(self):
         # Real production examples (working/GTU_bibs.mrc): 0xA5 is a
         # third corrupted-byte representation of the same dot-below
-        # mark, confirmed by volume only after "r" (251 of 318
+        # mark, confirmed by volume only after "r" (251 of 291
         # occurrences -- Sanskrit IAST vocalic r, e.g. "Rgveda" ->
-        # "Rgveda" with dot-below r, a textbook-unambiguous word).
+        # "Rgveda" with dot-below r, a textbook-unambiguous word). "h"
+        # looked like a second clean case in isolation but was NOT
+        # added -- see `_MARC8_BARE_COMBINING_RESTRICTED_BEFORE`'s own
+        # comment and the dedicated regression test below for why
+        # (a real record where fixing it makes that record's output
+        # *more* garbled due to an unrelated decoder bug upstream in
+        # the same field).
         parsed = self._record("R\x1bp+\x1bs\xa5gveda")
         details = m.fix_marc8_diacritic_escapes(parsed)
         assert len(details) == 1
@@ -693,6 +699,25 @@ class TestFixMarc8DiacriticEscapes:
         m.fix_marc8_diacritic_escapes(parsed)
         m.transcode_marc8_to_utf8(parsed)
         assert parsed.fields[0].subfields == [("a", "Ṛgveda")]
+
+    def test_bare_combining_dot_below_third_byte_restriction_skips_h_too(self):
+        # "h" after 0xA5 reconstructs correctly in isolation
+        # ("Muh<junk>ammad" -> "Muhammad" with dot-below h, same mark
+        # 0xA3/0xAE already produce) and was briefly tried as an
+        # addition to the allowed-before set. Reverted: a real record
+        # (working/GTU_bibs.mrc .b18157713) has an "h" occurrence
+        # sharing a subfield with an unrelated, pre-existing
+        # escape-designator corruption that leaves pymarc's
+        # marc8_to_unicode decoder in a bad charset state for the rest
+        # of the field -- leaving the bare byte alone happens to let
+        # the decoder resync and recover the legible tail, while
+        # fixing it correctly keeps the decoder stuck and garbles that
+        # tail instead. Stays unfixed until that's resolved; see
+        # HANDOFF.md.
+        raw = "Muh\x1bp+\x1bs\xa5ammad"
+        parsed = self._record(raw)
+        assert m.fix_marc8_diacritic_escapes(parsed) == []
+        assert parsed.fields[0].subfields == [("a", raw)]
 
     def test_recovers_bare_combining_diaeresis_restricted_to_u(self):
         # Real production examples (working/GTU_bibs.mrc): 0xA4 is

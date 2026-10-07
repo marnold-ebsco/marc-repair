@@ -90,9 +90,45 @@ confirmed is clean. Outside that context they're left alone for
 
 - `0xAE`: 109 of 135 occurrences (81%) are `h` + dot-below (Near
   Eastern/biblical names). The rest are a scatter of unconfirmed words.
-- `0xA5`: 251 of 318 occurrences (79%) are `r` + dot-below (Sanskrit IAST
-  vocalic r -- "Ṛgveda", "Kṛṣṇa", both textbook-unambiguous). The rest are
-  Greek/Tibetan/Arabic transliteration that don't share one mark.
+- `0xA5`: 251 of 291 occurrences (86% -- recounted after the close-escape
+  fix removed 27 stale false-positive matches from the original 318, same
+  stale-count effect as `0xA4`/`0xA8`) are `r` + dot-below (Sanskrit IAST
+  vocalic r -- "Ṛgveda", "Kṛṣṇa", both textbook-unambiguous). `h` (3
+  occurrences) looked like a second clean case *in isolation* -- the SAME
+  dot-below mark `0xA3`/`0xAE` already produce, confirmed-by-volume-of-2
+  ("Muh`<byte>`ammad" -> "Muḥammad") -- but was **not added**: the third
+  "h" occurrence ("Yah`<byte>` at Elephantine", real record `.b18157713`
+  in `working/GTU_bibs_0xA5_sample.mrc`) sits in the same subfield as an
+  unrelated, pre-existing escape-designator corruption earlier in the
+  string that leaves pymarc's `marc8_to_unicode` decoder stuck in a bad
+  G1 charset state for the rest of the field. Confirmed by diffing
+  transcoded output with the fix enabled vs. disabled on that exact
+  subfield: leaving the bare `0xA5` byte untouched happens to let the
+  decoder resync and recover the ~100 characters of legible text after it
+  ("Bob Becking -- The Judeans/Arameans..."); replacing it with the
+  correct dot-below + "h" keeps the decoder in the broken state and that
+  whole tail renders as placeholder glyphs instead -- the semantically
+  *correct* fix makes this real record's output *more* garbled, not less.
+  **Lesson: a before-letter reconstruction that reads correctly in
+  isolation isn't sufficient evidence -- it must also be checked against
+  the full surrounding field text in a real sample record, since
+  unrelated corruption earlier in the same field can interact with the
+  fix in ways a standalone test string won't reveal.** Left unfixed
+  pending either a fix to the upstream escape-designator decoder bug or a
+  narrower guard; `_MARC8_BARE_COMBINING_RESTRICTED_BEFORE["\xa5"]` stays
+  `"r"`. The remaining 37 occurrences (before-letters `t`/10, `n`/10,
+  `s`/7, `a`/6, `g`/1, `d`/1, `b`/1, `m`/1) also don't cluster into
+  another confirmed mark: the `t`/`a` groups are Sanskrit words where the
+  vocalic-r mark lands after an entire following consonant-vowel run
+  rather than right after the actual "r" (e.g. "Smrt`<byte>`i" is
+  "smṛti", not "smrṭi" -- the mark belongs 2 letters before the junk,
+  which this before-letter mechanism structurally can't reach); the
+  `n`/`s` groups are Greek words with a destroyed vowel before the junk,
+  not a missing mark on the letter immediately before it (e.g.
+  "Orthodoxn`<byte>`" is "Orthodoxōn", missing the whole "ō", same
+  destroyed-base-letter failure mode as `0xA4`'s leftovers); and the last
+  4 (`g`/`d`/`b`/`m`, one occurrence each) are singletons too ambiguous to
+  confirm on their own.
 - `0xA8`: 248 of 260 occurrences (95% -- recounted after the close-escape
   fix removed 64 stale false-positive matches from the original 324, same
   stale-count effect as `0xA4`'s 93 -> 79) are `a`/`e` + ogonek (Polish) or
