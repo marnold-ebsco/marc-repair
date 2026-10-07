@@ -379,6 +379,90 @@ class TestParseDirectoryTerminatorCoincidence:
 # transcode_marc8_to_utf8 -- ANSEL diacritics -> Unicode
 # ---------------------------------------------------------------------------
 
+class TestFixMarc8DiacriticEscapes:
+    def _record(self, raw_a, tag="880", fields=None):
+        leader = list(_SYNTHETIC_LEADER)
+        leader[9] = " "  # declare MARC-8
+        return m.ParsedRecord(
+            leader="".join(leader),
+            entries=[],
+            fields=fields if fields is not None else [m.Field_(tag, "10", [("a", raw_a)])],
+        )
+
+    def test_recovers_acute_accent_with_stray_junk_before_real_escape(self):
+        # Real production example (working/GTU_bibs.mrc, record .b10000094,
+        # tag 100): "Haure" + stray unrecognized escape bytes `\x1bp+\x1bs`
+        # + the real, recognized Extended-Cyrillic escape `\x1b(QB\x1b(B`
+        # + "au, B." -- the base letter "e" survives intact; only the
+        # acute mark was lost. The escape is replaced with the genuine
+        # ANSEL combining-acute byte (0xE2), placed *before* its base
+        # letter per real MARC-8 convention, not a precomposed "é" --
+        # the record is still MARC-8 at this point (leader[9] == " "),
+        # left for transcode_marc8_to_utf8 to turn into real UTF-8.
+        parsed = self._record("Haure\x1bp+\x1bs\x1b(QB\x1b(Bau, B.")
+        details = m.fix_marc8_diacritic_escapes(parsed)
+        assert len(details) == 1
+        assert parsed.fields[0].subfields == [("a", "Haur\xe2eau, B.")]
+
+    def test_recovers_grave_accent_no_stray_junk(self):
+        parsed = self._record("sie\x1b(QA\x1b(Bcle")
+        details = m.fix_marc8_diacritic_escapes(parsed)
+        assert len(details) == 1
+        assert parsed.fields[0].subfields == [("a", "si\xe1ecle")]
+
+    def test_recovers_cedilla_under_basic_arabic_charset(self):
+        parsed = self._record("Franc\x1b(3L\x1b(Bois")
+        details = m.fix_marc8_diacritic_escapes(parsed)
+        assert len(details) == 1
+        assert parsed.fields[0].subfields == [("a", "Fran\xf0cois")]
+
+    def test_recovered_ansel_bytes_transcode_to_correct_utf8(self):
+        # End-to-end: the ANSEL bytes this function emits are exactly
+        # what transcode_marc8_to_utf8 (run right after it in the real
+        # pipeline) needs to produce the actual accented letter --
+        # confirming the fix isn't just escape-removal, it recovers
+        # the real character once the normal transcoding step runs.
+        parsed = self._record("Haure\x1bp+\x1bs\x1b(QB\x1b(Bau, B.")
+        m.fix_marc8_diacritic_escapes(parsed)
+        m.transcode_marc8_to_utf8(parsed)
+        assert parsed.fields[0].subfields == [("a", "Hauréau, B.")]
+
+    def test_leaves_unconfirmed_payload_untouched_for_human_review(self):
+        # Charset "S" (Basic Greek) isn't in _MARC8_DIACRITIC_PAYLOADS at
+        # all -- stays untouched here, still reaches
+        # find_suspect_marc8_escapes for a human to review.
+        raw = "Le\x1b(SA\x1b(Bonidas"
+        parsed = self._record(raw)
+        details = m.fix_marc8_diacritic_escapes(parsed)
+        assert details == []
+        assert parsed.fields[0].subfields == [("a", raw)]
+        findings = m.find_suspect_marc8_escapes(parsed)
+        assert len(findings) == 1
+
+    def test_fixed_escape_no_longer_flagged_by_suspect_marc8_escape(self):
+        parsed = self._record("Haure\x1bp+\x1bs\x1b(QB\x1b(Bau, B.")
+        m.fix_marc8_diacritic_escapes(parsed)
+        assert m.find_suspect_marc8_escapes(parsed) == []
+
+    def test_skipped_for_record_already_declaring_utf8(self):
+        leader = list(_SYNTHETIC_LEADER)
+        leader[9] = "a"  # already UTF-8
+        parsed = m.ParsedRecord(
+            leader="".join(leader), entries=[],
+            fields=[m.Field_("880", "10", [("a", "Haure\x1b(QB\x1b(Bau")])],
+        )
+        assert m.fix_marc8_diacritic_escapes(parsed) == []
+
+    def test_control_field_content(self):
+        parsed = self._record(
+            None, tag="500",
+            fields=[m.Field_("500", None, None, "note Haure\x1b(QB\x1b(Bau end")],
+        )
+        details = m.fix_marc8_diacritic_escapes(parsed)
+        assert len(details) == 1
+        assert parsed.fields[0].content == "note Haur\xe2eau end"
+
+
 class TestFindSuspectMarc8Escapes:
     def _record(self, raw_a, tag="880", fields=None):
         leader = list(_SYNTHETIC_LEADER)

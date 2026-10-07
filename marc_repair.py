@@ -2252,6 +2252,146 @@ def _record_oclc(parsed: ParsedRecord) -> str | None:
     return None
 
 
+#: Payload byte -> the correct raw ANSEL combining-diacritic byte
+#: (0xE0-0xFF range, latin-1-storable -- see the module-level comment
+#: on MARC-8/ANSEL above), for the single-raw-byte MARC-8 script-switch
+#: escapes (`_MARC8_SCRIPT_CHARSETS` entries with bytes_per_char == 1;
+#: the 3-byte CJK/EACC case "1" is excluded on purpose, see below).
+#: Derived empirically from `working/GTU_bibs.mrc`: grouping every
+#: occurrence of this escape shape by (charset, payload byte) and
+#: reading the real word fragments on both sides showed the payload
+#: byte reliably predicts one specific diacritic -- not a specific
+#: letter -- across thousands of self-consistent examples per payload
+#: (e.g. charset "Q" payload "B" -> acute, confirmed by
+#: "the\x1bp+\x1bs\x1b(QB\x1b(Bologie" = "theologie" + acute = "théologie",
+#: recurring 1,690 times; "sie\x1bp+\x1bs\x1b(QA\x1b(Bcle" = "siecle" +
+#: grave = "siècle", recurring 2,360 times -- see conversation notes,
+#: not yet written up as a docs/ file). That is a different, better-
+#: behaved situation than the 3-byte CJK/EACC case analyzed in
+#: docs/MARC8_ESCAPE_ANALYSIS.md: there, the escape swallows 3 raw bytes
+#: (the original diacritic byte, its base letter, AND one more plain
+#: letter), so the base letter is genuinely destroyed and no payload ->
+#: letter table exists. Here, only 1 raw byte (the diacritic itself) is
+#: swallowed -- the base letter survives intact immediately before the
+#: escape -- so the fix is "reapply this mark to the letter already
+#: there," not "guess a replacement letter."
+#:
+#: Each value is the genuine ANSEL byte for that mark (confirmed
+#: against pymarc's own `CHARSET_45` combining-character table, e.g.
+#: 0xE2 -> U+0301 combining acute), inserted *before* the base letter
+#: per real MARC-8/ANSEL convention (see the module comment above) --
+#: not a precomposed Unicode character. That keeps the fixed field
+#: entirely within the record's existing MARC-8/latin-1 byte space, so
+#: `transcode_marc8_to_utf8` (which runs right after this, unchanged)
+#: converts it to UTF-8 the normal way, through pymarc's own mapping
+#: tables, exactly as if the cataloger had typed the accent correctly
+#: in the first place -- rather than this function inventing its own
+#: partial Unicode conversion that the real transcoder downstream
+#: wouldn't recognize as already-done MARC-8 content.
+#:
+#: Deliberately NOT a complete mapping of every payload byte seen in
+#: that file: payloads with low occurrence counts, or that resolve to
+#: something other than "one diacritic mark on the adjacent letter"
+#: (e.g. charset "Q" payload 0x60 -> German sharp s "ß", a standalone
+#: letter substitution rather than a mark on the neighbor; charset "3"
+#: payload "C" -> the "oe" ligature "œ"; charset "3" payload "E" ->
+#: an apostrophe, not a diacritic at all) are left out of this table on
+#: purpose -- anything not in here still falls through to the
+#: detect-only `find_suspect_marc8_escapes` below, same as before this
+#: fixer existed.
+_MARC8_DIACRITIC_PAYLOADS: dict[tuple[str, str], str] = {
+    ("Q", "A"): "\xe1",  # ANSEL combining grave accent (e.g. e -> è)
+    ("Q", "B"): "\xe2",  # ANSEL combining acute accent (e.g. e -> é)
+    ("Q", "C"): "\xe3",  # ANSEL combining circumflex accent (e.g. e -> ê)
+    ("Q", "D"): "\xe4",  # ANSEL combining tilde (e.g. n -> ñ)
+    ("Q", "E"): "\xe5",  # ANSEL combining macron (e.g. e -> ē)
+    ("Q", "G"): "\xe6",  # ANSEL combining breve (e.g. o -> ŏ)
+    ("Q", "K"): "\xea",  # ANSEL combining ring above (e.g. a -> å)
+    ("Q", "M"): "\xe9",  # ANSEL combining caron/háček (e.g. z -> ž)
+    ("3", "L"): "\xf0",  # ANSEL combining cedilla (e.g. c -> ç)
+}
+
+#: Zero or more unrecognized, stray escape-byte runs (see
+#: `_marc8_escape_run_clusters`'s docstring) directly preceding the
+#: real, recognized script-switch escape this fixer targets -- real
+#: corrupted data mixes the two, e.g. "Haure" + `\x1bp+\x1bs` (stray,
+#: unrecognized) + `\x1b(QB\x1b(B` (the real escape this table resolves).
+#: Lazy (`*?`) so the following literal anchor is matched as soon as
+#: possible rather than this swallowing part of it.
+_MARC8_STRAY_ESCAPE_JUNK = r"(?:\x1b[^\x1b]{1,4})*?"
+
+_MARC8_DIACRITIC_ESCAPE_RE = re.compile(
+    r"([A-Za-z])" + _MARC8_STRAY_ESCAPE_JUNK
+    + r"\x1b\(([" + "".join(re.escape(c) for c, _ in _MARC8_DIACRITIC_PAYLOADS) + r"])(.)\x1b\(B"
+    + r"([A-Za-z])"
+)
+
+
+def _marc8_diacritic_replacement(match: "re.Match[str]") -> str:
+    before, charset, payload, after = match.group(1), match.group(2), match.group(3), match.group(4)
+    mark = _MARC8_DIACRITIC_PAYLOADS.get((charset, payload))
+    if mark is None:
+        return match.group()  # not one of the confirmed payloads -- leave untouched
+    return mark + before + after  # ANSEL order: combining byte precedes its base letter
+
+
+def fix_marc8_diacritic_escapes(parsed: ParsedRecord) -> list[str]:
+    """Recover a MARC-8 diacritic mark lost to the same escape-wrapping
+    corruption `find_suspect_marc8_escapes` flags, for the specific
+    subset of that corruption where the mark alone was swallowed (see
+    `_MARC8_DIACRITIC_PAYLOADS`) -- a genuine, verified fix, not a
+    guess, because the base letter it restores is the one already
+    sitting in the record: "Haure" + <escape> + "au" becomes "Haur" +
+    <genuine ANSEL combining-acute byte> + "eau" (the "e" and "au" were
+    never touched, only the acute mark between them was). That's still
+    raw MARC-8, not the final "Hauréau" -- this function only repairs
+    the escape; `transcode_marc8_to_utf8` (which runs immediately after
+    this in the real pipeline) turns it into actual UTF-8, through the
+    normal MARC-8 transcoding path, same as any other correctly-encoded
+    ANSEL diacritic in the file. Only the confirmed high-volume payloads
+    in `_MARC8_DIACRITIC_PAYLOADS` are handled; anything else (the
+    3-byte CJK/EACC case, or a single-byte payload not in the table) is
+    left alone and still reaches `find_suspect_marc8_escapes` for a
+    human to review, same as before this function existed.
+
+    Skipped entirely for a record already declaring UTF-8 (leader byte
+    9 == "a") -- same reasoning as `find_suspect_marc8_escapes`: no raw
+    MARC-8 escapes should exist there, and "fixing" one would risk
+    corrupting genuine content that happens to look similar.
+    """
+    if parsed.leader[9:10] == UNICODE_ENCODING_BYTE:
+        return []
+    details = []
+    for f in parsed.fields:
+        if f.is_control():
+            if f.content and "\x1b" in f.content:
+                fixed = _MARC8_DIACRITIC_ESCAPE_RE.sub(_marc8_diacritic_replacement, f.content)
+                if fixed != f.content:
+                    details.append(
+                        f"recovered lost MARC-8 diacritic in ={f.tag}: "
+                        f"{f.content!r} -> {fixed!r}"
+                    )
+                    f.content = fixed
+        else:
+            new_subfields = []
+            changed_codes = []
+            for code, data in f.subfields:
+                if data and "\x1b" in data:
+                    fixed = _MARC8_DIACRITIC_ESCAPE_RE.sub(_marc8_diacritic_replacement, data)
+                else:
+                    fixed = data
+                if fixed != data:
+                    changed_codes.append(code)
+                    new_subfields.append((code, fixed))
+                else:
+                    new_subfields.append((code, data))
+            if changed_codes:
+                f.subfields = new_subfields
+                codes = ",".join(f"${c}" for c in changed_codes)
+                details.append(f"recovered lost MARC-8 diacritic in ={f.tag} {codes}")
+    return details
+
+
 def find_suspect_marc8_escapes(
     parsed: ParsedRecord,
     corpus_index: "_Marc8CorpusIndex | None" = None,
@@ -4716,6 +4856,7 @@ _INFORMATIONAL = {
     "fixed_mojibake",
     "remapped_999_to_945",
     "oversized_sentinel_fixed",
+    "fixed_marc8_diacritic",
 }
 
 #: NEEDS REVIEW: a detect-only finding that's always listed in full
@@ -4947,6 +5088,12 @@ _CHECK_DESCRIPTIONS: dict[str, str] = {
     "'m' (Monograph/Item). NO DATA LOSS.",
     "fixed_mojibake": "Double-encoded UTF-8 (\"mojibake\") was "
     "corrected. NO DATA LOSS.",
+    "fixed_marc8_diacritic": "A MARC-8 diacritic mark was replaced "
+    "with a bogus script-switching escape sequence around a "
+    "confirmed-by-volume payload byte (e.g. \"Haure\" + <escape> + "
+    "\"au\" -> \"Hauréau\") -- the mark was reapplied to the letter "
+    "it was lost from. See suspect_marc8_escape for the same defect's "
+    "unconfirmed payloads, left for a human to review. NO DATA LOSS.",
     "remapped_999_to_945": "A 999 field was retagged to 945 "
     "(indicators forced to \"ff\") -- only with --remap-999-to-945. "
     "NO DATA LOSS.",
@@ -6096,6 +6243,19 @@ def main(argv: list[str] | None = None) -> int:
         "double-encoded",
     )
     parser.add_argument(
+        "--no-fix-marc8-diacritic-escapes",
+        dest="fix_marc8_diacritic_escapes",
+        action="store_false",
+        default=True,
+        help="do NOT recover a MARC-8 diacritic mark lost to a bogus "
+        "script-switching escape wrapped around it (e.g. \"Haure\" + "
+        "<escape> + \"au\" -> \"Hauréau\"), for the confirmed high-"
+        "volume escape payloads in _MARC8_DIACRITIC_PAYLOADS. By "
+        "default this IS fixed and logged (see --log) as "
+        "fixed_marc8_diacritic; anything not covered still falls "
+        "through to suspect_marc8_escape for human review",
+    )
+    parser.add_argument(
         "--log-full",
         dest="log_full",
         action="append",
@@ -6704,6 +6864,10 @@ def main(argv: list[str] | None = None) -> int:
                 for tag, detail in parsed.reattached_orphaned_fields:
                     rec_id = record_identifier(parsed)
                     log("reattached_orphaned_field", True, i, rec_id, detail)
+                if args.fix_marc8_diacritic_escapes:
+                    rec_id = record_identifier(parsed)
+                    for detail in fix_marc8_diacritic_escapes(parsed):
+                        log("fixed_marc8_diacritic", True, i, rec_id, detail)
                 for category, detail in find_suspect_marc8_escapes(
                     parsed, corpus_index=marc8_corpus_index,
                 ):
@@ -6963,6 +7127,8 @@ def main(argv: list[str] | None = None) -> int:
         }
     if args.fix_mojibake:
         active_categories.add("fixed_mojibake")
+    if args.fix_marc8_diacritic_escapes:
+        active_categories.add("fixed_marc8_diacritic")
     if args.fix_invalid_leader_bytes:
         active_categories.add("leader_byte_defaulted")
     if args.remap_999_to_945:

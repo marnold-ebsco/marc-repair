@@ -312,6 +312,18 @@ BIB_ROWS = [
         "widens which of these land here instead of being auto-repaired",
     ),
     CategoryRow(
+        "MARC-8 diacritic recovered (a bogus script-switching escape "
+        "that swallowed only the diacritic mark itself, not the base "
+        "letter -- confirmed by volume for a curated set of escape "
+        "payload bytes; see `_MARC8_DIACRITIC_PAYLOADS`)",
+        "Reapplied the diacritic mark to the letter it was lost from",
+        "Yes (`--no-fix-marc8-diacritic-escapes`)",
+        "`fixed_marc8_diacritic`", "INFORMATIONAL",
+        "No -- INFORMATIONAL categories are never listed in full, "
+        "not even via --log-full",
+        "`--no-fix-marc8-diacritic-escapes`",
+    ),
+    CategoryRow(
         "Suspect MARC-8 escape (miskeyed diacritic)",
         "Flagged only, no change", "detect-only", "`suspect_marc8_escape`",
         "NEEDS REVIEW", "**Yes**", "-- (detect-only, no switch)",
