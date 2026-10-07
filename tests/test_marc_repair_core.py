@@ -51,12 +51,14 @@ def _detail_line_marker(category: str) -> re.Pattern:
     (LogEntry.render() no longer repeats the category name on every
     row, since it's already stated once in the category's own header
     right above; see LogEntry.render's own comment). Matches the
-    category's 3-line header followed immediately by a row starting
-    with a tab -- the only thing that can immediately follow the
-    count line when at least one record was actually listed."""
+    category's header (section line, description -- possibly wrapped
+    across several "=== ..." lines, see `_write_description_header`
+    -- then count line) followed immediately by a row starting with a
+    tab -- the only thing that can immediately follow the count line
+    when at least one record was actually listed."""
     return re.compile(
         rf"=== [^\n]*: {re.escape(category)}(?: \([^)\n]*\))? ===\n"
-        rf"=== [^\n]* ===\n"
+        rf"(?:=== [^\n]*\n)+?"
         rf"=== \d+ record\(s\)(?: - [^\n]*)? ===\n"
         rf"\t"
     )
@@ -490,10 +492,12 @@ class TestFindDuplicateIdentifiers:
 
 
 def _category_header_line(lines: list[str], category: str) -> int:
-    """Index of the first ("=== SECTION: category ===") of the 3 header
-    lines `write_log` now always writes for `category` -- distinct from
-    the description/count lines that follow it, which also start with
-    "===" but don't have this "SECTION: category" shape."""
+    """Index of the first ("=== SECTION: category ===") line of the
+    header `write_log` now always writes for `category` -- distinct
+    from the description/count lines that follow it (one or more,
+    depending on description wrapping -- see
+    `_write_description_header`), which also start with "===" but
+    don't have this "SECTION: category" shape."""
     return next(
         i for i, ln in enumerate(lines)
         if ln.startswith("===") and f": {category} ===" in ln
@@ -560,6 +564,39 @@ class TestWriteLog:
         # unrelated fixed entries
         not_fixed_lines = [ln for ln in lines if ln.startswith("\t") and "no 008" in ln]
         assert len(not_fixed_lines) == 2
+
+    def test_count_line_splits_instances_from_records_when_they_differ(self, tmp_path):
+        # Two findings land on the same record (0) -- e.g.
+        # suspect_marc8_escape can fire more than once per record --
+        # so "instances" (log entries) and "records" (distinct
+        # record_idx values) diverge and the count line must say so.
+        entries = [
+            m.LogEntry("some_not_fixed_thing", False, "t1", 0, "u1", "first escape"),
+            m.LogEntry("some_not_fixed_thing", False, "t2", 0, "u1", "second escape"),
+            m.LogEntry("some_not_fixed_thing", False, "t3", 1, "u2", "third escape"),
+        ]
+        log_path = tmp_path / "run.log"
+        m.write_log(str(log_path), entries, full_categories={"some_not_fixed_thing"})
+        lines = log_path.read_text(encoding="utf-8").splitlines()
+        not_fixed_header = _category_header_line(lines, "some_not_fixed_thing")
+        count_line = next(
+            ln for ln in lines[not_fixed_header:] if ln.startswith("=== ") and "record(s)" in ln
+        )
+        assert count_line == "=== 3 instance(s) in 2 record(s) ==="
+
+    def test_count_line_stays_plain_when_one_instance_per_record(self, tmp_path):
+        entries = [
+            m.LogEntry("some_not_fixed_thing", False, "t1", 0, "u1", "no 008"),
+            m.LogEntry("some_not_fixed_thing", False, "t2", 1, "u2", "no 008 either"),
+        ]
+        log_path = tmp_path / "run.log"
+        m.write_log(str(log_path), entries, full_categories={"some_not_fixed_thing"})
+        lines = log_path.read_text(encoding="utf-8").splitlines()
+        not_fixed_header = _category_header_line(lines, "some_not_fixed_thing")
+        count_line = next(
+            ln for ln in lines[not_fixed_header:] if ln.startswith("=== ") and "record(s)" in ln
+        )
+        assert count_line == "=== 2 record(s) ==="
 
     def test_appends_rather_than_overwrites(self, tmp_path):
         # fixed=False (rather than True) so these synthetic, unrecognized

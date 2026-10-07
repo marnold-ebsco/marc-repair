@@ -1,5 +1,51 @@
 # Handoff Notes
 
+## DONE: log header readability -- source-vs-migration wording, line wrapping, instance/record count split
+
+Three related `write_log` formatting changes, all in `marc_repair.py`:
+
+1. **Source-vs-migration wording.** `_CHECK_DESCRIPTIONS` entries for
+   `suspect_marc8_escape`, `suspect_hex_encoded_marc8`, `doubled_proxy_url`,
+   and `holdings_852_b_suspect_content` now explicitly say the defect is
+   already present in the source records (or a prior system migration),
+   not something this tool/migration introduced -- a cataloger reading the
+   log shouldn't have to guess whether this run caused the problem.
+2. **Description line wrapping.** New `_write_description_header` helper
+   (`marc_repair.py:5156`) wraps a category's description across multiple
+   `=== ...` lines (first line `=== `, continuation lines `===   `, only
+   the last line closed with ` ===`), capped at `_DESCRIPTION_LINE_WIDTH`
+   (78) characters per line -- long descriptions like
+   `suspect_marc8_escape`'s used to produce one very long, hard-to-read
+   line. `write_log` calls it instead of writing the description inline.
+   Regenerated the description blocks in the illustrative fixtures
+   `tests/fixtures/kitchen_sink_bib.log`/`kitchen_sink_holdings.log` to
+   match (which also caught two already-stale descriptions,
+   `fixed_008_length`/`fixed_holdings_008_length`, unrelated to wrapping).
+3. **Instance vs. record count split.** The header's count line (`write_log`,
+   `marc_repair.py:~5262`) used to always read `"<N> record(s)"`, but `N` was
+   actually counting log entries/findings, not distinct records -- a
+   category like `suspect_marc8_escape` can log more than one finding per
+   record (see the TODO below: 258,202 findings across only 52,847 distinct
+   records in one real run), so the old label was misleading. Now: when a
+   category's instance count and distinct-record count differ, the line
+   reads `"<N> instance(s) in <M> record(s)"`; when they're equal (the
+   common case), it stays the plain `"<N> record(s)"` so most categories'
+   output doesn't change. New tests in
+   `tests/test_marc_repair_core.py::TestWriteLog`
+   (`test_count_line_splits_instances_from_records_when_they_differ`,
+   `test_count_line_stays_plain_when_one_instance_per_record`) cover both
+   branches. Also updated the `_detail_line_marker` regex/docstring in all
+   three test files, which previously assumed a description was always
+   exactly one line.
+
+Full suite passes except the pre-existing, unrelated
+`TestUnfixableErrorFile::test_unresolvable_record_diverted_to_error_file`
+failure (confirmed via `git stash` that it fails the same way on
+unmodified `main` -- some earlier session added a `"(N records)"`
+suffix to the `Problem filename:`/`Source filename:`/`Repaired filename:`
+lines via `_named()` but never updated this one test's literal string
+assertion; not touched this session since it's out of scope).
+
 ## TODO (deferred by user): `suspect_marc8_escape` stays detect-only -- external-authority lookup would be needed to actually fix most of these, not attempted
 
 Follow-up to the `WTS_bibs_2026-10-01.out` analysis in

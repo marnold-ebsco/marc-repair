@@ -51,12 +51,14 @@ def _detail_line_marker(category: str) -> re.Pattern:
     (LogEntry.render() no longer repeats the category name on every
     row, since it's already stated once in the category's own header
     right above; see LogEntry.render's own comment). Matches the
-    category's 3-line header followed immediately by a row starting
-    with a tab -- the only thing that can immediately follow the
-    count line when at least one record was actually listed."""
+    category's header (section line, description -- possibly wrapped
+    across several "=== ..." lines, see `_write_description_header`
+    -- then count line) followed immediately by a row starting with a
+    tab -- the only thing that can immediately follow the count line
+    when at least one record was actually listed."""
     return re.compile(
         rf"=== [^\n]*: {re.escape(category)}(?: \([^)\n]*\))? ===\n"
-        rf"=== [^\n]* ===\n"
+        rf"(?:=== [^\n]*\n)+?"
         rf"=== \d+ record\(s\)(?: - [^\n]*)? ===\n"
         rf"\t"
     )

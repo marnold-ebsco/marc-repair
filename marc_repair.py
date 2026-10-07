@@ -154,6 +154,7 @@ import json
 import os
 import re
 import sys
+import textwrap
 import time
 from contextlib import contextmanager, redirect_stderr
 from dataclasses import dataclass, field, replace
@@ -4832,28 +4833,33 @@ _CHECK_DESCRIPTIONS: dict[str, str] = {
     "record had no $b at all -- dropped entirely rather than becoming "
     "its own split record. POSSIBLE DATA LOSS.",
     "doubled_proxy_url": "A URL subfield (e.g. 856 $u) has a literally "
-    "duplicated proxy prefix (e.g. an ezproxy wrapper repeated twice). "
-    "NO DATA LOSS.",
+    "duplicated proxy prefix (e.g. an ezproxy wrapper repeated twice) -- "
+    "a pre-existing error in the source record, not something this "
+    "migration introduced. NO DATA LOSS.",
     "suspect_marc8_escape": "A MARC-8 script-switching escape "
     "(Hebrew/Arabic/Cyrillic/Greek/CJK) produces only a single "
     "character, welded directly between two ASCII letters with no word "
-    "boundary -- almost certainly a miskeyed accented letter, not real "
-    "embedded foreign-script text; never auto-fixed, since there's no "
-    "safe way to guess the intended character. NO DATA LOSS.",
+    "boundary -- almost certainly a miskeyed accented letter already "
+    "present in the source records, not something this migration "
+    "introduced, and not real embedded foreign-script text; never "
+    "auto-fixed, since there's no safe way to guess the intended "
+    "character. NO DATA LOSS.",
     "suspect_hex_encoded_marc8": "A field (in practice, always an 880) "
     "contains one or more \"{xxxxxx}\" runs -- 6 ASCII hex-digit "
     "characters wrapped in literal curly braces -- consistent with "
     "real MARC-8 content that got hex-encoded and brace-wrapped "
-    "(sometimes twice) somewhere upstream of this file; never "
-    "auto-fixed, since the decode is boundary-sensitive and there's no "
-    "safe way to guarantee exact byte alignment automatically. Each "
-    "finding names whether its own decoded preview looks recoverable "
-    "or not -- see each finding's own NO DATA LOSS/POSSIBLE DATA LOSS "
-    "call. POSSIBLE DATA LOSS. Detect-only, though, so this tool never "
-    "makes it worse: it's reporting damage that already happened "
-    "upstream, before the file ever reached this tool.",
+    "(sometimes twice) in the source records, before this tool ever "
+    "saw them; never auto-fixed, since the decode is boundary-sensitive "
+    "and there's no safe way to guarantee exact byte alignment "
+    "automatically. Each finding names whether its own decoded preview "
+    "looks recoverable or not -- see each finding's own NO DATA "
+    "LOSS/POSSIBLE DATA LOSS call. POSSIBLE DATA LOSS. Detect-only, "
+    "though, so this tool never makes it worse: it's reporting damage "
+    "that already happened upstream, before the file ever reached this "
+    "tool.",
     "holdings_852_b_suspect_content": "An 852 $b (Sublocation) looks "
-    "like data that migrated into the wrong subfield -- purely "
+    "like data from a prior system migration that landed in the wrong "
+    "subfield (not something introduced by this tool) -- purely "
     "numeric, or containing flattened subfield-delimiter markers -- "
     "and is replaced wholesale with "
     f"{DEFAULT_852_LOCATION_CONTENT!r}. POSSIBLE DATA LOSS.",
@@ -5144,6 +5150,29 @@ def _write_run_timing_header(
         fh.write("\n")
 
 
+#: Max total characters allowed in each line of a wrapped "=== ... ==="
+#: description header (prefix and, on the closing line, the " ===" suffix
+#: included) -- see `_write_description_header`.
+_DESCRIPTION_LINE_WIDTH = 78
+
+
+def _write_description_header(fh, description: str) -> None:
+    """Write `description` as one or more "=== ... ===" lines, wrapped
+    so no line exceeds `_DESCRIPTION_LINE_WIDTH` characters. The first
+    line is prefixed "=== "; continuation lines are prefixed "===   "
+    (indented two extra spaces so the wrapped text still lines up);
+    only the last line gets the closing " ===" suffix."""
+    first_prefix = "=== "
+    cont_prefix = "===   "
+    suffix = " ==="
+    wrap_width = _DESCRIPTION_LINE_WIDTH - len(cont_prefix) - len(suffix)
+    lines = textwrap.wrap(description, width=wrap_width) or [""]
+    for i, line in enumerate(lines):
+        prefix = first_prefix if i == 0 else cont_prefix
+        end = suffix if i == len(lines) - 1 else ""
+        fh.write(f"{prefix}{line}{end}\n")
+
+
 def write_log(
     path: str,
     entries: list[LogEntry],
@@ -5161,12 +5190,25 @@ def write_log(
     caller, `main`/`repair_holdings_records`, is responsible for this
     set being complete: a category whose check didn't run at all this
     invocation, e.g. one gated behind an off-by-default flag, must not
-    be in it) gets a 3-line header, even one with zero matching
-    records:
+    be in it) gets a header, even one with zero matching records:
 
         === <SECTION>: <category> ===
-        === <one-line description of what the check does> ===
+        === <description of what the check does, wrapped by
+        ===   `_write_description_header` so no line exceeds
+        ===   `_DESCRIPTION_LINE_WIDTH` characters> ===
         === <N> record(s) ===
+
+    -- or, when a category can log more than one finding per record
+    (e.g. suspect_marc8_escape, one per escape in the record), the
+    count line instead reads:
+
+        === <N> instance(s) in <M> record(s) ===
+
+    so a reader isn't left guessing whether the number is findings or
+    distinct records -- see the `n_instances`/`n_records` split below.
+    This split only fires when the two numbers actually differ; a
+    category that's always one finding per record still gets the
+    plain "<N> record(s)" form.
 
     -- so a run's log always documents every check it performed, not
     just the ones that found something. Below that header, every
@@ -5216,9 +5258,14 @@ def write_log(
             display_category = f"{category} ({note})" if note else category
             fh.write(f"=== {label}: {display_category} ===\n")
             description = _CHECK_DESCRIPTIONS.get(category, "(no description available)")
-            fh.write(f"=== {description} ===\n")
+            _write_description_header(fh, description)
             count_note = (count_notes or {}).get(category)
-            count_line = f"{len(group)} record(s)"
+            n_instances = len(group)
+            n_records = len({e.record_idx for e in group})
+            if n_instances == n_records:
+                count_line = f"{n_instances} record(s)"
+            else:
+                count_line = f"{n_instances} instance(s) in {n_records} record(s)"
             if count_note:
                 count_line += f" - {count_note}"
             fh.write(f"=== {count_line} ===\n")
