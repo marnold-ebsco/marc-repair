@@ -151,3 +151,41 @@ avoid the false corroboration that a naive short-substring search produces.
 
 This has not been implemented -- this doc is the analysis the user asked
 for before deciding whether to build the corpus-lookup suggestion feature.
+
+## Status update (2026-10-07)
+
+Both open threads from this doc have since been resolved, in two separate,
+narrower pieces of work -- neither reopens or contradicts the analysis
+above:
+
+1. **The corpus-lookup suggestion recommended above was implemented.**
+   `build_marc8_corpus_index`/`lookup_marc8_corpus_word` (see HANDOFF.md's
+   "DONE: two concrete, generalizable improvements to `suspect_marc8_escape`"
+   entry) do exactly what's described under Recommendation: search the rest
+   of the batch for the same word spelled correctly elsewhere and surface it
+   by name when found (the "Tübingen" mechanism), falling back to the
+   generic hint otherwise. `suspect_marc8_escape` is still detect-only, as
+   recommended -- this only improves the suggestion text, never auto-fixes.
+2. **A real auto-fix was later built, but for a *different* escape shape
+   than the one this doc analyzed.** This doc's subject throughout is the
+   CJK/EACC triple-byte switch (`\x1b$1...`), which genuinely destroys the
+   base letter along with the diacritic (see "The escape eats more than one
+   character" above) -- for that shape, the "don't build a static
+   payload-to-letter table" conclusion still holds and nothing has changed.
+   But this doc's own footnote ("Three findings used single-byte script
+   switches... look like a different/noisier phenomenon... weren't part of
+   the pattern validated") turned out to identify a genuinely different,
+   tractable case: for the single-byte ANSEL switches (charset codes
+   2/3/4/N/Q/S), the bogus escape swallows *only* the diacritic mark, never
+   the base letter -- so the base letter the diacritic belonged on is still
+   sitting right there in the text. That turned out to support a reliable,
+   confirmed-by-volume payload -> mark table after all, just not the one
+   this doc was evaluating. See `fix_marc8_diacritic_escapes` in
+   `marc_repair.py` (category `fixed_marc8_diacritic`) and
+   `docs/MARC8_DIACRITIC_HANDLING.md` for the full table of what is and
+   isn't auto-fixed. The CJK/EACC case remains untouched and detect-only,
+   exactly as recommended here.
+
+This doc is being kept (not deleted) as the record of why a static table
+was rejected for the CJK case and how the corpus-lookup design was
+justified -- both still accurate and still the reasoning in force today.
