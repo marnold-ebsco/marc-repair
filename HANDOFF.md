@@ -1,5 +1,248 @@
 # Handoff Notes
 
+## IN PROGRESS: `fix_marc8_diacritic_escapes` -- branch `marc8-diacritic-fix`, 4 commits pushed-nowhere
+
+Started as a prototype requested by the user after a long discussion
+(triggered by manually comparing `working/GTU_bibs.mrc` record
+`.b10000094` against its LC catalog copy and Sierra's own OPAC
+display) of whether the `suspect_marc8_escape` detect-only finding
+(see `docs/MARC8_ESCAPE_ANALYSIS.md`, the TODO below, and this doc's
+own older entries) could be turned into a real auto-fix for at least
+some of its ~52,847 flagged records. Short version: **yes, for a
+large majority of them**, once you separate out several different
+corruption *shapes* sharing the same surface symptom
+(`\x1b`/escape noise mid-word). This entry is a full state dump so a
+fresh session (after a context clear) can pick this up without
+re-deriving any of it.
+
+**Everything described in this entry is now committed** (`47919ac`,
+`1308d8f`, `d61cce0`, `0593bbe` -- all on this branch, not on `main`,
+not pushed anywhere). All 395 tests pass (1 skipped), flake8 clean on
+`marc_repair.py` (`--max-line-length=100`, per README.md).
+
+### Branch / commit state
+
+On branch `marc8-diacritic-fix` (checked out from `main` at `63f55c8`).
+Two commits so far:
+
+- `47919ac` -- initial `fix_marc8_diacritic_escapes`: a curated table
+  (`_MARC8_DIACRITIC_PAYLOADS`) mapping (MARC-8 script-switch charset,
+  payload byte) -> the genuine ANSEL combining-diacritic byte it was
+  corrupted from, for the single-raw-byte switches only (charset codes
+  2/3/4/N/Q/S -- NOT the 3-byte CJK/EACC case "1", which really does
+  destroy the base letter, unlike this case). Emits real ANSEL bytes
+  (mark-before-letter order), not precomposed Unicode -- the record
+  stays legitimately MARC-8 so `transcode_marc8_to_utf8` (unchanged,
+  runs right after in the pipeline) does the actual UTF-8 conversion.
+  New category `fixed_marc8_diacritic` (INFORMATIONAL, on by default,
+  `--no-fix-marc8-diacritic-escapes` to disable).
+- `1308d8f` -- extended it with `_MARC8_BARE_COMBINING_BYTES`/
+  `_MARC8_BARE_STANDALONE_BYTES`: a *second* corruption shape, no
+  recognized escape at all, just the same stray junk (`\x1bp+\x1bs`
+  etc.) directly in front of a bare un-escaped byte standing in for an
+  Arabic dot-below (combining) or hamza/ayn (standalone modifier
+  letter). Also removed (demoted) payload `("Q","G")` from the table
+  at this point -- see below, it went back in later.
+
+**Committed on top of `1308d8f` as `d61cce0`** (doc row updated +
+regenerated in the same commit):
+
+1. **Trapped-punctuation generalization** (the big one). Checked
+   against the *full* `working/GTU_bibs.mrc` (not just the 50-record
+   sample) what the "rare, only-3-instances" third corruption shape
+   flagged in the `1308d8f` commit message actually looked like at
+   scale: **80,994 occurrences**, not 3. The shape: the escape's
+   closing `\x1b(B` and whatever plain ASCII punctuation/whitespace
+   should follow it got swapped, trapping the punctuation *inside* the
+   escape instead -- `"Facolta" + grave + " " (trapped) + close + "di
+   lettere"` should read `"Facoltà di lettere"`. `_MARC8_DIACRITIC_ESCAPE_RE`
+   now captures that trapped run (`[\x20-\x7e]{0,15}`, restricted to
+   plain-ASCII-punctuation specifically so it can never misfire on
+   genuine multi-character foreign-script content under the same
+   charset switch) and reinserts it after the mark+letter instead of
+   discarding it.
+2. **`("Q","G")` restored**, with a narrow exception. Re-checked the
+   "demoted, ambiguous" decision from `1308d8f` against *all* 2,920
+   occurrences of this payload in the full file, not just the one
+   Arabic counterexample that triggered the demotion: the Arabic case
+   (needs MACRON) is the rare exception (8 of 2,920, ~0.27%), not a
+   real 50/50 split -- the overwhelming majority are legitimate BREVE
+   (Russian "-iĭ" name endings like "Krachkovskii", "Georgii
+   Valentinovich"; Korean vowels like "Sŏul", "Yŏn"). All 8 genuine
+   Arabic occurrences have the literal article `"al-"` within a few
+   characters; Russian/Korean words never do. So `("Q","G")` is back
+   in `_MARC8_DIACRITIC_PAYLOADS` as BREVE, with a new
+   `_MARC8_AMBIGUOUS_NEAR_AL_PAYLOADS` set + a 15-char-radius `"al-"`
+   check in `_marc8_diacritic_replacement` that skips the fix (leaves
+   it for `suspect_marc8_escape`) only for that one payload, only near
+   `"al-"`. **041/008 language codes were checked first and don't
+   work as a disambiguator** -- they describe the record's/work's
+   language, not the specific romanized word's origin (e.g. plenty of
+   `008` lang `"eng"`/`"ger"`/`"rus"` records contain the Russian
+   `-iĭ` pattern; of the 5 records whose `008`/`041` *did* say `"ara"`,
+   most of the actual `Q/G` words in them turned out to be Russian or
+   Turkish names anyway, not Arabic). The local-text `"al-"` proximity
+   check is what actually works.
+3. **Two real regex bugs found and fixed** while testing (2) above --
+   worth understanding if touching this code again, since they're the
+   kind of mistake that's easy to reintroduce:
+   - The bare-byte junk pattern (`_MARC8_STRAY_ESCAPE_JUNK[_NONEMPTY]`)
+     could swallow an entire recognized escape (open *or* close) as if
+     it were stray junk, e.g. `"\x1b(QG"` or `"\x1b(B"` both fit
+     comfortably inside one generic `\x1b` + up-to-N-non-ESC-bytes
+     fragment. That silently erased escapes this fixer had just
+     deliberately decided to leave alone (like the Q/G "al-" exception
+     in (2)), re-exposing exactly the bug this was supposed to avoid.
+     Fixed two ways: capped each junk fragment at 2 non-ESC bytes
+     (every real stray-junk fragment ever observed is 1-2 bytes:
+     `"\x1bp+"`, `"\x1bs"`, `"\x1bp("`), AND added a negative lookahead
+     excluding any fragment whose first byte is `"("` (every real
+     recognized escape piece, open or close, starts with `"("` right
+     after the ESC; no real stray-junk fragment ever does). The `"("`
+     exclusion is the one that actually matters structurally; the
+     length cap is defense-in-depth matching observed data.
+   - `_MARC8_DIACRITIC_ESCAPE_RE`'s "after" group required a plain
+     `[A-Za-z]` letter immediately following the escape -- fails when
+     a *second* corruption (one of the bare bytes from (2) above) sits
+     directly against it with no letter in between. Fixed with a
+     zero-width lookahead alternative (`(?:([A-Za-z])|(?=\x1b))`) so
+     the match still succeeds and leaves the adjacent corruption for
+     the next regex pass to handle, instead of failing to match at all
+     and silently dropping the diacritic.
+
+All three changes have tests added (see `TestFixMarc8DiacriticEscapes`
+in `tests/test_marc_repair_bib.py`) and pass: **391 passed, 1
+skipped**, `flake8` clean (no findings beyond pre-existing `E501`
+long-line debt) as of this writeup.
+
+### Full-corpus run results (two runs, don't confuse them)
+
+**Run 1** (code state: `1308d8f` + trapped-punctuation fix, Q/G still
+demoted) -- `python3 marc_repair.py working/GTU_bibs.mrc -o
+/tmp/GTU_full_repaired.mrc --log /tmp/GTU_full.log --log-full
+fixed_marc8_diacritic` (actual log file is
+`/tmp/GTU_full_20261007T130646Z.log`, 125.25s, 404,957 records):
+- `fixed_marc8_diacritic`: **143,535 instances across 62,184 records**
+  (auto-fixed, was 0 before this session).
+- `suspect_marc8_escape` (still needs human review): **2,080 records**,
+  down from the `52,847` baseline in the TODO entry below (96%
+  reduction). What's left is legitimately ambiguous/unconfirmed --
+  Korean breve "Yŏng-sun"/"Pyŏng-mu" (Q/G was still demoted for this
+  run), Turkish dotted İstanbul, Polish "Książka" (ogonek), Sanskrit
+  diacritics, a handful of others not yet checked.
+- Same single pre-existing unfixable record (403838/missing
+  leader+directory) as every prior run -- no new regressions.
+- `/tmp` outputs are temp-dir, not committed/gitignored-tracked; treat
+  as scratch, regenerate if needed.
+
+**Run 2** (code state: current uncommitted tip, Q/G restored + both
+regex bugs fixed) -- `/tmp/GTU_full2_repaired.mrc` /
+`/tmp/GTU_full2.log`. **This ran in the background and completed, but
+the user explicitly said "don't run against full file yet" moments
+after it was kicked off, so its output has deliberately NOT been
+reviewed.** Don't treat it as validated. Whoever picks this up should
+decide whether to review it now (the code hasn't changed since it
+ran, so it should be a valid preview of the current uncommitted
+state) or re-run fresh.
+
+### `0xA7` (cedilla) and `0xB9` (prime/soft-sign) implemented -- `d61cce0`, `0593bbe`
+
+The prior session's scope investigation (below, now historical) found
+several more bare-byte corruption candidates via one-off scans (plain
+Python/regex over the raw file, not `marc_repair.py`) and left an
+"implement the two clean ones vs. validate the murkier ones first"
+decision unmade. Resumed cold this session: re-validated `0xA7` and
+`0xB9` directly (fresh grep against the full `working/GTU_bibs.mrc`,
+plus checking each byte's own unrelated ANSEL meaning via pymarc's
+`marc8_to_unicode` to confirm the same "only touch it when preceded by
+the stray-ESC-junk signal" safety argument holds), then implemented
+both:
+
+- `0xA7` -> ANSEL combining cedilla (`\xf0`). 6,182 occurrences
+  re-confirmed (French/Occitan words: "français", "Pourçain"). Added
+  to `_MARC8_BARE_COMBINING_BYTES`.
+- `0xB9` -> ANSEL modifier letter prime (`\xa7`, i.e. the *byte value*
+  0xA7 used standalone rather than as a combining mark -- not a typo,
+  confirmed via `marc8_to_unicode(b"\xa7")` -> U+02B9). 2,948
+  occurrences re-confirmed (Russian "soft sign" romanizations: "Il'ich",
+  "nravstvennost'"). Added to `_MARC8_BARE_STANDALONE_BYTES`.
+
+Both verified end-to-end (fix + `transcode_marc8_to_utf8`) to produce
+correct UTF-8 ("français", "Ilʹich") with real tests in
+`TestFixMarc8DiacriticEscapes`. No full-corpus re-run done this
+session (see "Not yet done" below) -- only the small hand-built test
+fixtures above have been exercised; this hasn't been checked against
+every real occurrence in `working/GTU_bibs.mrc` the way the escape-
+based payloads were.
+
+**Not yet done, still open:**
+- **Full-corpus re-run** to see the real before/after effect of
+  `0xA7`/`0xB9` on `fixed_marc8_diacritic` and `suspect_marc8_escape`
+  counts (last known baseline: Run 1 below, 62,184 records / 2,080
+  still-suspect records, from before these two bytes existed). Neither
+  Run 1 nor Run 2 below reflect this session's code.
+- **Murkier, unvalidated candidate bytes** from the same original
+  scan -- `0xA8` (ogonek, 221 occurrences), `0xAE` (dot-below, a
+  second byte for the same mark `0xA3` already handles, 104
+  occurrences), `0xA4` (diaeresis/umlaut, no existing table entry for
+  this mark at all yet, 68 occurrences), `0xA6` (cedilla, a second
+  byte for the same mark `0xA7` now handles, count not precisely
+  taken) -- these had *some* evidence already (see the table in the
+  historical section below) but weren't re-checked this session.
+  Still lower priority: `0xB2`, `0xBA`, `0xC1`, `0xB3`, `0xA5` --
+  murkier/less clear-cut word matches, need their own dedicated grep +
+  known-word corroboration before trusting them at all.
+- Important generalization from the original scan, still true: **the
+  same target mark can have more than one corrupted-byte
+  representation** (cedilla: both `0xA7` and `0xA6`; dot-below: both
+  `0xA3` and `0xAE`) -- the dicts stay keyed by corrupted byte with
+  possibly-repeated values, not the other way around.
+- **Methodology gotcha**, still applies to any future scan: a naive
+  `letter + junk + bare-byte + letter` regex without the `"("`-exclusion
+  fix from `1308d8f` will also match pieces of *already-recognized*
+  escape-open sequences as false "bare bytes" (e.g. flagged the ASCII
+  digit `'3'`, really the Basic-Arabic charset *designator* from an
+  unrelated `\x1b(3C...` escape). Exclude ASCII letters/digits that
+  coincide with known charset designators (`1`,`2`,`3`,`4`,`N`,`Q`,`S`),
+  or just reuse `_MARC8_STRAY_ESCAPE_JUNK_NONEMPTY` (with the
+  `"("`-exclusion) for the "junk" part instead of an ad-hoc regex.
+
+### Historical: original scope investigation that found these bytes
+
+While investigating a user-reported "Cyrillic-apostrophe-looking"
+pattern (`"d'Rab"`, references to `"l'Ancien Testament"`), the same
+"stray junk + one bare un-escaped byte" shape used for the Arabic
+dot-below/hamza/ayn bytes in `1308d8f` turned up several *more*
+corruption bytes:
+
+| byte | mark | count | evidence |
+|---|---|---|---|
+| `0xA7` | cedilla (combining) | 6,047 (re-confirmed at 6,182 this session) | `"franc" + byte + "ais"` -> français (extremely common word) -- **now implemented** |
+| `0xB9` | prime/soft-sign (combining? standalone -- not confirmed which) | 1,810 (re-confirmed at 2,948 this session, confirmed standalone) | `"Il" + byte + "ich"` -> Ilʹich (Russian soft-sign romanization); "B'nai B'rith" -- **now implemented** |
+| `0xA8` | ogonek (combining) | 221 | `"Ksia" + byte + "zka"` -> Książka (Polish "book"); `"We" + byte + "gierski"` -> Węgierski |
+| `0xAE` | dot-below (combining) -- a **second**, different byte for the same mark `0xA3` already handles | 104 | `"H" + byte + "ammurabi"` -> Ḥammurabi |
+| `0xA4` | diaeresis/umlaut (combining) -- a mark with NO existing table entry at all yet | 68 | `"U" + byte + "bersetzung"` -> Übersetzung; `"Beschlü" + byte + "sse"` -- wait, `"Beschlu" + byte + "sse"` -> Beschlüsse |
+| `0xA6` | cedilla (combining) -- a **second** byte for the same mark `0xA7` above | small (not precisely counted) | `"revelac" + byte + "a"` + tilde-o -> revelação (Portuguese) |
+
+**Lower-confidence candidates spotted but NOT validated** (showed up
+with lower counts and murkier/less clear-cut word matches in the same
+scan): `0xB2`, `0xBA`, `0xC1`, `0xB3`, `0xA5`.
+
+### If resuming this cold, read in this order
+
+1. This entry (you're reading it).
+2. `marc_repair.py`'s `fix_marc8_diacritic_escapes` and everything
+   between `_MARC8_DIACRITIC_PAYLOADS` and `_fix_marc8_diacritics_in_text`
+   (roughly lines 2300-2470 as of this writeup, but it'll have moved).
+3. `tests/test_marc_repair_bib.py`'s `TestFixMarc8DiacriticEscapes` for
+   worked examples of every sub-case, including the regression tests
+   for both regex bugs in (3) above and the `0xA7`/`0xB9` tests added
+   this session.
+4. `docs/MARC8_ESCAPE_ANALYSIS.md` and the "TODO (deferred by user)"
+   entry below for the original (now substantially superseded)
+   detect-only analysis this all grew out of.
+
+
 ## DONE: re-ran `working/GTU_bibs.mrc` after the `test_unresolvable_record_diverted_to_error_file` fix
 
 Confirms the test fix (`176b947`) was log-wording-only, no behavior
