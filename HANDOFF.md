@@ -16,9 +16,10 @@ fresh session (after a context clear) can pick this up without
 re-deriving any of it.
 
 **Everything described in this entry is now committed** (`47919ac`,
-`1308d8f`, `d61cce0`, `0593bbe` -- all on this branch, not on `main`,
-not pushed anywhere). All 395 tests pass (1 skipped), flake8 clean on
-`marc_repair.py` (`--max-line-length=100`, per README.md).
+`1308d8f`, `d61cce0`, `0593bbe`, `92d8fdb`, `5cc917c` -- all on this
+branch, not on `main`, not pushed anywhere). All 407 tests pass (1
+skipped), flake8 clean on `marc_repair.py` (`--max-line-length=100`,
+per README.md).
 
 ### Branch / commit state
 
@@ -175,23 +176,28 @@ fixtures above have been exercised; this hasn't been checked against
 every real occurrence in `working/GTU_bibs.mrc` the way the escape-
 based payloads were.
 
-**Not yet done, still open:**
-- **Full-corpus re-run** to see the real before/after effect of
-  `0xA7`/`0xB9` on `fixed_marc8_diacritic` and `suspect_marc8_escape`
-  counts (last known baseline: Run 1 below, 62,184 records / 2,080
-  still-suspect records, from before these two bytes existed). Neither
-  Run 1 nor Run 2 below reflect this session's code.
-- **Murkier, unvalidated candidate bytes** from the same original
-  scan -- `0xA8` (ogonek, 221 occurrences), `0xAE` (dot-below, a
-  second byte for the same mark `0xA3` already handles, 104
-  occurrences), `0xA4` (diaeresis/umlaut, no existing table entry for
-  this mark at all yet, 68 occurrences), `0xA6` (cedilla, a second
-  byte for the same mark `0xA7` now handles, count not precisely
-  taken) -- these had *some* evidence already (see the table in the
-  historical section below) but weren't re-checked this session.
-  Still lower priority: `0xB2`, `0xBA`, `0xC1`, `0xB3`, `0xA5` --
-  murkier/less clear-cut word matches, need their own dedicated grep +
-  known-word corroboration before trusting them at all.
+**Resolved in a follow-up session (commits `92d8fdb`, `5cc917c`):** all
+remaining unconfirmed candidate bytes from the original scan (`0xA8`,
+`0xAE`, `0xA4`, `0xA6`, `0xB2`, `0xBA`, `0xC1`, `0xB3`, `0xA5`) were
+re-validated against the full corpus. Four turned out to be safely
+fixable but *overloaded* (same byte, different mark depending on
+context) -- each was implemented with a before-letter restriction to
+its confirmed-clean context only: `0xAE`→dot-below after `h`,
+`0xA5`→dot-below after `r`, `0xA8`→ogonek after `a`/`e`/`u`,
+`0xA4`→diaeresis after `u`. The other five (`0xA6`, `0xBA`, `0xB2`,
+`0xB3`, `0xC1`) stayed genuinely unconfirmed -- `0xA6` in particular was
+checked against two real Sierra catalog records at the user's request
+(`.b10016855` Polish, `.b1031037x` Portuguese), confirming it means two
+different marks depending on the word *and* that at least one
+occurrence needs a fix mechanism (mark-applies-to-the-letter-after, not
+before) this codebase doesn't have. Full writeup, including the exact
+restriction percentages and every rejected byte's reasoning, is now in
+`docs/MARC8_DIACRITIC_HANDLING.md` (also created this session) --
+that's the doc to hand anyone who asks what's been done. Still not
+done: the full-corpus re-run to see the real before/after effect on
+`fixed_marc8_diacritic`/`suspect_marc8_escape` counts (see Run 1/Run 2
+below, neither reflects any of this session's code).
+
 - Important generalization from the original scan, still true: **the
   same target mark can have more than one corrupted-byte
   representation** (cedilla: both `0xA7` and `0xA6`; dot-below: both
@@ -230,17 +236,20 @@ scan): `0xB2`, `0xBA`, `0xC1`, `0xB3`, `0xA5`.
 
 ### If resuming this cold, read in this order
 
-1. This entry (you're reading it).
-2. `marc_repair.py`'s `fix_marc8_diacritic_escapes` and everything
+1. **`docs/MARC8_DIACRITIC_HANDLING.md`** -- the up-to-date summary
+   table of every byte/escape this tool fixes, restricts, or leaves
+   unconfirmed, with why. Start here, not with this entry's prose.
+2. This entry, for the session-by-session narrative/history behind
+   that table.
+3. `marc_repair.py`'s `fix_marc8_diacritic_escapes` and everything
    between `_MARC8_DIACRITIC_PAYLOADS` and `_fix_marc8_diacritics_in_text`
-   (roughly lines 2300-2470 as of this writeup, but it'll have moved).
-3. `tests/test_marc_repair_bib.py`'s `TestFixMarc8DiacriticEscapes` for
+   (roughly lines 2300-2550 as of this writeup, but it'll have moved).
+4. `tests/test_marc_repair_bib.py`'s `TestFixMarc8DiacriticEscapes` for
    worked examples of every sub-case, including the regression tests
-   for both regex bugs in (3) above and the `0xA7`/`0xB9` tests added
-   this session.
-4. `docs/MARC8_ESCAPE_ANALYSIS.md` and the "TODO (deferred by user)"
-   entry below for the original (now substantially superseded)
-   detect-only analysis this all grew out of.
+   for both regex bugs and all the restricted-byte tests.
+5. `docs/MARC8_ESCAPE_ANALYSIS.md` (including its own "Status update"
+   section) for the original detect-only analysis this all grew out
+   of, and why the CJK/EACC escape case still isn't auto-fixed.
 
 
 ## DONE: re-ran `working/GTU_bibs.mrc` after the `test_unresolvable_record_diverted_to_error_file` fix
