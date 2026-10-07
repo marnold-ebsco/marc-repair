@@ -116,7 +116,7 @@ in `tests/test_marc_repair_bib.py`) and pass: **391 passed, 1
 skipped**, `flake8` clean (no findings beyond pre-existing `E501`
 long-line debt) as of this writeup.
 
-### Full-corpus run results (two runs, don't confuse them)
+### Full-corpus run results (three runs, don't confuse them)
 
 **Run 1** (code state: `1308d8f` + trapped-punctuation fix, Q/G still
 demoted) -- `python3 marc_repair.py working/GTU_bibs.mrc -o
@@ -145,6 +145,34 @@ reviewed.** Don't treat it as validated. Whoever picks this up should
 decide whether to review it now (the code hasn't changed since it
 ran, so it should be a valid preview of the current uncommitted
 state) or re-run fresh.
+
+**Run 3** (code state: tip of this branch as of commit `e22ec09` --
+everything in this entry committed, including the 4 restricted bare
+bytes added in a follow-up session) -- `python3 marc_repair.py
+working/GTU_bibs.mrc -o /tmp/GTU_now_repaired.mrc --log
+/tmp/GTU_now.log --log-full fixed_marc8_diacritic,suspect_marc8_escape`
+(actual log file `/tmp/GTU_now_20261007T140549Z.log`, 404,957 records).
+Requested explicitly by the user to compare against the true
+pre-diacritic-fix baseline (the "DONE: full-corpus run..." entry
+below, before `fix_marc8_diacritic_escapes` existed at all):
+
+| metric | before (baseline) | now (Run 3) |
+|---|---|---|
+| `fixed_marc8_diacritic` | N/A -- category didn't exist | 149,152 instances / 64,341 records |
+| `suspect_marc8_escape` | 258,202 findings / 52,847 records | 1,795 findings / 1,258 records |
+| unfixable records | 1 (403838) | 1 (403838, same record) |
+| elapsed time (tool's own reported time) | 133.93s | 139.31s (+5.38s, +4.0%) |
+
+`suspect_marc8_escape` records dropped 97.6% (52,847 -> 1,258) from the
+true pre-fix baseline -- consistent with (and better than) Run 1's
+96% reduction above, now that Q/G is restored and the 4 additional
+restricted bare bytes (`0xAE`, `0xA5`, `0xA8`, `0xA4`) are included.
+The remaining 1,258 are the genuinely unconfirmed cases: CJK/EACC
+escapes (never auto-fixed by design), the still-ambiguous bare bytes
+(`0xA6`/`0xBA`/`0xB2`/`0xB3`/`0xC1`, see
+`docs/MARC8_DIACRITIC_HANDLING.md`), and anything outside the confirmed
+before-letter restrictions. `/tmp` outputs are scratch, not committed/
+gitignore-tracked, regenerate if needed.
 
 ### `0xA7` (cedilla) and `0xB9` (prime/soft-sign) implemented -- `d61cce0`, `0593bbe`
 
