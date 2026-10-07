@@ -295,22 +295,91 @@ shapes neither matching the usual mechanism:
   excludes as not a real "before" letter since there's nothing for a
   mark to attach to).
 
-**No safe fix path identified for either shape -- the root corruption
-mechanism for the dominant bare-pair shape isn't understood yet (it's
-not UTF-8, not a known ANSEL byte, not the escape-junk pattern this
-codebase's whole mechanism is built around), so there's nothing to add
-to `_MARC8_BARE_COMBINING_BEFORE_OVERRIDES` or
-`_MARC8_BARE_COMBINING_BYTES` yet.** This needs dedicated investigation
-into where the `\xc3\xc1`/`\xc3\xb0` pairs actually come from (likely
-worth checking against a handful of other `Ã`-prefixed bytes in the
-corpus to see if there's a consistent `\xc3 + X -> Icelandic letter`
-table, not just these two) before any code change is even on the table.
+**`0xC1` byte-pair investigation, resumed and now closed out.** Scanned
+`working/GTU_bibs.mrc` for every `\xc3`-prefixed byte pair (not just
+`\xc3\xc1`) to look for a discoverable, consistent table, per the
+"Next steps" this entry used to end with. Found one:
 
-**Next steps for whoever resumes this:** `0xC1` is the only byte still
-open. Grep `working/GTU_bibs.mrc` for other `\xc3`-prefixed pairs
-(`\xc3\xb0` eth, `\xc3\xc1` unexplained-thorn, others?) to see if
-there's a discoverable, consistent byte-pair table before concluding
-this is unfixable like `0xB3`'s sigla.
+```
+codepoint = 0xC0 + (second_byte & 0x3F)
+```
+
+(the standard 2-byte UTF-8 decode formula, since `\xc3` is `11000011`
+-- top bits always contribute `0xC0`.) Confirmed against the three most
+common `\xc3`-prefixed pairs, all with **zero escape bytes anywhere
+nearby** -- a different shape from this byte's escape-adjacent minority
+(see below), and genuinely valid UTF-8 each time:
+
+- `\xc3\xb8` (3,056 occurrences) -> `ø` -- Danish/Norwegian, e.g.
+  "KÃ¸benhavn" -> "København", "SlÃ¸k" -> "Sløk".
+- `\xc3\xa6` (3,030 occurrences) -> `æ` -- Latin/French ash ligature,
+  e.g. "doctrinÃ¦que" -> "doctrinæque", "GroningÃ¦" -> "Groningæ".
+- `\xc3\xb0` (92 occurrences) -> `ð` -- Icelandic eth, e.g.
+  "SigurÃ°ur" -> "Sigurður" (already noted last session).
+
+**This rules out implementing anything for this byte, rather than
+pointing to a fix: `\xc3\xc1` is the one common pair that breaks the
+formula.** `0xC0 + (0xC1 & 0x3F)` = `0xC1` (`Á`), but reading the real
+occurrences (53 of them, `working/0xC1_occurrences.tsv`-adjacent ad hoc
+scan, all still gitignored) shows `\xc3\xc1` needs at least **five**
+mutually-incompatible readings depending on the specific word, with no
+distinguishing signal between them (no escape adjacency, no
+before/after-letter split -- the pair is identical in every case):
+
+- Thorn (`þ`), the plurality: Old/Middle English ("Of Saynte Iohn
+  ÃÁe Euangelist" -> "the", "Se ÃÁonne ÃÁisne wealsteal wise
+  geÃÁohte" -> "þonne"/"þisne"/"geþohte"), Icelandic ("FriÃ°ÃÁjofs
+  saga" -> "Friðþjófs saga", a well-known Icelandic saga title,
+  "HafÃÁo<esc>...>rsson" -> "Hafþórsson"), and Gothic ("ÃÁairh
+  iohannen" -> "þairh", "through").
+- German needing `ü`/`ä`, not thorn at all ("LehrstÃÁhle" ->
+  "Lehrstühle", "UniversitÃÁat Hamburg" -> "Universität Hamburg").
+- French needing `é` ("Marie-AimÃÁee HÃÁelie-Lucas" -> "Marie-Aimée
+  Hélie-Lucas", "Maria JosÃÁe" -> "Maria José").
+- A plain ASCII apostrophe, not a diacritic at all ("LukeÃÁs record"
+  -> "Luke's", "TillichÃÁs theological" -> "Tillich's", "SugrÃÁivaÂ¿s
+  Consecration" -> "Sugriva's" -- note this record has a *second*,
+  differently-corrupted apostrophe right next to it, `Â¿`).
+- Vietnamese/Sanskrit diacritics that don't reduce to one mark either
+  ("ThiÃÁch" -> likely "Thích", "VipasÃÁyana" (6 occurrences, all the
+  same `650` subject heading) -> likely "Vipaśyanā" or "Vipassanā" --
+  neither confirmed precisely, but neither is thorn).
+
+No before-letter, escape context, or language signal separates these
+five readings from each other -- unlike every other overloaded byte in
+this file (even `0xB2`'s "murky" German-ö case had a dominant,
+explainable cluster). **Genuinely unfixable with this tool's
+before-letter/standalone mechanism; no code change.** The minority,
+escape-adjacent shape already documented (`\x1b(QB\x1b(B` immediately
+before the bare byte, Greek/Sanskrit transliteration macrons, 65 of the
+118 total raw occurrences) is unaffected by this and stays correctly
+excluded by `_MARC8_NOT_ESCAPE_DESIGNATOR_LOOKBEHIND`, same as before.
+A handful of leftover occurrences in this minority group turned out to
+be unrelated noise while reading through them: three LC call-number
+cutters with a trailing bare `Á` and no escape nearby at all
+(`.b11196580`'s `090 $b`, `".B731Á"`), three records with long runs of
+repeating `<esc>b8<esc>sÁ` fragments that look like unrelated binary/
+OCR corruption rather than this tool's escape-junk shape, and one
+genuinely correct, uncorrupted `Á` (`.b19526350`, "Álvaro Cancela" --
+a real Spanish name, no escape or `\xc3` prefix adjacent at all,
+confirming `0xC1` really is a valid standalone ANSEL byte that must
+stay untouched on its own, same safety argument as every other bare
+byte in this file).
+
+`0xC1` stays unimplemented -- `_MARC8_BARE_COMBINING_BYTES`/
+`_MARC8_BARE_STANDALONE_BYTES` unchanged. `docs/MARC8_DIACRITIC_HANDLING.md`'s
+table and `0xC1` row should be updated with this writeup (replacing the
+old "may not even be the same corruption mechanism" placeholder, which
+undersold how overloaded this turned out to be) the next time that file
+is touched.
+
+**All six bytes from the original "Investigated, not implemented"
+table (`0xA6`, `0xBA`, `0xB2`, `0xB3`, `0xC1`, plus `0xAE`/`0xA5`/`0xA8`
+from the HOWTO's three) have now been re-checked at least once this
+project. `0xA6` is the only one that yielded a new, safe override
+(restricted to "c"); every other byte's "no safe fix" verdict has been
+confirmed, several more than once.** There is no open byte-disambiguation
+item left in this file as of this entry.
 
 **Lessons learned this session (read before starting `0xAE`):**
 

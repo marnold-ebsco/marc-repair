@@ -275,7 +275,7 @@ interpretation. No code handles them; they still reach
 | `0xBA` | 69 (37 records) | Means Hungarian double-acute (ő/ű -- "felelős", "György") in roughly half its occurrences and Russian hard sign (ʺ -- "obʺedinenii") in the rest, with no reliable split by surrounding letter. |
 | `0xB2` | 832 (396 records) | Dominant clusters need an *inserted* vowel-with-mark (German ö, Dravidian macron-n̄, etc.) between the matched before-letter and the following text, not a mark combined onto the before-letter itself -- the before-letter mechanism structurally can't produce that shape. See writeup below. |
 | `0xB3` | 48 (20 records) | Two unrelated phenomena sharing one byte: Dead Sea Scroll/philological sigla superscripts (e.g. "1QIsaᵃ" -- would need a letter-to-Unicode-superscript substitution, a different fix mechanism entirely, not a mark insertion), ~92% of occurrences, and a single ambiguous Korean name case needing a breve ("Yŏn Presbyterian"). See writeup below. |
-| `0xC1` | 8 (3 records) | Tiny sample with an escape structure (`\x1bb8`/`\x1bb9` fragments) not seen anywhere else in the corpus -- may not even be the same corruption mechanism as the rest of this table. |
+| `0xC1` | 118 (55 records, re-counted -- the original 8/3 undercounted by using too narrow a scan) | At least five mutually-incompatible readings (thorn, German ü/ä, French é, a plain apostrophe, Vietnamese/Sanskrit marks) share the exact same `\xc3\xc1` byte pair with no distinguishing signal between them. See writeup below. |
 
 **`0xA6`'s residual `a` (ogonek) minority, in detail.** `0xA6` after
 `c` is now fixed (cedilla -- see the "Overloaded" section above); this
@@ -377,6 +377,68 @@ isn't the vowel the title actually needs the breve on (`o`), the same
 mismatch shape as `0xA6`'s "współczesną" case. Genuinely ambiguous,
 same conclusion as before. **No code change** -- `0xB3` stays
 unimplemented.
+
+**`0xC1`, in detail.** Not in either BARE dict. The one-off regex
+(`_MARC8_NOT_ESCAPE_DESIGNATOR_LOOKBEHIND` + `([A-Za-z])` +
+`_MARC8_STRAY_ESCAPE_JUNK_NONEMPTY` + the literal byte,
+`working/find_0xc1_occurrences.py`, gitignored) finds **zero**
+occurrences for this byte -- it genuinely isn't reachable by the usual
+stray-junk-before-letter shape at all. A direct raw-byte scan (no
+regex, just checking for the byte's presence) finds 118 occurrences
+across 55 records instead, splitting into two unrelated shapes:
+
+- 65 of 118 (55%) match a *different*, already-handled shape: a
+  `\x1b(QB\x1b(B` close-escape fragment sits immediately before the
+  bare byte with no real letter between them (e.g. "ât<esc>(QB<esc>(BÁen
+  texaâ..." -- Greek "tēn", a transliteration macron), which
+  `_MARC8_NOT_ESCAPE_DESIGNATOR_LOOKBEHIND` correctly excludes as not a
+  real "before" letter, same as every other escape-designator false
+  positive this lookbehind guards against. A handful of this group
+  turned out to be unrelated noise on closer reading: three LC
+  call-number cutters with a trailing bare `Á` and no escape nearby at
+  all (e.g. `.b11196580`'s `090 $b`, `".B731Á"`), three records with
+  long repeating `<esc>b8<esc>sÁ` runs that look like unrelated binary/
+  OCR corruption rather than this tool's escape-junk shape, and one
+  genuinely correct, uncorrupted `Á` (`.b19526350`, "Álvaro Cancela" --
+  a real Spanish name, confirming `0xC1` is a valid standalone ANSEL
+  byte in its own right and must stay untouched when nothing marks it
+  as corrupted, same safety argument as every bare byte in this file).
+- 53 of 118 (45%) are a **bare, escape-free two-byte pair** (`\xc3\xc1`)
+  with no escape sequence anywhere nearby. Scanning every `\xc3`-prefixed
+  pair in `working/GTU_bibs.mrc` (not just this one) turns up a clean,
+  consistent formula for the *other* common pairs: `codepoint = 0xC0 +
+  (second_byte & 0x3F)` -- the standard 2-byte UTF-8 decode, since
+  `\xc3` is `11000011` and always contributes the `0xC0` high bits.
+  Confirmed against the three most common pairs, all genuinely valid
+  UTF-8: `\xc3\xb8` (3,056 occurrences) -> `ø` ("KÃ¸benhavn" ->
+  "København"), `\xc3\xa6` (3,030 occurrences) -> `æ` ("doctrinÃ¦que"
+  -> "doctrinæque"), `\xc3\xb0` (92 occurrences) -> `ð` ("SigurÃ°ur" ->
+  "Sigurður"). **`\xc3\xc1` is the one common pair that breaks the
+  formula** -- it predicts `Á` (`0xC0 + (0xc1 & 0x3F)` = `0xc1`), but
+  reading the 53 real occurrences shows at least five mutually-
+  incompatible readings, with no distinguishing signal (no escape
+  adjacency, no before/after-letter split -- the byte pair looks
+  identical in every case):
+  - Thorn (`þ`), the plurality: Old/Middle English ("Of Saynte Iohn
+    ÃÁe Euangelist" -> "the"), Icelandic ("FriÃ°ÃÁjofs saga" ->
+    "Friðþjófs saga", a well-known saga title), and Gothic ("ÃÁairh
+    iohannen" -> "þairh", "through").
+  - German needing `ü`/`ä`, not thorn ("LehrstÃÁhle" -> "Lehrstühle",
+    "UniversitÃÁat Hamburg" -> "Universität Hamburg").
+  - French needing `é` ("Marie-AimÃÁee HÃÁelie-Lucas" -> "Marie-Aimée
+    Hélie-Lucas").
+  - A plain ASCII apostrophe, not a diacritic at all ("LukeÃÁs record"
+    -> "Luke's", "TillichÃÁs theological" -> "Tillich's").
+  - Vietnamese/Sanskrit diacritics that don't reduce to one mark
+    either ("ThiÃÁch" -> likely "Thích", "VipasÃÁyana" -> likely
+    "Vipaśyanā" or "Vipassanā").
+
+  Unlike every other overloaded byte in this file (even `0xB2`'s
+  "murky" case had one dominant, explainable cluster), nothing here
+  separates the five readings from each other. **Genuinely unfixable
+  with this tool's before-letter/standalone mechanism -- no code
+  change.** `0xC1` stays out of `_MARC8_BARE_COMBINING_BYTES`/
+  `_MARC8_BARE_STANDALONE_BYTES`.
 
 ## False positives found and guarded against
 
