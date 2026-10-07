@@ -117,18 +117,30 @@ turned up two distinct false-positive bugs:
    positives found and guarded against" section -- include it in the
    same commit or a follow-up.
 
-### Next: run against `sample_files/nashvillestate_bibs_202693.mrc`
+### DONE: ran against `sample_files/nashvillestate_bibs_202693.mrc` -- clean, nothing new
 
-Once the above is committed, the user wants `marc_repair.py` run
-against a new, not-yet-tried corpus:
-`sample_files/nashvillestate_bibs_202693.mrc` (91MB, confirmed present
-on disk). Just run it (default settings, `--log-full
-fixed_marc8_diacritic,suspect_marc8_escape` to see the diacritic-work
-breakdown same as the GTU/WTS runs above) and report what comes up --
-no specific expectation set yet, this is a fresh corpus to sanity-check
-against, same spirit as the WTS re-validation that found the two bugs
-above. Note `sample_files/` is a different directory from `working/`
-(sibling, both directly under the project root) -- don't confuse them.
+Ran with both fixes above in place: `python3 marc_repair.py
+sample_files/nashvillestate_bibs_202693.mrc -o
+working/nashvillestate_bibs_202693_repaired.mrc --log-full
+fixed_marc8_diacritic,suspect_marc8_escape`. Result: **48,017/48,017
+records written, 0 unfixable**, 18.56s. Log:
+`working/nashvillestate_bibs_202693_repaired_log_20261007T151555Z.log`.
+
+Small corpus, correspondingly small diacritic-related counts -- 4
+records hit `fixed_marc8_diacritic` (no new pattern; INFORMATIONAL
+categories never list full detail regardless of `--log-full`, by
+design), 3 hit `suspect_marc8_escape`, all three already-familiar
+shapes from GTU/WTS (CJK-welding "Schrödinger", a miskeyed apostrophe
+in "who's", "Leonidas"). No `Signatures:`-style false positive, no new
+unresolved byte, nothing requiring a code change. 412 tests still pass,
+flake8 still clean. Other findings in this file (375 trailing-
+whitespace, 617 default-245, 6 duplicate identifiers across
+4-way-duplicated records, 16 invalid indicators, etc.) are all
+pre-existing categories behaving as documented in
+`docs/REPAIR_CATEGORIES.md` -- nothing new to report there either.
+
+**Nothing further queued from the user for this session as of this
+entry.**
 
 ## IN PROGRESS: `fix_marc8_diacritic_escapes` -- branch `marc8-diacritic-fix`, 13 commits pushed-nowhere
 
