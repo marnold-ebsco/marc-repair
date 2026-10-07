@@ -23,7 +23,7 @@ not pushed anywhere). All 395 tests pass (1 skipped), flake8 clean on
 ### Branch / commit state
 
 On branch `marc8-diacritic-fix` (checked out from `main` at `63f55c8`).
-Two commits so far:
+First two commits:
 
 - `47919ac` -- initial `fix_marc8_diacritic_escapes`: a curated table
   (`_MARC8_DIACRITIC_PAYLOADS`) mapping (MARC-8 script-switch charset,
