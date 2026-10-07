@@ -462,6 +462,77 @@ class TestFixMarc8DiacriticEscapes:
         assert len(details) == 1
         assert parsed.fields[0].content == "note Haur\xe2eau end"
 
+    def test_q_g_payload_not_in_table_left_for_human_review(self):
+        # ("Q", "G") was removed from _MARC8_DIACRITIC_PAYLOADS: the
+        # same payload means breve in Korean romanization elsewhere in
+        # the corpus, but macron in this real Arabic example
+        # (working/GTU_bibs_sample50.mrc record .b10001888, "Yanbu" +
+        # this escape + "'" = "Yanbū'"). Ambiguous -- must stay
+        # unfixed rather than guess.
+        raw = "Yanbu\x1bp+\x1bs\x1b(QG\x1b(B"
+        parsed = self._record(raw)
+        assert m.fix_marc8_diacritic_escapes(parsed) == []
+        assert parsed.fields[0].subfields == [("a", raw)]
+
+    def test_recovers_bare_combining_dot_below(self):
+        # Real production example (record .b10001785, tag 600 $t):
+        # "al-h" + stray junk `\x1bp+\x1bs` + a bare, un-escaped byte
+        # (0xA3) standing in for ANSEL combining dot-below -- no
+        # recognized \\x1b(..)\\x1b(B switch at all, unlike the main
+        # diacritic-escape case. "h" survives; only the dot-below mark
+        # was lost.
+        parsed = self._record("al-h\x1bp+\x1bs\xa3ujjah")
+        details = m.fix_marc8_diacritic_escapes(parsed)
+        assert len(details) == 1
+        assert parsed.fields[0].subfields == [("a", "al-\xf2hujjah")]
+
+    def test_recovers_bare_standalone_hamza_and_ayn(self):
+        # Real production example (record .b10001463, tag 500): hamza
+        # (hamza modifier-apostrophe) after "Ihya", ayn (modifier
+        # turned-comma) before "ulum" -- both standalone letters, not
+        # combining marks, so they don't move relative to their
+        # neighbors the way the dot-below case does.
+        parsed = self._record("Ihya\x1bp+\x1bs\xbc al-\x1bp(\x1bs\xbbulum")
+        details = m.fix_marc8_diacritic_escapes(parsed)
+        assert len(details) == 1
+        assert parsed.fields[0].subfields == [("a", "Ihya\xae al-\xb0ulum")]
+
+    def test_recovers_escape_diacritic_immediately_followed_by_bare_byte(self):
+        # Real production example (record .b10001463, tag 500):
+        # "Ihya" + macron escape + more stray junk leading straight
+        # into a bare hamza byte, with no plain letter in between the
+        # escape and the hamza. Regression test for a bug found while
+        # building this: the escape-diacritic regex's "after" group
+        # originally required a plain [A-Za-z] letter, silently
+        # failing to match (and dropping the macron) whenever a second
+        # corruption like this sat directly against it.
+        parsed = self._record("Ih\x1bp+\x1bs\xa3ya\x1bp+\x1bs\x1b(QE\x1b(B\x1bp(\x1bs\xbc")
+        details = m.fix_marc8_diacritic_escapes(parsed)
+        assert len(details) == 1
+        assert parsed.fields[0].subfields == [("a", "I\xf2hy\xe5a\xae")]
+
+    def test_bare_byte_fix_does_not_touch_genuine_unescaped_ansel_byte(self):
+        # 0xA3/0xBC/0xBB are themselves valid (if unrelated) ANSEL
+        # bytes -- must only be touched when the distinctive ESC-byte
+        # junk run precedes them (the actual corruption signal), never
+        # on their own, or genuine unrelated content would be corrupted.
+        raw = "plain\xa3text"
+        parsed = self._record(raw)
+        assert m.fix_marc8_diacritic_escapes(parsed) == []
+        assert parsed.fields[0].subfields == [("a", raw)]
+
+    def test_bare_combining_recovered_bytes_transcode_to_correct_utf8(self):
+        parsed = self._record("al-h\x1bp+\x1bs\xa3ujjah")
+        m.fix_marc8_diacritic_escapes(parsed)
+        m.transcode_marc8_to_utf8(parsed)
+        assert parsed.fields[0].subfields == [("a", "al-ḥujjah")]
+
+    def test_bare_standalone_recovered_bytes_transcode_to_correct_utf8(self):
+        parsed = self._record("Ihya\x1bp+\x1bs\xbc al-\x1bp(\x1bs\xbbulum")
+        m.fix_marc8_diacritic_escapes(parsed)
+        m.transcode_marc8_to_utf8(parsed)
+        assert parsed.fields[0].subfields == [("a", "Ihyaʼ al-ʻulum")]
+
 
 class TestFindSuspectMarc8Escapes:
     def _record(self, raw_a, tag="880", fields=None):

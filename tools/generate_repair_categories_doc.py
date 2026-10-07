@@ -312,11 +312,16 @@ BIB_ROWS = [
         "widens which of these land here instead of being auto-repaired",
     ),
     CategoryRow(
-        "MARC-8 diacritic recovered (a bogus script-switching escape "
-        "that swallowed only the diacritic mark itself, not the base "
-        "letter -- confirmed by volume for a curated set of escape "
-        "payload bytes; see `_MARC8_DIACRITIC_PAYLOADS`)",
-        "Reapplied the diacritic mark to the letter it was lost from",
+        "MARC-8 diacritic recovered -- either a bogus script-switching "
+        "escape that swallowed only the diacritic mark itself, not the "
+        "base letter (curated escape payload bytes; see "
+        "`_MARC8_DIACRITIC_PAYLOADS`), or a bare un-escaped byte "
+        "standing in for an Arabic transliteration mark (dot-below, "
+        "hamza, ayn; see `_MARC8_BARE_COMBINING_BYTES`/"
+        "`_MARC8_BARE_STANDALONE_BYTES`) -- both confirmed by volume "
+        "against real production data",
+        "Reapplied the mark to (or reinserted it at) the position it "
+        "was lost from",
         "Yes (`--no-fix-marc8-diacritic-escapes`)",
         "`fixed_marc8_diacritic`", "INFORMATIONAL",
         "No -- INFORMATIONAL categories are never listed in full, "

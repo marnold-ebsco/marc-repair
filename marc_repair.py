@@ -2299,16 +2299,63 @@ def _record_oclc(parsed: ParsedRecord) -> str | None:
 #: purpose -- anything not in here still falls through to the
 #: detect-only `find_suspect_marc8_escapes` below, same as before this
 #: fixer existed.
+#:
+#: ("Q", "G") was removed after checking it against a real example:
+#: working/GTU_bibs_sample50.mrc record .b10001888 has this exact
+#: payload meaning MACRON in "Yanbu<G>" / "aya<G>h" (Arabic "Yanbū'
+#: al-Ḥayāh") -- but the same payload means BREVE everywhere else it
+#: was checked (Korean McCune-Reischauer romanization, e.g. "Sŏul",
+#: "Yŏn"). One payload byte, two different intended marks depending on
+#: the surrounding word's language -- exactly the kind of ambiguity the
+#: rest of this table was checked to NOT have (see the module comment
+#: above). Reapplying it blind would silently put the wrong accent on
+#: whichever language is the minority case in a given file, so it's
+#: left out until there's a safe way to disambiguate by context (a
+#: script/language hint elsewhere in the record, e.g. 041 or 008/35-37)
+#: rather than guessing from the payload byte alone.
 _MARC8_DIACRITIC_PAYLOADS: dict[tuple[str, str], str] = {
     ("Q", "A"): "\xe1",  # ANSEL combining grave accent (e.g. e -> è)
     ("Q", "B"): "\xe2",  # ANSEL combining acute accent (e.g. e -> é)
     ("Q", "C"): "\xe3",  # ANSEL combining circumflex accent (e.g. e -> ê)
     ("Q", "D"): "\xe4",  # ANSEL combining tilde (e.g. n -> ñ)
     ("Q", "E"): "\xe5",  # ANSEL combining macron (e.g. e -> ē)
-    ("Q", "G"): "\xe6",  # ANSEL combining breve (e.g. o -> ŏ)
     ("Q", "K"): "\xea",  # ANSEL combining ring above (e.g. a -> å)
     ("Q", "M"): "\xe9",  # ANSEL combining caron/háček (e.g. z -> ž)
     ("3", "L"): "\xf0",  # ANSEL combining cedilla (e.g. c -> ç)
+}
+
+#: A second, related corruption found in the same GTU_bibs.mrc sample
+#: (confirmed against three records referencing the same Maimonides
+#: title, and cross-checked against Sierra's own OPAC display -- see
+#: conversation notes): the stray escape-junk run this fixer already
+#: swallows (`\x1bp+\x1bs`/`\x1bp(\x1bs`, etc.) sometimes precedes a bare,
+#: un-escaped raw byte instead of (or alongside) a real
+#: `_MARC8_SCRIPT_ESCAPE` switch -- almost always Arabic transliteration
+#: marks: combining dot-below (ḥ/ṣ/ḏ, e.g. "al-h<junk>\xa3ujjah" ->
+#: "al-ḥujjah") and the standalone hamza/ayn modifier letters (e.g.
+#: "Ihya<junk>\xbc" -> "Ihyā'", "<junk>\xbbulum" -> "'ulum"). Each raw
+#: byte here is itself a *valid* ANSEL byte for an unrelated letter
+#: (0xA3 is really "Đ", 0xBC a different unrelated letter) -- it's not
+#: a bare byte the real MARC-8 spec would ever leave broken on its own;
+#: the giveaway that it's corrupted is the ESC bytes immediately before
+#: it, which never legitimately precede ordinary text. That's also why
+#: fixing this is safe: without that ESC-byte signal directly attached,
+#: a bare 0xA3/0xBC/0xBB could be genuine (unrelated) ANSEL content and
+#: must NOT be touched -- see `_MARC8_BARE_COMBINING_RE`/
+#: `_MARC8_BARE_STANDALONE_RE` below, which both require it.
+#:
+#: Combining (modifies the letter immediately before the junk run, same
+#: mark-before-letter ANSEL order as `_MARC8_DIACRITIC_PAYLOADS`):
+_MARC8_BARE_COMBINING_BYTES: dict[str, str] = {
+    "\xa3": "\xf2",  # -> ANSEL combining dot below (e.g. h -> ḥ, s -> ṣ)
+}
+
+#: Standalone (a modifier letter in its own right, not combining with
+#: any neighbor -- inserted as-is wherever the junk run sat, letter or
+#: word-boundary on either side):
+_MARC8_BARE_STANDALONE_BYTES: dict[str, str] = {
+    "\xbc": "\xae",  # -> ANSEL hamza (modifier letter apostrophe, e.g. Ihya' )
+    "\xbb": "\xb0",  # -> ANSEL ayn (modifier letter turned comma, e.g. 'ulum)
 }
 
 #: Zero or more unrecognized, stray escape-byte runs (see
@@ -2318,12 +2365,35 @@ _MARC8_DIACRITIC_PAYLOADS: dict[tuple[str, str], str] = {
 #: unrecognized) + `\x1b(QB\x1b(B` (the real escape this table resolves).
 #: Lazy (`*?`) so the following literal anchor is matched as soon as
 #: possible rather than this swallowing part of it.
-_MARC8_STRAY_ESCAPE_JUNK = r"(?:\x1b[^\x1b]{1,4})*?"
+#:
+#: Excludes the bare corruption bytes (`_MARC8_BARE_COMBINING_BYTES`/
+#: `_MARC8_BARE_STANDALONE_BYTES`) from what a junk fragment can
+#: swallow -- without that exclusion, a single fragment (`\x1b` + up to
+#: 4 *any* non-ESC bytes) can span right across one of those bytes
+#: (and real letters alongside it, e.g. "\x1bs\xa3ya" as ONE fragment),
+#: hiding it from `_MARC8_BARE_COMBINING_RE`/`_MARC8_BARE_STANDALONE_RE`
+#: entirely and silently dropping it instead of fixing it -- confirmed
+#: against record .b10001463's "Ihya" case while building this.
+_MARC8_BARE_TRIGGER_BYTES = "".join(
+    set(_MARC8_BARE_COMBINING_BYTES) | set(_MARC8_BARE_STANDALONE_BYTES)
+)
+_MARC8_STRAY_ESCAPE_JUNK = (
+    r"(?:\x1b[^\x1b" + re.escape(_MARC8_BARE_TRIGGER_BYTES) + r"]{1,4})*?"
+)
 
 _MARC8_DIACRITIC_ESCAPE_RE = re.compile(
     r"([A-Za-z])" + _MARC8_STRAY_ESCAPE_JUNK
     + r"\x1b\(([" + "".join(re.escape(c) for c, _ in _MARC8_DIACRITIC_PAYLOADS) + r"])(.)\x1b\(B"
-    + r"([A-Za-z])"
+    # "after" is normally the next plain letter -- but real examples
+    # (working/GTU_bibs_sample50.mrc record .b10001463, "Ihya" + this
+    # escape + more stray junk leading straight into a bare hamza byte,
+    # see _MARC8_BARE_STANDALONE_BYTES) show this escape sometimes
+    # butts directly against a *second*, different corruption instead
+    # of a letter. A zero-width lookahead for the next corruption's own
+    # leading ESC byte covers that without consuming it, so the
+    # following regex pass (bare-combining/bare-standalone) still gets
+    # to handle it normally.
+    + r"(?:([A-Za-z])|(?=\x1b))"
 )
 
 
@@ -2332,7 +2402,50 @@ def _marc8_diacritic_replacement(match: "re.Match[str]") -> str:
     mark = _MARC8_DIACRITIC_PAYLOADS.get((charset, payload))
     if mark is None:
         return match.group()  # not one of the confirmed payloads -- leave untouched
-    return mark + before + after  # ANSEL order: combining byte precedes its base letter
+    return mark + before + (after or "")  # ANSEL order: combining byte precedes its base letter
+
+
+#: One or more stray escape-byte fragments (same shape and same
+#: excluded-byte class as `_MARC8_STRAY_ESCAPE_JUNK`, but non-empty:
+#: `+?` not `*?`) directly preceding one of the bare corrupted bytes
+#: below -- that ESC-byte run is what makes touching the byte after it
+#: safe (see the table's own comment above): an ESC byte never
+#: legitimately precedes ordinary text, so its presence is the signal
+#: this is the same corruption, not genuine unrelated ANSEL content.
+_MARC8_STRAY_ESCAPE_JUNK_NONEMPTY = (
+    r"(?:\x1b[^\x1b" + re.escape(_MARC8_BARE_TRIGGER_BYTES) + r"]{1,4})+?"
+)
+
+_MARC8_BARE_COMBINING_RE = re.compile(
+    r"([A-Za-z])" + _MARC8_STRAY_ESCAPE_JUNK_NONEMPTY
+    + r"([" + "".join(re.escape(b) for b in _MARC8_BARE_COMBINING_BYTES) + r"])"
+)
+
+
+def _marc8_bare_combining_replacement(match: "re.Match[str]") -> str:
+    before, byte = match.group(1), match.group(2)
+    mark = _MARC8_BARE_COMBINING_BYTES.get(byte)
+    if mark is None:
+        return match.group()
+    return mark + before  # ANSEL order: combining byte precedes its base letter
+
+
+_MARC8_BARE_STANDALONE_RE = re.compile(
+    _MARC8_STRAY_ESCAPE_JUNK_NONEMPTY
+    + r"([" + "".join(re.escape(b) for b in _MARC8_BARE_STANDALONE_BYTES) + r"])"
+)
+
+
+def _marc8_bare_standalone_replacement(match: "re.Match[str]") -> str:
+    byte = match.group(1)
+    return _MARC8_BARE_STANDALONE_BYTES.get(byte, match.group())
+
+
+def _fix_marc8_diacritics_in_text(text: str) -> str:
+    text = _MARC8_DIACRITIC_ESCAPE_RE.sub(_marc8_diacritic_replacement, text)
+    text = _MARC8_BARE_COMBINING_RE.sub(_marc8_bare_combining_replacement, text)
+    text = _MARC8_BARE_STANDALONE_RE.sub(_marc8_bare_standalone_replacement, text)
+    return text
 
 
 def fix_marc8_diacritic_escapes(parsed: ParsedRecord) -> list[str]:
@@ -2354,6 +2467,12 @@ def fix_marc8_diacritic_escapes(parsed: ParsedRecord) -> list[str]:
     left alone and still reaches `find_suspect_marc8_escapes` for a
     human to review, same as before this function existed.
 
+    Also recovers two related, bare-byte (no recognized escape at all)
+    corruptions found in the same way: Arabic combining dot-below and
+    the standalone hamza/ayn modifier letters, each preceded by the
+    same stray ESC-byte junk this function already strips -- see
+    `_MARC8_BARE_COMBINING_BYTES`/`_MARC8_BARE_STANDALONE_BYTES`.
+
     Skipped entirely for a record already declaring UTF-8 (leader byte
     9 == "a") -- same reasoning as `find_suspect_marc8_escapes`: no raw
     MARC-8 escapes should exist there, and "fixing" one would risk
@@ -2365,7 +2484,7 @@ def fix_marc8_diacritic_escapes(parsed: ParsedRecord) -> list[str]:
     for f in parsed.fields:
         if f.is_control():
             if f.content and "\x1b" in f.content:
-                fixed = _MARC8_DIACRITIC_ESCAPE_RE.sub(_marc8_diacritic_replacement, f.content)
+                fixed = _fix_marc8_diacritics_in_text(f.content)
                 if fixed != f.content:
                     details.append(
                         f"recovered lost MARC-8 diacritic in ={f.tag}: "
@@ -2377,7 +2496,7 @@ def fix_marc8_diacritic_escapes(parsed: ParsedRecord) -> list[str]:
             changed_codes = []
             for code, data in f.subfields:
                 if data and "\x1b" in data:
-                    fixed = _MARC8_DIACRITIC_ESCAPE_RE.sub(_marc8_diacritic_replacement, data)
+                    fixed = _fix_marc8_diacritics_in_text(data)
                 else:
                     fixed = data
                 if fixed != data:
@@ -5088,12 +5207,15 @@ _CHECK_DESCRIPTIONS: dict[str, str] = {
     "'m' (Monograph/Item). NO DATA LOSS.",
     "fixed_mojibake": "Double-encoded UTF-8 (\"mojibake\") was "
     "corrected. NO DATA LOSS.",
-    "fixed_marc8_diacritic": "A MARC-8 diacritic mark was replaced "
-    "with a bogus script-switching escape sequence around a "
+    "fixed_marc8_diacritic": "A MARC-8 diacritic mark was lost to "
+    "either a bogus script-switching escape sequence around a "
     "confirmed-by-volume payload byte (e.g. \"Haure\" + <escape> + "
-    "\"au\" -> \"Hauréau\") -- the mark was reapplied to the letter "
-    "it was lost from. See suspect_marc8_escape for the same defect's "
-    "unconfirmed payloads, left for a human to review. NO DATA LOSS.",
+    "\"au\" -> \"Hauréau\") or a bare, un-escaped byte standing in for "
+    "an Arabic transliteration mark (dot-below, hamza, ayn, e.g. "
+    "\"al-h\" + <bare byte> + \"ujjah\" -> \"al-ḥujjah\") -- the mark "
+    "was reapplied to (or reinserted at) the position it was lost "
+    "from. See suspect_marc8_escape for the same defect's unconfirmed "
+    "payloads, left for a human to review. NO DATA LOSS.",
     "remapped_999_to_945": "A 999 field was retagged to 945 "
     "(indicators forced to \"ff\") -- only with --remap-999-to-945. "
     "NO DATA LOSS.",
@@ -6250,7 +6372,10 @@ def main(argv: list[str] | None = None) -> int:
         help="do NOT recover a MARC-8 diacritic mark lost to a bogus "
         "script-switching escape wrapped around it (e.g. \"Haure\" + "
         "<escape> + \"au\" -> \"Hauréau\"), for the confirmed high-"
-        "volume escape payloads in _MARC8_DIACRITIC_PAYLOADS. By "
+        "volume escape payloads in _MARC8_DIACRITIC_PAYLOADS, or to a "
+        "bare un-escaped byte standing in for an Arabic "
+        "transliteration mark (dot-below/hamza/ayn -- see "
+        "_MARC8_BARE_COMBINING_BYTES/_MARC8_BARE_STANDALONE_BYTES). By "
         "default this IS fixed and logged (see --log) as "
         "fixed_marc8_diacritic; anything not covered still falls "
         "through to suspect_marc8_escape for human review",
