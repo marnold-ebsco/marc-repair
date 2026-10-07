@@ -2376,11 +2376,37 @@ _MARC8_AMBIGUOUS_CONTEXT_RADIUS = 15
 #: `_MARC8_BARE_COMBINING_BEFORE_OVERRIDES` for the one case, 0xA4,
 #: where a *different* before-letter needs a genuinely different mark
 #: rather than just being excluded):
-#: - 0xAE: dot below, but only after "h" (109 of 135 occurrences, 81%)
-#:   -- confirmed-by-volume Near Eastern/biblical names ("H<junk>\xaeammurabi"
-#:   -> "Ḥammurabi", "Yarih<junk>\xae" -> "Yariḥ"). The other before-letters
-#:   (a/s/o/i/u, 26 occurrences) didn't show a single clear, confirmable
-#:   word and are left for a human to review instead of guessing.
+#: - 0xAE: dot below, but only after "h" (109 of 135 occurrences, 81% --
+#:   recounted; unlike 0xA4/0xA5/0xA8 this figure was NOT stale, same 135
+#:   both before and after the close-escape fix) -- confirmed-by-volume
+#:   Near Eastern/biblical names ("H<junk>\xaeammurabi" -> "Ḥammurabi",
+#:   "Yarih<junk>\xae" -> "Yariḥ"). Re-investigated the other 26
+#:   before-letters (i/9, a/8, u/4, o/3, s/2) the same way as 0xA4/0xA5/0xA8's
+#:   leftovers; none cluster into a second confirmed override. They split
+#:   across: (1) Italian "pi<junk>\xae" / "Ges<junk>\xae" (più/Gesù, 4
+#:   occurrences) -- the destroyed-base-letter failure mode already
+#:   documented for 0xA4 (the whole "ù" is missing, not just its mark, so
+#:   there's no letter to attach dot-below to even if that were the right
+#:   mark here, which it isn't -- più/Gesù need grave, not dot below); (2)
+#:   an Akkadian/Hittite/Sumerian cluster (Hattusa, Harranu/-shubu,
+#:   Ninhursag, Asalluhi, Kalhu, Hirbet, Hissar; i/u/a, ~11 occurrences)
+#:   where the dot-below mark is real but belongs on the "h" one letter
+#:   BEFORE the matched before-letter (e.g. "Ninhu<junk>\xaersag" is
+#:   "Ninḥursag" -- the mark is on "h", not "u") -- this before-letter
+#:   mechanism only ever attaches to the letter immediately before the
+#:   junk, so it structurally can't reach one letter further back, same
+#:   shape as 0xA5's Sanskrit "t"/"a" leftovers (mark lands the wrong
+#:   distance from where it belongs, just the opposite direction); (3) a
+#:   Germanic/Scandinavian cluster ("underst<junk>\xaedd", "Gr<junk>\xaeeres",
+#:   "Knau<junk>\xae") needing umlaut/o-with-stroke, not dot below -- a
+#:   different mark entirely, same as 0xA4's u-vs-z overload but without
+#:   enough volume or a clean split to add as a second override; (4) a
+#:   genuinely ambiguous al-Ghazali/"Ihya" cluster (5 occurrences) that
+#:   doesn't read as a clean dot-below case at all (common transliteration
+#:   of "al-Ghazali" carries no diacritic here; "Ihya" needs the unrelated
+#:   hamza byte, see `_MARC8_BARE_STANDALONE_BYTES`); and (5) one "où il"
+#:   (French, needs grave not dot below) and one singleton too garbled to
+#:   confirm. No override added -- 0xAE stays restricted to "h".
 #: - 0xA5: dot below, but only after "r" (251 of 291 occurrences, 86% --
 #:   recounted after the close-escape fix removed 27 stale false-positive
 #:   matches from the original 318, the same stale-count effect already

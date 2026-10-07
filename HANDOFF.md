@@ -116,6 +116,62 @@ Per explicit instruction, the full `working/GTU_bibs.mrc` corpus was never
 re-run this session -- all verification stayed scoped to the 197-record
 `working/GTU_bibs_0xA5_sample.mrc`.
 
+Re-ran the same disambiguation methodology against `0xAE`, the last of the
+three bytes flagged by the HOWTO below as not yet re-checked. Built
+`working/0xAE_occurrences.tsv` and `working/GTU_bibs_0xAE_sample.mrc` via
+`working/find_0xae_occurrences.py` (adapted from `find_0xa5_occurrences.py`,
+still on disk, gitignored; double-checked `TARGET_BYTE = '\xae'` by hand
+given the sed-substitution trap documented below). 135 occurrences across
+83 records in `working/GTU_bibs.mrc` -- **not stale**, unlike `0xA4`/`0xA5`/
+`0xA8`: this is the same 135 already recorded in the existing comment
+block, both before and after the close-escape fix. 109 (81%) are the
+already-confirmed `h`/`H` + dot below. The remaining 26 (`i`/9, `a`/8,
+`u`/4, `o`/3, `s`/2) did **not** turn up a new confirmed override -- they
+split across five small, unrelated groups, same shape as `0xA8`'s
+leftovers: 4 Italian occurrences ("più", "Gesù") are the destroyed-base-
+letter failure mode already confirmed for `0xA4` (the whole "ù" is
+missing, and the mark needed is a grave accent anyway, not dot below); an
+~11-occurrence Akkadian/Hittite/Sumerian cluster ("Ninhursag", "Hattusa",
+"Harranu", "Asalluhi", "Kalhu", "Hirbet", "Hissar") has a real dot-below
+mark that belongs on the "h" one letter *before* the matched before-letter
+(e.g. "Ninhu<byte>rsag" is "Ninḥursag", mark on "h" not "u") -- this
+before-letter mechanism can't reach one letter further back, the same
+"wrong distance" shape as `0xA5`'s Sanskrit `t`/`a` leftovers, just in the
+other direction; a small Germanic/Scandinavian cluster ("understödd",
+"Größeres", "Knauß") needs umlaut/o-with-stroke, not dot below -- a
+different mark, not enough volume to add as a second override; a 5-
+occurrence al-Ghazali/"Ihya" cluster is genuinely ambiguous (no diacritic
+on "al-Ghazali" in this transliteration; "Ihya" needs the unrelated hamza
+byte instead); and the last 2 are one "où il" (needs grave, not dot below)
+and one singleton too garbled to confirm. No code change -- `0xAE` stays
+restricted to `h`. `marc_repair.py`'s `0xAE` comment block and
+`docs/MARC8_DIACRITIC_HANDLING.md`'s table updated with this breakdown.
+Per the same instruction as `0xA5` above, the full `working/GTU_bibs.mrc`
+corpus was not re-run this session -- verification stayed scoped to the
+83-record `working/GTU_bibs_0xAE_sample.mrc`. **All three bytes the HOWTO
+originally flagged (`0xA8`, `0xA5`, `0xAE`) are now re-checked.**
+
+**Next up: `0xB2` and `0xB3`.** Not started. These are two of the four
+bytes already sitting in the "Investigated, not implemented" table in
+`docs/MARC8_DIACRITIC_HANDLING.md` (`0xA6`, `0xBA`, `0xB2`, `0xB3`, `0xC1`)
+-- unlike `0xA8`/`0xA5`/`0xAE`, these never got a *first* confirmed
+before-letter at all, so this isn't a re-check of existing leftovers, it's
+the original disambiguation pass (HOWTO steps 1-4 below) run for the first
+time. From the existing table: `0xB2` has 745 occurrences (398 records)
+and was flagged "murky" -- frequently tangled with multiple macron escapes
+within the same word, plus at least one occurrence ("JohannesVerl...")
+that looks like it needs no diacritic fix at all (possible false-positive
+match on the detection shape itself, worth checking early). `0xB3` has 49
+occurrences (21 records) and was flagged as two unrelated phenomena
+sharing one byte: Dead Sea Scroll sigla superscripts (e.g. "1QIsaᵃ" --
+would need a letter-to-Unicode-superscript substitution, a different fix
+mechanism entirely, not a mark insertion) and what looks like a Korean
+name needing a breve ("Yŏn Presbyterian"). Both need the TSV-report +
+sample-file treatment (HOWTO steps 1-3) before any disambiguation
+judgment calls -- the existing counts/notes above predate the
+close-escape fix and may be stale, same as `0xA4`'s original 93 (actual
+79) and `0xA8`'s original 324 (actual 260).
+
 **Lessons learned this session (read before starting `0xAE`):**
 
 1. **A reconstructed word reading correctly in isolation is necessary but
@@ -211,31 +267,37 @@ re-run this session -- all verification stayed scoped to the 197-record
    belongs to an unrelated project/library, not a fair substitute. Deferred by
    the user. Not started.
 
-## HOWTO: re-run the 0xA4 disambiguation methodology for 0xAE
+## HOWTO: re-run the 0xA4 disambiguation methodology for a new byte
 
 Worked end-to-end for `0xA4` this session (confirmed `z` -> dot below as a new
 override; see `_MARC8_BARE_COMBINING_BEFORE_OVERRIDES` in `marc_repair.py` and
 `docs/MARC8_DIACRITIC_HANDLING.md`), for `0xA8` in a later session (no new
 override -- the 12 leftover occurrences split across four small, unrelated
 groups, none clean/large enough; see the "Current state" entry above and
-`docs/MARC8_DIACRITIC_HANDLING.md`'s table), and for `0xA5` in a later session
+`docs/MARC8_DIACRITIC_HANDLING.md`'s table), for `0xA5` in a later session
 (no new override -- `h` looked like a clean addition in isolation, same
 dot-below mark `r` already gets, but was rejected after it was found to
 make a real record's transcoded output worse due to an unrelated decoder
 bug interacting with it; see the "Current state" entry and "Lessons
-learned" above -- **read that before starting `0xAE`**, since the same
-verification gap could hide the same kind of trap there too). `0xAE` is
-still restricted to one confirmed before-letter (`h` -- see
-`_MARC8_BARE_COMBINING_RESTRICTED_BEFORE`) with a chunk of real occurrences
-left unconfirmed outside that restriction (26/135 as of the last
-count -- re-verify, since `0xA8`'s 76/324 figure turned out stale by the time
-it was actually re-checked; see `docs/MARC8_DIACRITIC_HANDLING.md`'s table).
-This is the same kind of "is there a second confirmed mark hiding in the
-leftovers" question `0xA4` answered for `z` and `0xA8`/`0xA5` answered (in
-the negative, `0xA5` only after the detour above) -- not yet done
-for `0xAE`. **Not started; not scoped as "do this automatically" -- read
-the whole thing before running anything, since step 4 below is where the
-real judgment calls are.**
+learned" above), and for `0xAE` in a later session still (no new override
+-- the 26 leftover occurrences split across five small groups: destroyed-
+base-letter Italian, an off-by-one Akkadian/Hittite/Sumerian cluster where
+the mark belongs one letter further back than this mechanism can reach, a
+Germanic cluster needing a different mark, a genuinely ambiguous
+al-Ghazali/"Ihya" cluster, and two singletons; see the "Current state"
+entry above and `docs/MARC8_DIACRITIC_HANDLING.md`'s table). **All three
+bytes this file previously flagged for re-checking (`0xA8`, `0xA5`, `0xAE`)
+are now done** -- `_MARC8_BARE_COMBINING_RESTRICTED_BEFORE` and
+`_MARC8_BARE_COMBINING_BEFORE_OVERRIDES` in `marc_repair.py` reflect the
+current, fully-re-verified state for every overloaded byte. This HOWTO is
+kept as reference methodology for the *next* time a new candidate byte
+needs the same disambiguation treatment (e.g. a byte currently in the
+"Investigated, not implemented" table, or a wholly new one) -- **read the
+whole thing, including the "Lessons learned" entries above, before running
+anything against a new byte, since step 4 below is where the real judgment
+calls are and the same traps (counting-metric blind spots, off-by-one
+marks, destroyed base letters, decoder-interaction regressions) are likely
+to recur.**
 
 ### 1. Find the records (build a TSV report)
 

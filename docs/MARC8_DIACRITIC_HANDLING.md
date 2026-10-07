@@ -88,8 +88,38 @@ only auto-fixed in the specific before-letter context the full corpus
 confirmed is clean. Outside that context they're left alone for
 `suspect_marc8_escape` rather than risk the wrong mark:
 
-- `0xAE`: 109 of 135 occurrences (81%) are `h` + dot-below (Near
-  Eastern/biblical names). The rest are a scatter of unconfirmed words.
+- `0xAE`: 109 of 135 occurrences (81% -- recounted; unlike `0xA4`/`0xA5`/
+  `0xA8` this figure was **not** stale, same 135 both before and after the
+  close-escape fix) are `h` + dot-below (Near Eastern/biblical names,
+  "Ḥammurabi", "Yariḥ"). Re-investigated the remaining 26 the same way as
+  `0xA4`/`0xA5`/`0xA8`'s leftovers, looking for a second confirmed
+  override -- none of the five leftover groups qualify:
+  - Italian "pi`<byte>`" / "Ges`<byte>`" (più/Gesù, 4 occurrences) are the
+    destroyed-base-letter failure mode already confirmed for `0xA4` -- the
+    whole "ù" is missing, not just its mark, and the mark these words
+    actually need is a grave accent, not dot below, anyway.
+  - An Akkadian/Hittite/Sumerian cluster (~11 occurrences: "Hattusa",
+    "Harranu"/"-shubu", "Ninhursag", "Asalluhi", "Kalhu", "Hirbet",
+    "Hissar") where the dot-below mark is real but belongs on the "h" one
+    letter *before* the matched before-letter (e.g. "Ninhu`<byte>`rsag" is
+    "Ninḥursag" -- the mark is on "h", not "u"). This before-letter
+    mechanism only ever attaches to the letter immediately before the
+    junk, so it can't reach one letter further back -- the same shape as
+    `0xA5`'s Sanskrit `t`/`a` leftovers (mark lands the wrong distance from
+    where it belongs), just the opposite direction.
+  - A Germanic/Scandinavian cluster ("understödd", "Größeres", "Knauß")
+    needing umlaut or o-with-stroke, not dot below -- a different mark
+    entirely, same overload shape as `0xA4`'s u-vs-z split but without
+    enough volume or a clean grouping to add as a second override.
+  - A genuinely ambiguous al-Ghazali/"Ihya" cluster (5 occurrences) that
+    doesn't read as a clean dot-below case at all: the common
+    transliteration "al-Ghazali" carries no diacritic here, and "Ihya"
+    needs the unrelated hamza byte (`_MARC8_BARE_STANDALONE_BYTES`), not a
+    combining mark.
+  - One "où il" (French, needs grave, not dot below) and one singleton too
+    garbled to confirm.
+
+  No override added -- `0xAE` stays restricted to `h`.
 - `0xA5`: 251 of 291 occurrences (86% -- recounted after the close-escape
   fix removed 27 stale false-positive matches from the original 318, same
   stale-count effect as `0xA4`/`0xA8`) are `r` + dot-below (Sanskrit IAST
