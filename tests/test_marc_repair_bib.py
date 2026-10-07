@@ -516,6 +516,39 @@ class TestFixMarc8DiacriticEscapes:
         assert len(details) == 1
         assert parsed.fields[0].subfields == [("a", "Ihya\xae al-\xb0ulum")]
 
+    def test_recovers_bare_combining_cedilla(self):
+        # Real production example (working/GTU_bibs.mrc, 6,182
+        # occurrences): "franc" + stray junk + bare byte 0xA7 + "ais"
+        # -> "français". 0xA7 is itself a valid, unrelated ANSEL byte
+        # (U+02B9 MODIFIER LETTER PRIME) when not preceded by the junk
+        # signal -- see _MARC8_BARE_STANDALONE_BYTES's own 0xB9 entry
+        # for the mark it actually represents standalone.
+        parsed = self._record("franc\x1bp+\x1bs\xa7ais")
+        details = m.fix_marc8_diacritic_escapes(parsed)
+        assert len(details) == 1
+        assert parsed.fields[0].subfields == [("a", "fran\xf0cais")]
+
+    def test_recovers_bare_standalone_prime_soft_sign(self):
+        # Real production example (working/GTU_bibs.mrc, 2,948
+        # occurrences): Russian "soft sign" romanizations, e.g.
+        # "Il" + stray junk + bare byte 0xB9 + "ich" -> "Il'ich".
+        parsed = self._record("Il\x1bp(\x1bs\xb9ich")
+        details = m.fix_marc8_diacritic_escapes(parsed)
+        assert len(details) == 1
+        assert parsed.fields[0].subfields == [("a", "Il\xa7ich")]
+
+    def test_bare_combining_cedilla_transcodes_to_correct_utf8(self):
+        parsed = self._record("franc\x1bp+\x1bs\xa7ais")
+        m.fix_marc8_diacritic_escapes(parsed)
+        m.transcode_marc8_to_utf8(parsed)
+        assert parsed.fields[0].subfields == [("a", "français")]
+
+    def test_bare_standalone_prime_transcodes_to_correct_utf8(self):
+        parsed = self._record("Il\x1bp(\x1bs\xb9ich")
+        m.fix_marc8_diacritic_escapes(parsed)
+        m.transcode_marc8_to_utf8(parsed)
+        assert parsed.fields[0].subfields == [("a", "Ilʹich")]
+
     def test_recovers_escape_diacritic_immediately_followed_by_bare_byte(self):
         # Real production example (record .b10001463, tag 500):
         # "Ihya" + macron escape + more stray junk leading straight
@@ -531,14 +564,15 @@ class TestFixMarc8DiacriticEscapes:
         assert parsed.fields[0].subfields == [("a", "I\xf2hy\xe5a\xae")]
 
     def test_bare_byte_fix_does_not_touch_genuine_unescaped_ansel_byte(self):
-        # 0xA3/0xBC/0xBB are themselves valid (if unrelated) ANSEL
-        # bytes -- must only be touched when the distinctive ESC-byte
-        # junk run precedes them (the actual corruption signal), never
-        # on their own, or genuine unrelated content would be corrupted.
-        raw = "plain\xa3text"
-        parsed = self._record(raw)
-        assert m.fix_marc8_diacritic_escapes(parsed) == []
-        assert parsed.fields[0].subfields == [("a", raw)]
+        # 0xA3/0xBC/0xBB/0xA7/0xB9 are themselves valid (if unrelated)
+        # ANSEL bytes -- must only be touched when the distinctive
+        # ESC-byte junk run precedes them (the actual corruption
+        # signal), never on their own, or genuine unrelated content
+        # would be corrupted.
+        for raw in ("plain\xa3text", "plain\xa7text", "plain\xb9text"):
+            parsed = self._record(raw)
+            assert m.fix_marc8_diacritic_escapes(parsed) == []
+            assert parsed.fields[0].subfields == [("a", raw)]
 
     def test_bare_combining_recovered_bytes_transcode_to_correct_utf8(self):
         parsed = self._record("al-h\x1bp+\x1bs\xa3ujjah")

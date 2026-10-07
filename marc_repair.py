@@ -2357,18 +2357,35 @@ _MARC8_AMBIGUOUS_CONTEXT_RADIUS = 15
 #: must NOT be touched -- see `_MARC8_BARE_COMBINING_RE`/
 #: `_MARC8_BARE_STANDALONE_RE` below, which both require it.
 #:
+#: 0xA7 was added after the same methodology turned up more candidate
+#: bytes: checked against all occurrences in the full working/GTU_bibs.mrc
+#: (6,182 of them), overwhelmingly common French/Occitan words missing a
+#: cedilla ("franc<junk>\xa7ais" -> "français", "Pourc<junk>\xa7ain" ->
+#: "Pourçain"). 0xA7 is itself a valid standalone ANSEL byte (U+02B9
+#: MODIFIER LETTER PRIME, unrelated to cedilla) when *not* preceded by
+#: the junk signal -- same safety argument as 0xA3/0xBC/0xBB above.
+#:
 #: Combining (modifies the letter immediately before the junk run, same
 #: mark-before-letter ANSEL order as `_MARC8_DIACRITIC_PAYLOADS`):
 _MARC8_BARE_COMBINING_BYTES: dict[str, str] = {
     "\xa3": "\xf2",  # -> ANSEL combining dot below (e.g. h -> ḥ, s -> ṣ)
+    "\xa7": "\xf0",  # -> ANSEL combining cedilla (e.g. c -> ç)
 }
 
 #: Standalone (a modifier letter in its own right, not combining with
 #: any neighbor -- inserted as-is wherever the junk run sat, letter or
 #: word-boundary on either side):
+#:
+#: 0xB9 was added via the same full-corpus check (2,948 occurrences):
+#: Russian "soft sign" romanizations, both word-medial ("Il<junk>\xb9ich"
+#: -> "Il'ich") and word-final before punctuation
+#: ("nravstvennost<junk>\xb9." -> "nravstvennost'."). 0xB9 is itself a
+#: valid, unrelated ANSEL byte (£, the pound sign) when not preceded by
+#: the junk signal -- same safety argument as the other bytes above.
 _MARC8_BARE_STANDALONE_BYTES: dict[str, str] = {
     "\xbc": "\xae",  # -> ANSEL hamza (modifier letter apostrophe, e.g. Ihya' )
     "\xbb": "\xb0",  # -> ANSEL ayn (modifier letter turned comma, e.g. 'ulum)
+    "\xb9": "\xa7",  # -> ANSEL modifier letter prime (soft sign, e.g. Il'ich)
 }
 
 #: Zero or more unrecognized, stray escape-byte runs (see
@@ -2521,10 +2538,12 @@ def fix_marc8_diacritic_escapes(parsed: ParsedRecord) -> list[str]:
     left alone and still reaches `find_suspect_marc8_escapes` for a
     human to review, same as before this function existed.
 
-    Also recovers two related, bare-byte (no recognized escape at all)
-    corruptions found in the same way: Arabic combining dot-below and
-    the standalone hamza/ayn modifier letters, each preceded by the
-    same stray ESC-byte junk this function already strips -- see
+    Also recovers several related, bare-byte (no recognized escape at
+    all) corruptions found in the same way, each preceded by the same
+    stray ESC-byte junk this function already strips: Arabic combining
+    dot-below, French/Occitan combining cedilla, the standalone hamza/
+    ayn modifier letters, and the standalone modifier-letter prime
+    (Russian "soft sign" romanizations) -- see
     `_MARC8_BARE_COMBINING_BYTES`/`_MARC8_BARE_STANDALONE_BYTES`.
 
     Also recovers a third, much more common variant of the escape
@@ -5275,7 +5294,8 @@ _CHECK_DESCRIPTIONS: dict[str, str] = {
     "either a bogus script-switching escape sequence around a "
     "confirmed-by-volume payload byte (e.g. \"Haure\" + <escape> + "
     "\"au\" -> \"Hauréau\") or a bare, un-escaped byte standing in for "
-    "an Arabic transliteration mark (dot-below, hamza, ayn, e.g. "
+    "an Arabic transliteration mark, a French/Occitan cedilla, or a "
+    "Russian \"soft sign\" (e.g. "
     "\"al-h\" + <bare byte> + \"ujjah\" -> \"al-ḥujjah\") -- the mark "
     "was reapplied to (or reinserted at) the position it was lost "
     "from. Also recovers plain ASCII punctuation/whitespace trapped "
