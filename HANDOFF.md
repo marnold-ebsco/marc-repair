@@ -746,6 +746,36 @@ before/after slices still resolve correctly near a boundary). Estimated
 overlap-buffer correctness is the fiddly part and likely needs 1-2
 correction rounds after the first test run.
 
+## TODO (later, put off by user): whether holdings records carry any of the same lost-diacritic corruption bib records did
+
+Raised while surveying what other encoding/diacritic work was left after
+the `fix_marc8_diacritic_escapes` sessions above. MARC-8-to-UTF-8
+transcoding is skipped entirely for holdings records (an explicit,
+temporary scope decision -- see `repair_holdings_records`'s own
+docstring and category `holdings_escape_sequence`, detect-only, NOT
+FIXED), so even if a holdings record had the exact same
+escape-wrapped-payload or bare-byte corruption shapes this session fixed
+for bibs, nothing would currently touch it.
+
+**Checked before being told to defer this:**
+- `working/GTU_bibs.mrc` is a pure bib file -- checked the first 50,000
+  records, zero had an `852` (the holdings-defining field).
+- No holdings `.mrc` export for GTU or WTS exists anywhere in this
+  project's `working/` directory or elsewhere under
+  `/home/marnold/scratch/marc_repair`.
+- The only real holdings `.mrc` file found on disk at all belongs to an
+  unrelated project (`/home/marnold/scratch/WMS_holdings_match/.../
+  bucknell_marc_holdings_repaired.mrc`, a different library, already run
+  through some prior repair pass) -- not a fair substitute for whether
+  *this* corpus's own holdings data has the corruption, and out of scope
+  to pull in without being asked.
+
+**Not yet done:** get (or get pointed to) a real GTU/WTS holdings export
+and check it the same way the bib corpus was checked this session
+(grep for the stray-ESC-junk signal this session's work keys off of) --
+if it's actually clean, there's nothing to do; if not, decide whether
+lifting the "skip transcoding for holdings" scope decision is worth it.
+
 ## DONE: shortened/readable detail messages for `suspect_marc8_escape` and `suspect_hex_encoded_marc8`
 
 All 345 tests passing (1 skipped), flake8 clean.
