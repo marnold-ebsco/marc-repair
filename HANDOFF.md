@@ -8,6 +8,119 @@ current state and open items.
 
 ## Current state
 
+### Experiment: language/context to disambiguate overloaded bytes (branch `context-language-disambiguation`)
+
+**Status: research only. Nothing in `marc_repair.py` changed.** Scripts are in
+`tools/context_probe/` (flake8-clean except the user-supplied
+`polyglot_detector_marc.py`, left as received). Run from the repo root, e.g.
+`python tools/context_probe/a5_context_probe.py --ladder`. Data paths are
+`working/...` (gitignored), so the per-byte sample files and
+`working/lexicon_GTU.pkl` must exist; build the pickle once with
+`python tools/context_probe/lang_lexicon_probe.py build` (~5 min on
+`working/GTU_bibs.mrc`). Per the standing instruction, the full corpus was
+not re-run for any of the byte checks -- only the per-byte sample files.
+
+**The question.** Can the field/record's *language* (the user's polyglot
+detector, plus 008/041) decide which mark an overloaded bare byte should
+become (e.g. German -> umlaut), instead of the before-letter table alone?
+
+**What was built** (all in `tools/context_probe/`):
+
+- `polyglot_field_probe.py` -- for every occurrence of 0xA4/A5/A6/A8/AE/B2/B3
+  run the field text through the unmodified detector and tabulate detected
+  language vs. the mark the current rule applies. First-pass signal check.
+- `lang_lexicon_probe.py` -- an earlier, *rejected* approach (a lexicon of
+  cleanly-encoded diacritic words from the corpus). Still used as a data
+  source by `b2_context_probe.py`. Do not expect it to resolve Sanskrit/
+  Arabic: those words never appear cleanly anywhere in this corpus (matched
+  2/292 for 0xA5, 1/135 for 0xAE).
+- `a5_context_probe.py` -- `ContextDetector` (subclass of the user's
+  `MARCPolyglotDetector`) adding English / Sanskrit-IAST / Arabic / Greek /
+  French transliteration profiles, scoring record text + the garbled word
+  itself (x4) + the 008/041 prior, then applying a language -> (mark, letters,
+  how far back) table. Compares against the current rule per occurrence.
+- `b2_context_probe.py` / `b2_gold_check.py` -- 0xB2 (whole destroyed vowel):
+  lexicon vowel-fill (a/o/u in the gap) and hand-labelled-gold accuracy check.
+
+**Findings, by finding (not by script):**
+
+1. **Detector caveats.** The unmodified detector has no English profile (plain
+   English scores as Chinese Pinyin / Japanese Romaji), its French profile's
+   4+ letter "trigrams" can never match a 3-letter window, and short MARC
+   fields give 0.4-0.7 confidence. It is only trustworthy when it says
+   German. Language alone cannot pick a mark: 43 German-detected 0xAE fields
+   are confirmed *dot below* (Arabic/Akkadian words inside German records),
+   so any table must be per (byte, language), never per language.
+2. **Confidence must be top-vs-runner-up among the transliteration classes,
+   with English excluded as a competitor.** English score grows with record
+   length, and "English record containing a Sanskrit word" is the normal
+   case. Share-of-total confidence diluted every clear winner.
+3. **The garbled word itself must carry evidence before any mark is applied.**
+   Record topic alone produced false `s` -> ṣ fixes: in `.b14669675` the
+   junk is a mangled *apostrophe* in English prose ("psalm's place"), not a
+   dot below. Added a word-evidence gate (`MIN_WORD_EVIDENCE`) and the same
+   gate lets a Sanskrit/Arabic word beat a French/Greek *blocking* record.
+
+**0xA5 result** (292 occurrences, `--min-confidence 0.6`, hand-checked):
+244 existing fixes unchanged; **14 new fixes** (11 Sanskrit, all correctly
+on the `r` -- smṛti, saṃskṛti, kṛtaḥ, prabhṛta; 2 Muḥammad; 1 *partial*
+"aḍḥawiyya" where the real word needs a second mark on `h`); **7 existing
+fixes blocked, all genuine false fixes in current output** -- French
+"r<byte>le" (rôle, 4), "jr<byte>me" (Jérôme, 2) and Greek
+"Rōmaiokatholikōn" are being turned into "ṛ" today. 27 unresolved (mostly
+Greek, where the byte is a destroyed long vowel, correctly left alone).
+Dial: at 0.8 only 1 new fix; 0.7 -> 2; 0.6 -> 14. The Sanskrit/French
+profiles were tuned on these same 292 records, so expect retuning.
+**Assessment: 0xA5 alone is not worth building** (~21 occurrences changed
+across a ~400,000-record corpus). The 7 false fixes are the real find; a
+cheap 008/041 French/Greek `r` skip would remove them but would also lose
+legitimate Sanskrit fixes in French-language records (e.g. Bhartṛhari,
+`.b11073056`, `fre`) unless the word-level check is kept.
+
+**0xB2 result** (752 gapped words in `GTU_bibs_0xB2_sample.mrc`, 602 with a
+single gap). Language *does* help here and the volume is an order of
+magnitude larger than 0xA5. Measured against hand-labelled gold
+(`b2_gold_check.py`; **labels are the assistant's German knowledge, no word
+list exists on this machine; ~33 occurrences left UNSURE, 27 unlabelled, so
+read the percentages as estimates, probably optimistic**):
+
+- Of 340 occurrences labelled German: **268 (78.8%) are an o-umlaut that
+  "fill the gap with ö" gets exactly right**; 2 are ü (Bühler, Hübsch); **70
+  (20.6%) are DISPLACED** -- the vowel belongs one position over from the gap
+  (e.g. `relig_ise` is "religiöse", `Rme_r` "Römer", `Gt_tingen` "Göttingen"),
+  so filling the gap gives garbage; that needs a different mechanism.
+  Among the 270 clean words, ö is right 99.3% (no ä seen among labelled).
+- **Gating on 008=`ger` alone is not enough:** 25/342 (7.3%) of single-gap
+  words in `ger` records are not German at all (Tamil n-macron, Arabic,
+  etc.), and 43 real German occurrences sit in *non-ger* records
+  (Göttingen, Schröter, Jörg, Grözinger...) -- the same word-evidence gate
+  as 0xA5 is required, not just the language code.
+- The corpus lexicon vowel-fill accepted 127 words at full confidence (124 ö,
+  3 a) but **4 were contradicted by gold** ("at_" -> "atä" and "R_m" ->
+  "röm", both in English records), and "mächte" is ambiguous with "möchte".
+  Lexicon coverage is also thin ("religiöse", "gehört", "Königsrahmen" absent).
+  So even the lexicon tier needs the language/word gate.
+
+**Cost of building this properly:** roughly 250k-450k tokens to ship 0xA5 +
+0xB2 in `marc_repair.py` (the fixer works one subfield at a time; this needs
+whole-record text + 008/041 plumbed through), then ~50k-100k per additional
+byte. Roughly half the machinery (scoring, confidence dial, word-evidence
+gate, per-language blocking, probe-then-compare workflow) is generic;
+profiles, mark rules and the hand-check are per byte.
+
+**Recommended next steps (not started):**
+
+1. Decide whether to build for 0xB2 only: tiers = lexicon-confirmed vowel
+   (with the word/language gate) > German-evidence default ö at lower
+   confidence > leave alone. Estimated reach ~ 60-70% of the German 0xB2
+   occurrences (the clean ones), i.e. roughly 30-40% of all 0xB2.
+2. Separately consider the DISPLACED shape (20% of German 0xB2, and 0xA5's
+   Sanskrit `t`/`a` leftovers, 0xAE's Ninḥursag) -- a "move the mark to the
+   right letter" mechanism is the other big gap, language-independent.
+3. Whatever is built: **every fix still needs the on/off transcoded-output
+   diff** (see "Lessons learned" -- `.b18157713`, `.b12911008`); that has not
+   been run for any of the proposals above.
+
 `marc8-diacritic-fix` was merged into `main` via
 [marc-repair#1](https://github.com/marnold-ebsco/marc-repair/pull/1) and the
 branch deleted (local + remote).
