@@ -1,5 +1,14 @@
 # Handoff Notes
 
+## DONE: re-ran `working/GTU_bibs.mrc` after the `test_unresolvable_record_diverted_to_error_file` fix
+
+Confirms the test fix (`176b947`) was log-wording-only, no behavior
+change: 404,956/404,957 records written in 123.92s, the same single
+genuinely-unfixable record (403838) as the prior run. Output/log left
+in `working/` (gitignored, nothing to commit): `GTU_bibs_repaired.mrc`,
+`GTU_bibs_repaired_error.mrc`,
+`GTU_bibs_repaired_log_20261007T010333Z.log`.
+
 ## DONE: log header readability -- source-vs-migration wording, line wrapping, instance/record count split
 
 Three related `write_log` formatting changes, all in `marc_repair.py`:
