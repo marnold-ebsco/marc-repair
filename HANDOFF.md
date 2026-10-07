@@ -46,6 +46,17 @@ suffix to the `Problem filename:`/`Source filename:`/`Repaired filename:`
 lines via `_named()` but never updated this one test's literal string
 assertion; not touched this session since it's out of scope).
 
+## DONE: fixed the stale `test_unresolvable_record_diverted_to_error_file` assertion
+
+Follow-up to the item just above. Updated the test's literal-string
+assertion in `tests/test_marc_repair_bib.py:2212` from `"Problem
+filename: out_error.mrc\n"` to `"Problem filename: out_error.mrc (1
+record)"`, matching the `(N records)` suffix the `_named()` helper
+(`marc_repair.py:5146-5149`) already adds. Full suite now passes clean:
+371 passed, 1 skipped, no failures. `flake8` on the touched file shows
+only pre-existing `E501` long-line debt elsewhere in the file,
+unrelated to this one-line change. Committed as `12cb57c` and pushed.
+
 ## TODO (deferred by user): `suspect_marc8_escape` stays detect-only -- external-authority lookup would be needed to actually fix most of these, not attempted
 
 Follow-up to the `WTS_bibs_2026-10-01.out` analysis in
