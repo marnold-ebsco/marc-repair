@@ -108,9 +108,39 @@ byte. Roughly half the machinery (scoring, confidence dial, word-evidence
 gate, per-language blocking, probe-then-compare workflow) is generic;
 profiles, mark rules and the hand-check are per byte.
 
-**Recommended next steps (not started):**
+**Recommendation (assistant's, not yet approved by the user): build 0xB2
+only, gated, defaulting to off; skip 0xA5 for now.**
 
-1. Decide whether to build for 0xB2 only: tiers = lexicon-confirmed vowel
+- **0xB2 tiers:** (1) *gate* -- apply nothing unless the garbled word itself
+  carries German evidence (008=`ger` alone is not enough: 7.3% non-German
+  inside `ger` records, 43 real German words in non-`ger` records); (2) a
+  lexicon-confirmed vowel; (3) otherwise default to ö (~99% on the clean-gap
+  words I labelled); (4) anything else left for `suspect_marc8_escape`
+  review. Behind a confidence setting, default off. Reach: roughly a third
+  of all 0xB2 occurrences, all unfixed today. Estimated 150k-250k tokens.
+- **Skip 0xA5:** ~21 occurrences changed in ~400,000 records, and its
+  profiles were tuned on those same records. If 0xB2 is built, the
+  French/Greek block (removing the 7 false `r` -> ṛ fixes) comes almost for
+  free -- add it then, not before.
+- **Park the DISPLACED shape, don't forget it:** ~20% of German 0xB2, plus
+  0xA5's Sanskrit `t`/`a` leftovers and 0xAE's Ninḥursag. Language-independent
+  and needs its own design (move the mark, don't fill the gap). Take it up
+  after 0xB2 ships.
+- **Before shipping:** (a) run the on/off transcoded-output diff on every
+  affected record -- not done for anything in this experiment; (b) have a
+  German reader check the gold list in `b2_gold_check.py` -- the labels are
+  the weakest link, treat the 99% as an estimate until then.
+- **Stop condition:** if the diff shows the decoder-state regression on more
+  than a few records, drop it; `.b18157713` already shows it can make a fix
+  worse than doing nothing.
+
+**Open decision for the user:** start on 0xB2, or merge this research branch
+first and decide later.
+
+**Other next steps (not started):**
+
+1. (Superseded by the recommendation above.) Decide whether to build for
+   0xB2 only: tiers = lexicon-confirmed vowel
    (with the word/language gate) > German-evidence default ö at lower
    confidence > leave alone. Estimated reach ~ 60-70% of the German 0xB2
    occurrences (the clean ones), i.e. roughly 30-40% of all 0xB2.
