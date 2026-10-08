@@ -353,6 +353,14 @@ class ParsedRecord:
     # is so the caller (main()) can log it without the wrapper needing to
     # know anything about logging.
     reattached_orphaned_fields: list[tuple[str, str]] = field(default_factory=list)
+    # (tag, true_length, content_preview) for each field whose real,
+    # delimiter-bounded content turned out longer than ISO 2709's 4-digit
+    # directory length slot can ever declare (max 9999 bytes) -- there is
+    # no valid way to write this field back out either, so `_read_intact_at`
+    # drops it entirely instead of corrupting the directory further.
+    # Carried here the same way indicator_fixes is so the caller can log
+    # it (see dropped_oversized_field).
+    dropped_oversized_fields: list[tuple[str, int, str]] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -459,7 +467,28 @@ def parse_directory(rest: str) -> tuple[int, list[DirEntry]]:
                 break
             length, start = int(chunk[3:7]), int(chunk[7:12])
             if start != cum:
-                break
+                # This entry's own declared start wasn't touched by
+                # whatever corrupted the *previous* entry's length --
+                # ISO 2709's directory length slot is only 4 digits (max
+                # 9999), so a field whose real content is longer than
+                # that gets written with a truncated/wrapped length no
+                # matter what produced the file. If this gap is fully
+                # explained by the previous entry actually being that
+                # much longer, recover its true length instead of
+                # abandoning every entry after it (which otherwise
+                # silently drops the rest of the record -- see
+                # dropped_oversized_field, which is what actually
+                # discards the one oversized field once a real
+                # delimiter-bounded length confirms it).
+                recovered_length = (
+                    entries[-1].length + (start - cum) if entries and start > cum else 0
+                )
+                if recovered_length > 9999:
+                    prev = entries[-1]
+                    entries[-1] = DirEntry(prev.tag, recovered_length, prev.start)
+                    cum = start
+                else:
+                    break
             entries.append(DirEntry(chunk[0:3], length, start))
             cum += length
             pos += 12
@@ -724,11 +753,24 @@ def _read_intact_at(
     pos = term_idx + 1
     fields: list[Field_] = []
     indicator_fixes: list[tuple[str, int, str, str]] = []
+    dropped_oversized_fields: list[tuple[str, int, str]] = []
     for entry in entries:
         end = text.find(FIELDTERM, pos)
         if end == -1:
             return None
         content = text[pos:end]
+        if entry.length > 9999:
+            # A real, uncorrected directory entry can never have a
+            # length over 9999 -- ISO 2709's length slot is only 4
+            # digits. This only happens when `parse_directory` recovered
+            # a field whose real, delimiter-bounded content is itself
+            # that long (see its own comment); there's no way to declare
+            # that length in a rebuilt directory either, so the field is
+            # dropped here rather than left to desync everything after
+            # it or silently truncated.
+            dropped_oversized_fields.append((entry.tag, len(content), content[:200]))
+            pos = end + 1
+            continue
         # a non-numeric tag (e.g. "24A" from directory corruption) can't
         # be a real control tag -- those are always 001-009 -- so treat
         # it as a data field, the shape real corruption overwhelmingly
@@ -763,6 +805,7 @@ def _read_intact_at(
 
     parsed = ParsedRecord(leader=leader, entries=entries, fields=fields)
     parsed.indicator_fixes = indicator_fixes
+    parsed.dropped_oversized_fields = dropped_oversized_fields
     return parsed, pos
 
 
@@ -5283,6 +5326,7 @@ _FIXED_REQUIRES_ATTENTION = {
     "fixed_008_length",
     "fixed_holdings_008_length",
     "removed_invalid_subfield",
+    "dropped_oversized_field",
     "field_removed_because_missing_a",
     "added_field",
     "holdings_leader_byte_defaulted",
@@ -5409,213 +5453,232 @@ def _section_for_category(category: str) -> tuple[int, str]:
     return dedicated if dedicated is not None else (0, "NOT FIXED")
 
 
-#: One-line description of what each category's check actually does --
-#: printed as the second of the three header lines `write_log` writes
+#: One-line description of what each category check actually does --
+#: printed as the second of the four header lines `write_log` writes
 #: for every category active in a given run (see `write_log`), so a
 #: reader never has to go dig through this file's docstrings to know
-#: what e.g. "holdings_852_b_suspect_content" means. Keep in sync with
-#: docs/REPAIR_CATEGORIES.md (the two aren't generated from a shared
-#: source, but should never say something different).
+#: what e.g. "holdings_852_b_suspect_content" means. Never itself
+#: states a DATA LOSS/POSSIBLE DATA LOSS/NO DATA LOSS call -- that's
+#: `_CHECK_DATA_LOSS`'s own job, so every category's call line in the
+#: log always looks the same regardless of how long its description
+#: runs. Keep in sync with docs/REPAIR_CATEGORIES.md (the two aren't
+#: generated from a shared source, but should never say something
+#: different).
 _CHECK_DESCRIPTIONS: dict[str, str] = {
-    "unfixable": "Record has no consistent directory in either parsing "
-    "mode (or a field/base address too large for ISO 2709 to represent), "
-    "or (holdings only) could not be structurally parsed at all, or a "
-    "split copy's assembled length can't be represented in ISO 2709's "
-    "fixed-width leader/directory -- written unchanged to the _error "
-    "file instead of the main output. DATA LOSS. These records cannot "
-    "be loaded.",
-    "duplicate_identifier": "The same identifier (usually 001, or 907 $a "
-    "for Sierra records) is used by more than one distinct record in "
-    "this file. POSSIBLE DATA LOSS.",
-    "removed_non_repeatable_duplicate": "A non-repeatable field (e.g. "
-    "001/005/008) appeared more than once on one record -- all but one "
-    "copy removed. POSSIBLE DATA LOSS.",
-    "field_removed_because_missing_a": "A heading/added-entry field (or "
-    "a holdings caption field) lacked a non-empty, non-punctuation-only "
-    "$a -- the whole field removed. POSSIBLE DATA LOSS.",
-    "removed_010_missing_a": "A 010 (LCCN) field whose $a was empty or "
-    "effectively empty (e.g. all spaces) -- the whole field removed, "
-    "including any $z (Canceled/Invalid LCCN) it carried. DATA LOSS.",
-    "removed_880_missing_a": "An 880 (Alternate Graphic Representation) "
-    "field whose $a was empty or effectively empty (e.g. all spaces, or "
-    "punctuation only) -- the whole field removed, including any $6 "
-    "linking data it carried. DATA LOSS.",
-    "removed_invalid_subfield": "A subfield code that isn't a lowercase "
-    "letter or digit -- the subfield removed. POSSIBLE DATA LOSS.",
-    "removed_untranscodable_subfield": "A subfield's MARC-8 content "
-    "couldn't be transcoded to UTF-8 (genuinely malformed bytes) -- the "
-    "subfield removed (and the whole field with it, if the removed "
-    "subfield was $a or nothing usable was left); the rest of the "
-    "record still transcodes normally. DATA LOSS.",
-    "removed_bad_call_number": "An 852 $h (call number) that was "
-    "unusable (e.g. punctuation-only) -- removed. POSSIBLE DATA LOSS.",
-    "removed_extra_852_b": "An 852 had more than one $b (Sublocation) "
-    "after the first was already recoded to $i -- the extras removed. "
-    "POSSIBLE DATA LOSS.",
-    "incomplete_852": "One 852 (Location) among several on a holdings "
-    "record had no $b at all -- dropped entirely rather than becoming "
-    "its own split record. POSSIBLE DATA LOSS.",
-    "doubled_proxy_url": "A URL subfield (e.g. 856 $u) has a literally "
-    "duplicated proxy prefix (e.g. an ezproxy wrapper repeated twice) -- "
-    "a pre-existing error in the source record, not something this "
-    "migration introduced. NO DATA LOSS.",
-    "suspect_marc8_escape": "A MARC-8 script-switching escape "
-    "(Hebrew/Arabic/Cyrillic/Greek/CJK) produces only a single "
-    "character, welded directly between two ASCII letters with no word "
-    "boundary -- almost certainly a miskeyed accented letter already "
-    "present in the source records, not something this migration "
-    "introduced, and not real embedded foreign-script text; never "
-    "auto-fixed, since there's no safe way to guess the intended "
-    "character. NO DATA LOSS.",
-    "suspect_hex_encoded_marc8": "A field (in practice, always an 880) "
-    "contains one or more \"{xxxxxx}\" runs -- 6 ASCII hex-digit "
-    "characters wrapped in literal curly braces -- consistent with "
-    "real MARC-8 content that got hex-encoded and brace-wrapped "
-    "(sometimes twice) in the source records, before this tool ever "
-    "saw them; never auto-fixed, since the decode is boundary-sensitive "
-    "and there's no safe way to guarantee exact byte alignment "
-    "automatically. Each finding names whether its own decoded preview "
-    "looks recoverable or not -- see each finding's own NO DATA "
-    "LOSS/POSSIBLE DATA LOSS call. POSSIBLE DATA LOSS. Detect-only, "
-    "though, so this tool never makes it worse: it's reporting damage "
-    "that already happened upstream, before the file ever reached this "
-    "tool.",
-    "holdings_852_b_suspect_content": "An 852 $b (Sublocation) looks "
-    "like data from a prior system migration that landed in the wrong "
-    "subfield (not something introduced by this tool) -- purely "
-    "numeric, or containing flattened subfield-delimiter markers -- "
-    "and is replaced wholesale with "
-    f"{DEFAULT_852_LOCATION_CONTENT!r}. POSSIBLE DATA LOSS.",
-    "holdings_853_missing_8": "An 853 (Captions and Pattern) field has "
-    "no $8 (Field link and sequence number) -- the 863/864/865 "
-    "enumeration fields that should reference it can't be linked. "
-    "POSSIBLE DATA LOSS.",
-    "holdings_856_missing_u": "An 856 (Electronic Location and Access) "
-    "field has no $u (URI) -- the field exists but has no actual link. "
-    "NO DATA LOSS.",
-    "split_holdings_multiple_852": "A holdings record had more than "
-    "one usable 852 (Location) -- split into one record per 852, with "
-    "\"-2\", \"-3\", etc. appended to each additional copy's 001. "
-    "NO DATA LOSS.",
-    "unfixed_non_numeric_tag": "A field's tag isn't 3 numeric digits -- "
-    "normally auto-renamed to an unused 9XX slot (see invalid_tag); "
-    "this fires only when that never happens. Named 'unfixed' because "
-    "neither path that lands here actually gives the tag a valid "
-    "replacement: --no-fix-invalid-tags skips the rename attempt "
-    "entirely, so the invalid tag is left exactly as it was (no loss, "
-    "but still won't load in FOLIO); every 9XX slot already taken "
-    "means there's nowhere left to rename to, so the whole field is "
-    "discarded instead of repaired. This count is 0 unless one of "
-    "those two conditions actually occurs in this file. POSSIBLE "
-    "DATA LOSS.",
-    "dangling_880_link": "An 880 (Alternate Graphic Representation) "
-    "field's $6 linkage doesn't match any other field's own $6 "
-    "back-reference. NO DATA LOSS.",
-    "invalid_isbn_issn_checksum": "An 020/022 $a's check digit doesn't "
-    "match the rest of the number. NO DATA LOSS.",
-    "holdings_escape_sequence": "A holdings record contains a raw ESC "
-    "(0x1B) byte -- likely an un-transcoded MARC-8 escape sequence "
-    "(MARC-8-to-UTF-8 conversion is currently skipped for holdings). "
-    "NO DATA LOSS.",
-    "transcode_marc8_failed": "MARC-8-to-UTF-8 transcoding failed for "
-    "this record's content -- left as MARC-8, error recorded. "
-    "POSSIBLE DATA LOSS.",
-    "added_default_008": "Record had no 008 -- a fixed generic "
-    "placeholder was inserted. NO DATA LOSS.",
-    "added_default_holdings_008": "Holdings record had no 008 -- a "
-    "fixed generic 32-byte placeholder was inserted. NO DATA LOSS.",
-    "added_default_245": "Record had no 245 -- a placeholder "
-    "($a \"No title\") was inserted. NO DATA LOSS.",
-    "added_missing_852c": "852 (Location) had no $c (Shelving "
-    "location) -- a placeholder was inserted (disable with "
-    "--no-fix-missing-852c). NO DATA LOSS -- only fills a gap that was "
-    "already empty; never overwrites an existing $c.",
-    "normalized_subfield_9_to_0": "A $9 subfield was rewritten to $0 "
-    "(MARC21's standard authority-control-number code). NO DATA LOSS.",
-    "normalized_smart_characters": "Typographic (\"smart\") quotes/"
-    "dashes were flattened to their plain-ASCII equivalents. "
-    "NO DATA LOSS.",
-    "transcoded_marc8": "A MARC-8/ANSEL-encoded record was converted "
-    "to UTF-8 and the leader's encoding byte flipped to match. "
-    "NO DATA LOSS.",
-    "fixed_misplaced_subfield_code": "A space was detected between the "
-    "subfield delimiter character and the subfield code. Stray space "
-    "removed. NO DATA LOSS.",
-    "removed_null_identifier": "A subfield with no data at all (e.g. a "
-    "bare $8, or an empty $a immediately followed by another subfield) "
-    "was removed. NO DATA LOSS.",
-    "missing_call_number": "An 852 (Location) had no $h (call number) "
-    "at all -- left untouched; a call number can legitimately be "
-    "absent. NO DATA LOSS.",
-    "leader_byte_defaulted": "A leader byte (record status/type/bib "
-    "level/encoding level) held a value outside MARC21's defined set "
-    "-- reset to a safe default. NO DATA LOSS.",
-    "holdings_leader_byte_defaulted": "Same as leader_byte_defaulted, "
-    "using holdings' own valid-value set. NO DATA LOSS.",
-    "leader_entry_map_fixed": "Leader bytes 20-23 (the entry map) "
-    "weren't the MARC21-fixed constant \"4500\" -- corrected. "
-    "NO DATA LOSS.",
-    "invalid_tag": "A non-numeric tag was renamed to an unused 9XX "
-    "slot (see unfixed_non_numeric_tag for when this isn't possible). "
-    "NO DATA LOSS.",
-    "invalid_indicator_value": "An indicator held a value outside "
-    "MARC21's defined set for that field. NO DATA LOSS.",
-    "invalid_bibliographic_level": "Leader byte 7 (bibliographic "
-    "level) held a value outside MARC21's defined set -- defaulted to "
-    "'m' (Monograph/Item). NO DATA LOSS.",
-    "fixed_mojibake": "Double-encoded UTF-8 (\"mojibake\") was "
-    "corrected. NO DATA LOSS.",
-    "fixed_marc8_diacritic": "A MARC-8 diacritic mark was lost to "
-    "either a bogus script-switching escape sequence around a "
-    "confirmed-by-volume payload byte (e.g. \"Haure\" + <escape> + "
-    "\"au\" -> \"Hauréau\") or a bare, un-escaped byte standing in for "
-    "an Arabic transliteration mark, a French/Occitan cedilla, a "
-    "Russian \"soft sign\", a Polish/Lithuanian ogonek, or a German "
-    "diaeresis (e.g. "
-    "\"al-h\" + <bare byte> + \"ujjah\" -> \"al-ḥujjah\") -- the mark "
-    "was reapplied to (or reinserted at) the position it was lost "
-    "from. Also recovers plain ASCII punctuation/whitespace trapped "
-    "inside the escape when it and the escape's closing sequence got "
-    "swapped (e.g. \"Facolta\" + <escape> + \" \" (trapped) + <close> "
-    "+ \"di lettere\" -> \"Facoltà di lettere\"). See "
-    "suspect_marc8_escape for the same defect's unconfirmed payloads, "
-    "left for a human to review. NO DATA LOSS.",
-    "remapped_999_to_945": "A 999 field was retagged to 945 "
-    "(indicators forced to \"ff\") -- only with --remap-999-to-945. "
-    "NO DATA LOSS.",
-    "oversized_sentinel_fixed": "A record's true length exceeds ISO "
-    "2709's 5-digit field -- leader declares the documented 99999 "
-    "sentinel instead (nothing lost; the real end is still found from "
-    "the record terminator). NO DATA LOSS.",
-    "padded_indicators": "A data field had 0 or 1 indicator characters "
-    "instead of 2 -- padded with spaces. NO DATA LOSS.",
-    "holdings_missing_004": "Holdings record has no 004 (link to its "
-    "bib record) at all. POSSIBLE DATA LOSS.",
-    "holdings_multiple_004": "Holdings record has more than one 004 "
-    "-- not necessarily wrong (can legitimately link to more than one "
-    "bib record), surfaced for awareness. NO DATA LOSS.",
-    "holdings_852_duplicate_nr_subfield": "852 (Location) had a "
-    "Not-Repeatable subfield (e.g. $h) more than once -- every "
-    "occurrence after the first removed. POSSIBLE DATA LOSS.",
-    "fixed_008_length": "008 wasn't exactly 40 characters -- padded "
-    "(no loss) or truncated (discards the trailing bytes past 40) to "
-    "fit. POSSIBLE DATA LOSS.",
-    "fixed_holdings_008_length": "Holdings 008 wasn't exactly 32 "
-    "characters -- padded (no loss) or truncated (discards the "
-    "trailing bytes past 32) to fit. POSSIBLE DATA LOSS.",
-    "added_field": "A field required via --ensure-field was missing "
-    "entirely -- inserted with the given content. NO DATA LOSS.",
-    "added_missing_852_location": "852 (Location) had none of $a/$b/"
-    "$c -- a placeholder was inserted so the field means something. "
-    "NO DATA LOSS.",
-    "reattached_orphaned_field": "A field that had drifted outside its "
-    "record's own boundaries was reattached to the record it actually "
-    "belongs to. NO DATA LOSS.",
-    "removed_empty_852_subfield": "An 852 (Location) subfield (other "
-    "than $h) was present but held no data -- removed. NO DATA LOSS.",
-    "recoded_852_b_to_i": "852 had a second $b positioned after $h -- "
-    "recoded to $i (it's the cutter/copy number that goes with $h, "
-    "just miscoded). NO DATA LOSS.",
+    "unfixable": "Record has no consistent directory in either parsing mode (or a field/base "
+    "address too large for ISO 2709 to represent), or (holdings only) could not "
+    "be structurally parsed at all, or a split copy's assembled length can't be "
+    "represented in ISO 2709's fixed-width leader/directory -- written "
+    "unchanged to the _error file instead of the main output. These records "
+    "cannot be loaded.",
+    "duplicate_identifier": "The same identifier (usually 001, or 907 $a for Sierra records) is used by "
+    "more than one distinct record in this file.",
+    "removed_non_repeatable_duplicate": "A non-repeatable field (e.g. 001/005/008) appeared more than once on one "
+    "record -- all but one copy removed.",
+    "field_removed_because_missing_a": "A heading/added-entry field (or a holdings caption field) lacked a "
+    "non-empty, non-punctuation-only $a -- the whole field removed.",
+    "removed_010_missing_a": "A 010 (LCCN) field whose $a was empty or effectively empty (e.g. all "
+    "spaces) -- the whole field removed, including any $z (Canceled/Invalid "
+    "LCCN) it carried.",
+    "removed_880_missing_a": "An 880 (Alternate Graphic Representation) field whose $a was empty or "
+    "effectively empty (e.g. all spaces, or punctuation only) -- the whole "
+    "field removed, including any $6 linking data it carried.",
+    "removed_invalid_subfield": "A subfield code that isn't a lowercase letter or digit -- the subfield "
+    "removed.",
+    "removed_untranscodable_subfield": "A subfield's MARC-8 content couldn't be transcoded to UTF-8 (genuinely "
+    "malformed bytes) -- the subfield removed (and the whole field with it, if "
+    "the removed subfield was $a or nothing usable was left); the rest of the "
+    "record still transcodes normally.",
+    "removed_bad_call_number": "An 852 $h (call number) that was unusable (e.g. punctuation-only) -- "
+    "removed.",
+    "removed_extra_852_b": "An 852 had more than one $b (Sublocation) after the first was already "
+    "recoded to $i -- the extras removed.",
+    "incomplete_852": "One 852 (Location) among several on a holdings record had no $b at all -- "
+    "dropped entirely rather than becoming its own split record.",
+    "doubled_proxy_url": "A URL subfield (e.g. 856 $u) has a literally duplicated proxy prefix (e.g. "
+    "an ezproxy wrapper repeated twice) -- a pre-existing error in the source "
+    "record, not something this migration introduced.",
+    "suspect_marc8_escape": "A MARC-8 script-switching escape (Hebrew/Arabic/Cyrillic/Greek/CJK) "
+    "produces only a single character, welded directly between two ASCII "
+    "letters with no word boundary -- almost certainly a miskeyed accented "
+    "letter already present in the source records, not something this migration "
+    "introduced, and not real embedded foreign-script text; never auto-fixed, "
+    "since there's no safe way to guess the intended character.",
+    "suspect_hex_encoded_marc8": 'A field (in practice, always an 880) contains one or more "{xxxxxx}" runs '
+    "-- 6 ASCII hex-digit characters wrapped in literal curly braces -- "
+    "consistent with real MARC-8 content that got hex-encoded and brace-wrapped "
+    "(sometimes twice) in the source records, before this tool ever saw them; "
+    "never auto-fixed, since the decode is boundary-sensitive and there's no "
+    "safe way to guarantee exact byte alignment automatically. Each finding "
+    "names whether its own decoded preview looks recoverable or not -- see each "
+    "finding's own NO DATA LOSS/POSSIBLE DATA LOSS call. Detect-only, though, "
+    "so this tool never makes it worse: it's reporting damage that already "
+    "happened upstream, before the file ever reached this tool.",
+    "holdings_852_b_suspect_content": "An 852 $b (Sublocation) looks like data from a prior system migration that "
+    "landed in the wrong subfield (not something introduced by this tool) -- "
+    "purely numeric, or containing flattened subfield-delimiter markers -- and "
+    "is replaced wholesale with "
+    f"{DEFAULT_852_LOCATION_CONTENT!r}.",
+    "holdings_853_missing_8": "An 853 (Captions and Pattern) field has no $8 (Field link and sequence "
+    "number) -- the 863/864/865 enumeration fields that should reference it "
+    "can't be linked.",
+    "holdings_856_missing_u": "An 856 (Electronic Location and Access) field has no $u (URI) -- the field "
+    "exists but has no actual link.",
+    "split_holdings_multiple_852": "A holdings record had more than one usable 852 (Location) -- split into "
+    'one record per 852, with "-2", "-3", etc. appended to each additional '
+    "copy's 001.",
+    "unfixed_non_numeric_tag": "A field's tag isn't 3 numeric digits -- normally auto-renamed to an unused "
+    "9XX slot (see invalid_tag); this fires only when that never happens. Named "
+    "'unfixed' because neither path that lands here actually gives the tag a "
+    "valid replacement: --no-fix-invalid-tags skips the rename attempt "
+    "entirely, so the invalid tag is left exactly as it was (no loss, but still "
+    "won't load in FOLIO); every 9XX slot already taken means there's nowhere "
+    "left to rename to, so the whole field is discarded instead of repaired. "
+    "This count is 0 unless one of those two conditions actually occurs in this "
+    "file.",
+    "dangling_880_link": "An 880 (Alternate Graphic Representation) field's $6 linkage doesn't match "
+    "any other field's own $6 back-reference.",
+    "invalid_isbn_issn_checksum": "An 020/022 $a's check digit doesn't match the rest of the number.",
+    "holdings_escape_sequence": "A holdings record contains a raw ESC (0x1B) byte -- likely an "
+    "un-transcoded MARC-8 escape sequence (MARC-8-to-UTF-8 conversion is "
+    "currently skipped for holdings).",
+    "transcode_marc8_failed": "MARC-8-to-UTF-8 transcoding failed for this record's content -- left as "
+    "MARC-8, error recorded.",
+    "added_default_008": "Record had no 008 -- a fixed generic placeholder was inserted.",
+    "added_default_holdings_008": "Holdings record had no 008 -- a fixed generic 32-byte placeholder was "
+    "inserted.",
+    "added_default_245": 'Record had no 245 -- a placeholder ($a "No title") was inserted.',
+    "added_missing_852c": "852 (Location) had no $c (Shelving location) -- a placeholder was inserted "
+    "(disable with --no-fix-missing-852c) -- only fills a gap that was already "
+    "empty; never overwrites an existing $c.",
+    "normalized_subfield_9_to_0": "A $9 subfield was rewritten to $0 (MARC21's standard "
+    "authority-control-number code).",
+    "normalized_smart_characters": 'Typographic ("smart") quotes/dashes were flattened to their plain-ASCII '
+    "equivalents.",
+    "transcoded_marc8": "A MARC-8/ANSEL-encoded record was converted to UTF-8 and the leader's "
+    "encoding byte flipped to match.",
+    "fixed_misplaced_subfield_code": "A space was detected between the subfield delimiter character and the "
+    "subfield code. Stray space removed.",
+    "removed_null_identifier": "A subfield with no data at all (e.g. a bare $8, or an empty $a immediately "
+    "followed by another subfield) was removed.",
+    "missing_call_number": "An 852 (Location) had no $h (call number) at all -- left untouched; a call "
+    "number can legitimately be absent.",
+    "leader_byte_defaulted": "A leader byte (record status/type/bib level/encoding level) held a value "
+    "outside MARC21's defined set -- reset to a safe default.",
+    "holdings_leader_byte_defaulted": "Same as leader_byte_defaulted, using holdings' own valid-value set.",
+    "leader_entry_map_fixed": "Leader bytes 20-23 (the entry map) weren't the MARC21-fixed constant "
+    '"4500" -- corrected.',
+    "invalid_tag": "A non-numeric tag was renamed to an unused 9XX slot (see "
+    "unfixed_non_numeric_tag for when this isn't possible).",
+    "invalid_indicator_value": "An indicator held a value outside MARC21's defined set for that field.",
+    "invalid_bibliographic_level": "Leader byte 7 (bibliographic level) held a value outside MARC21's defined "
+    "set -- defaulted to 'm' (Monograph/Item).",
+    "fixed_mojibake": 'Double-encoded UTF-8 ("mojibake") was corrected.',
+    "fixed_marc8_diacritic": "A MARC-8 diacritic mark was lost to either a bogus script-switching escape "
+    'sequence around a confirmed-by-volume payload byte (e.g. "Haure" + '
+    '<escape> + "au" -> "Hauréau") or a bare, un-escaped byte standing in for '
+    'an Arabic transliteration mark, a French/Occitan cedilla, a Russian "soft '
+    'sign", a Polish/Lithuanian ogonek, or a German diaeresis (e.g. "al-h" + '
+    '<bare byte> + "ujjah" -> "al-ḥujjah") -- the mark was reapplied to (or '
+    "reinserted at) the position it was lost from. Also recovers plain ASCII "
+    "punctuation/whitespace trapped inside the escape when it and the escape's "
+    'closing sequence got swapped (e.g. "Facolta" + <escape> + " " (trapped) + '
+    '<close> + "di lettere" -> "Facoltà di lettere"). See suspect_marc8_escape '
+    "for the same defect's unconfirmed payloads, left for a human to review.",
+    "remapped_999_to_945": 'A 999 field was retagged to 945 (indicators forced to "ff") -- only with '
+    "--remap-999-to-945.",
+    "oversized_sentinel_fixed": "A record's true length exceeds ISO 2709's 5-digit field -- leader declares "
+    "the documented 99999 sentinel instead (nothing lost; the real end is still "
+    "found from the record terminator).",
+    "padded_indicators": "A data field had 0 or 1 indicator characters instead of 2 -- padded with "
+    "spaces.",
+    "holdings_missing_004": "Holdings record has no 004 (link to its bib record) at all.",
+    "holdings_multiple_004": "Holdings record has more than one 004 -- not necessarily wrong (can "
+    "legitimately link to more than one bib record), surfaced for awareness.",
+    "holdings_852_duplicate_nr_subfield": "852 (Location) had a Not-Repeatable subfield (e.g. $h) more than once -- "
+    "every occurrence after the first removed.",
+    "fixed_008_length": "008 wasn't exactly 40 characters -- padded (no loss) or truncated "
+    "(discards the trailing bytes past 40) to fit.",
+    "fixed_holdings_008_length": "Holdings 008 wasn't exactly 32 characters -- padded (no loss) or truncated "
+    "(discards the trailing bytes past 32) to fit.",
+    "added_field": "A field required via --ensure-field was missing entirely -- inserted with "
+    "the given content.",
+    "added_missing_852_location": "852 (Location) had none of $a/$b/$c -- a placeholder was inserted so the "
+    "field means something.",
+    "reattached_orphaned_field": "A field that had drifted outside its record's own boundaries was "
+    "reattached to the record it actually belongs to.",
+    "removed_empty_852_subfield": "An 852 (Location) subfield (other than $h) was present but held no data -- "
+    "removed.",
+    "recoded_852_b_to_i": "852 had a second $b positioned after $h -- recoded to $i (it's the "
+    "cutter/copy number that goes with $h, just miscoded).",
+    "dropped_oversized_field": "A field's real, delimiter-bounded content is longer than 9999 bytes -- too "
+    "long for ISO 2709's 4-digit directory length field to ever declare, so the "
+    "source record's own directory entry for it was already a lie. The field is "
+    "dropped so the rest of the record, including everything after it, still "
+    "recovers.",
+}
+
+#: Each category's own data-loss call (DATA LOSS/POSSIBLE DATA LOSS/NO DATA LOSS) -- printed
+#: in isolation as the third of the four header lines `write_log`
+#: writes for every active category (see `write_log`), never folded
+#: into `_CHECK_DESCRIPTIONS`'s own text, so a reader can always find
+#: the call on its own line no matter how the description wraps.
+_CHECK_DATA_LOSS: dict[str, str] = {
+    "unfixable": "DATA LOSS",
+    "duplicate_identifier": "POSSIBLE DATA LOSS",
+    "removed_non_repeatable_duplicate": "POSSIBLE DATA LOSS",
+    "field_removed_because_missing_a": "POSSIBLE DATA LOSS",
+    "removed_010_missing_a": "DATA LOSS",
+    "removed_880_missing_a": "DATA LOSS",
+    "removed_invalid_subfield": "POSSIBLE DATA LOSS",
+    "removed_untranscodable_subfield": "DATA LOSS",
+    "removed_bad_call_number": "POSSIBLE DATA LOSS",
+    "removed_extra_852_b": "POSSIBLE DATA LOSS",
+    "incomplete_852": "POSSIBLE DATA LOSS",
+    "doubled_proxy_url": "NO DATA LOSS",
+    "suspect_marc8_escape": "NO DATA LOSS",
+    "suspect_hex_encoded_marc8": "POSSIBLE DATA LOSS",
+    "holdings_852_b_suspect_content": "POSSIBLE DATA LOSS",
+    "holdings_853_missing_8": "POSSIBLE DATA LOSS",
+    "holdings_856_missing_u": "NO DATA LOSS",
+    "split_holdings_multiple_852": "NO DATA LOSS",
+    "unfixed_non_numeric_tag": "POSSIBLE DATA LOSS",
+    "dangling_880_link": "NO DATA LOSS",
+    "invalid_isbn_issn_checksum": "NO DATA LOSS",
+    "holdings_escape_sequence": "NO DATA LOSS",
+    "transcode_marc8_failed": "POSSIBLE DATA LOSS",
+    "added_default_008": "NO DATA LOSS",
+    "added_default_holdings_008": "NO DATA LOSS",
+    "added_default_245": "NO DATA LOSS",
+    "added_missing_852c": "NO DATA LOSS",
+    "normalized_subfield_9_to_0": "NO DATA LOSS",
+    "normalized_smart_characters": "NO DATA LOSS",
+    "transcoded_marc8": "NO DATA LOSS",
+    "fixed_misplaced_subfield_code": "NO DATA LOSS",
+    "removed_null_identifier": "NO DATA LOSS",
+    "missing_call_number": "NO DATA LOSS",
+    "leader_byte_defaulted": "NO DATA LOSS",
+    "holdings_leader_byte_defaulted": "NO DATA LOSS",
+    "leader_entry_map_fixed": "NO DATA LOSS",
+    "invalid_tag": "NO DATA LOSS",
+    "invalid_indicator_value": "NO DATA LOSS",
+    "invalid_bibliographic_level": "NO DATA LOSS",
+    "fixed_mojibake": "NO DATA LOSS",
+    "fixed_marc8_diacritic": "NO DATA LOSS",
+    "remapped_999_to_945": "NO DATA LOSS",
+    "oversized_sentinel_fixed": "NO DATA LOSS",
+    "padded_indicators": "NO DATA LOSS",
+    "holdings_missing_004": "POSSIBLE DATA LOSS",
+    "holdings_multiple_004": "NO DATA LOSS",
+    "holdings_852_duplicate_nr_subfield": "POSSIBLE DATA LOSS",
+    "fixed_008_length": "POSSIBLE DATA LOSS",
+    "fixed_holdings_008_length": "POSSIBLE DATA LOSS",
+    "added_field": "NO DATA LOSS",
+    "added_missing_852_location": "NO DATA LOSS",
+    "reattached_orphaned_field": "NO DATA LOSS",
+    "removed_empty_852_subfield": "NO DATA LOSS",
+    "recoded_852_b_to_i": "NO DATA LOSS",
+    "dropped_oversized_field": "DATA LOSS",
 }
 
 #: A short plain-language parenthetical appended to a category's own
@@ -5652,6 +5715,7 @@ _ALWAYS_FULL_CATEGORIES = {
     "removed_880_missing_a",
     "removed_invalid_subfield",
     "removed_untranscodable_subfield",
+    "dropped_oversized_field",
     "removed_bad_call_number",
     "removed_extra_852_b",
     "incomplete_852",
@@ -5795,20 +5859,23 @@ _DESCRIPTION_LINE_WIDTH = 78
 
 
 def _write_description_header(fh, description: str) -> None:
-    """Write `description` as one or more "=== ... ===" lines, wrapped
-    so no line exceeds `_DESCRIPTION_LINE_WIDTH` characters. The first
-    line is prefixed "=== "; continuation lines are prefixed "===   "
-    (indented two extra spaces so the wrapped text still lines up);
-    only the last line gets the closing " ===" suffix."""
+    """Write `description` (the data-loss call -- "DATA LOSS"/"POSSIBLE
+    DATA LOSS"/"NO DATA LOSS" -- NOT included; see `_CHECK_DATA_LOSS`
+    and its own isolated "=== <call> ===" line, written separately by
+    the caller right after this) as one or more "=== ..." lines,
+    wrapped so no line exceeds `_DESCRIPTION_LINE_WIDTH` characters.
+    The first line is prefixed "=== "; continuation lines are prefixed
+    "===   " (indented two extra spaces so the wrapped text still
+    lines up). Unlike a self-contained "=== ... ===" header line, none
+    of these get a closing " ===" suffix -- the data-loss line right
+    after is what closes out this whole header block instead."""
     first_prefix = "=== "
     cont_prefix = "===   "
-    suffix = " ==="
-    wrap_width = _DESCRIPTION_LINE_WIDTH - len(cont_prefix) - len(suffix)
+    wrap_width = _DESCRIPTION_LINE_WIDTH - len(cont_prefix)
     lines = textwrap.wrap(description, width=wrap_width) or [""]
     for i, line in enumerate(lines):
         prefix = first_prefix if i == 0 else cont_prefix
-        end = suffix if i == len(lines) - 1 else ""
-        fh.write(f"{prefix}{line}{end}\n")
+        fh.write(f"{prefix}{line}\n")
 
 
 def write_log(
@@ -5833,7 +5900,10 @@ def write_log(
         === <SECTION>: <category> ===
         === <description of what the check does, wrapped by
         ===   `_write_description_header` so no line exceeds
-        ===   `_DESCRIPTION_LINE_WIDTH` characters> ===
+        ===   `_DESCRIPTION_LINE_WIDTH` characters -- never itself
+        ===   says DATA LOSS/POSSIBLE DATA LOSS/NO DATA LOSS>
+        === <DATA LOSS|POSSIBLE DATA LOSS|NO DATA LOSS, from
+        ===   `_CHECK_DATA_LOSS`, isolated on its own line> ===
         === <N> record(s) ===
 
     -- or, when a category can log more than one finding per record
@@ -5897,6 +5967,9 @@ def write_log(
             fh.write(f"=== {label}: {display_category} ===\n")
             description = _CHECK_DESCRIPTIONS.get(category, "(no description available)")
             _write_description_header(fh, description)
+            data_loss_call = _CHECK_DATA_LOSS.get(category)
+            if data_loss_call:
+                fh.write(f"=== {data_loss_call} ===\n")
             count_note = (count_notes or {}).get(category)
             n_instances = len(group)
             n_records = len({e.record_idx for e in group})
@@ -6089,6 +6162,7 @@ _HOLDINGS_ALWAYS_ACTIVE_CATEGORIES = {
     "incomplete_852",
     "split_holdings_multiple_852",
     "oversized_sentinel_fixed",
+    "dropped_oversized_field",
 }
 
 
@@ -6370,6 +6444,14 @@ def repair_holdings_records(
                     "padded_indicators", True, i, rec_id,
                     f"padded {spaces_added} space(s) into short indicators on ={tag} "
                     f"(was {original_indicators!r}, first subfield {preview!r})",
+                )
+            for tag, true_length, preview in parsed.dropped_oversized_fields:
+                rec_id = record_identifier(parsed)
+                log(
+                    "dropped_oversized_field", True, i, rec_id,
+                    f"={tag} was {true_length} bytes, over ISO 2709's 9999-byte "
+                    f"directory length limit -- field dropped, rest of the record "
+                    f"recovered (preview: {preview!r})",
                 )
             if ESCAPE in rec_text:
                 rec_id = record_identifier(parsed)
@@ -7353,6 +7435,14 @@ def main(argv: list[str] | None = None) -> int:
                 for tag, detail in parsed.reattached_orphaned_fields:
                     rec_id = record_identifier(parsed)
                     log("reattached_orphaned_field", True, i, rec_id, detail)
+                for tag, true_length, preview in parsed.dropped_oversized_fields:
+                    rec_id = record_identifier(parsed)
+                    log(
+                        "dropped_oversized_field", True, i, rec_id,
+                        f"={tag} was {true_length} bytes, over ISO 2709's 9999-byte "
+                        f"directory length limit -- field dropped, rest of the record "
+                        f"recovered (preview: {preview!r})",
+                    )
                 if args.fix_marc8_diacritic_escapes:
                     rec_id = record_identifier(parsed)
                     for detail in fix_marc8_diacritic_escapes(parsed):
@@ -7604,7 +7694,7 @@ def main(argv: list[str] | None = None) -> int:
         "unfixed_non_numeric_tag", "invalid_indicator_value", "invalid_bibliographic_level",
         "leader_entry_map_fixed", "oversized_sentinel_fixed", "duplicate_identifier",
         "removed_null_identifier", "suspect_marc8_escape", "suspect_hex_encoded_marc8",
-        "removed_010_missing_a", "removed_880_missing_a",
+        "removed_010_missing_a", "removed_880_missing_a", "dropped_oversized_field",
     }
     if args.fix_bad_indicators:
         active_categories.add("padded_indicators")
