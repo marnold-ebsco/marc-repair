@@ -4241,13 +4241,15 @@ class TestFixMarc8B2Umlaut:
         lexicon = {"gocke": {"göcke": 3}, "gucke": {"gücke": 3}}
         assert m.fix_marc8_b2_umlaut(parsed, lexicon) == []
 
-    def test_skips_subfield_that_still_has_other_escape_junk(self):
-        # Filling one gap in a subfield that is corrupted elsewhere can make
-        # the decoder-state damage worse (HANDOFF.md, .b18157713).
+    def test_fills_gaps_even_when_other_escape_junk_remains(self):
+        # The "skip the whole subfield if other escape junk remains" rule
+        # was dropped (2026-10-08, HANDOFF.md) -- known regression risk
+        # accepted by the user; see .b18157713 in HANDOFF.md's history.
         raw = f"G{self.JUNK}cke und K{self.JUNK}nig und G\x1bp+\x1bsxyz"
         parsed = self._record(raw)
-        assert m.fix_marc8_b2_umlaut(parsed, _B2_LEXICON) == []
-        assert parsed.fields[1].subfields == [("a", raw)]
+        details = m.fix_marc8_b2_umlaut(parsed, _B2_LEXICON)
+        assert len(details) == 1
+        assert parsed.fields[1].subfields[0][1].endswith("G\x1bp+\x1bsxyz")
 
     def test_skipped_for_utf8_declared_record(self):
         parsed = self._record(f"Von G{self.JUNK}cke")

@@ -2969,12 +2969,6 @@ def _b2_fill_text(text: str, lexicon: dict[str, dict[str, int]]) -> tuple[str, l
         changes.append(f"{marked.replace(_B2_GAP, '_')} -> {new_word.replace(_B2_ANSEL_DIAERESIS, '')}")
     out.append(text[pos:])
     result = "".join(out)
-    if re.search(r"\x1b(?!\()", result):
-        # other escape junk left in this subfield (an unfilled gap, or a
-        # different corruption): the decoder may already be off the rails
-        # for the rest of it, and filling one gap can make that worse (see
-        # HANDOFF.md, `.b18157713`) -- leave the whole subfield alone
-        return text, []
     return result, changes
 
 

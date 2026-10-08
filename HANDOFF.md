@@ -179,35 +179,101 @@ Enabled only by `--b2-lexicon PATH`; category `fixed_marc8_b2_umlaut`
 working/lexicon_GTU_de_sub_names.pkl --out working/b2_lexicon.json` (4.4 MB JSON
 of only the a/o/u-umlaut variants, 127k keys; not in the repo, source licences).
 Gates: record 008/041 says `ger`; word length >= 4 (gap counts); support >= 2;
->= 80% agreement; <= 2 gaps; **and the subfield must have no other escape junk
-left after the fill** (otherwise skipped whole). Output is ANSEL diaeresis +
-vowel, transcoded normally. Capital only at a sentence-ish word start (not after
-a hyphen) or in an all-caps word.
-**On/off transcoded diff (`working/GTU_bibs_0xB2_sample.mrc`, 396 records):**
-74 records / 89 subfields changed, 70 words, every one matches the gold-clean
-list (3 hyphenated compounds checked by eye), 0 word-count changes. The junk rule
-exists because the first version *did* trigger the decoder-state regression on
-2 subfields (`=505` lost "mmigkeit", and `=520`): both were already corrupted
-elsewhere, and the fill changed what garbage appeared.
-**Records fully cleared of 0xB2: 46**, not the research figure of 76: the German
-gate costs 16 (62 without it) and the junk rule costs the rest. 28 more records
-get partial fills but stay on the review list. Tests: `TestFixMarc8B2Umlaut`
-(430 pass), flake8 (max-line 120) clean. Full-corpus run **not done**; labels are
-still mine, no German reader.
+>= 80% agreement; <= 2 gaps. Output is ANSEL diaeresis + vowel, transcoded
+normally. Capital only at a sentence-ish word start (not after a hyphen) or in
+an all-caps word.
 
-**For the German reader (review sheet, 2026-10-07).** Distinct words the 0xB2
-fixer filled in `working/GTU_bibs_0xB2_sample.mrc` (53 forms; 70 occurrences;
-full before/after with fields in `working/b2run/diff.txt`, gitignored; regenerate
-with the on/off run in the section above). Please mark any that are wrong for
-their record (e.g. a surname that should be Buhler not Bohler). Known weak spot:
-surnames like K_hler/B_hler are not resolvable by any lexicon.
+**The "no other escape junk left in the subfield" bail-out was dropped
+(2026-10-08, user's decision -- see "Effect of relaxing the German gate / junk
+rule" below).** It existed because the first version *did* trigger a
+decoder-state regression on 2 subfields (`=505` lost "mmigkeit", and `=520`):
+both were already corrupted elsewhere, and the fill changed what garbage
+appeared. Dropping it raises reach from 89 instances/74 records to **115
+instances/92 records** on `working/GTU_bibs_0xB2_sample.mrc` (396 records;
+measured directly from the edited code, not a monkeypatch estimate -- see
+below, the two numbers don't agree and the measured one is authoritative).
+**Re-checked 2026-10-08: no regression reproduces on this sample.** Diffed
+old-rule vs new-rule output for all 78 of the 586 `0xB2`-bearing subfields
+where dropping the rule actually changes the result (word count, stray
+`\x1b` bytes, and U+FFFD replacement chars as the regression signature) --
+zero flagged. Every length delta matches exactly the expected shrinkage from
+a successful vowel fill; no new garbage anywhere, including by eye in the
+three longest/most escape-tangled records (`.b1345665009`, LCCN 2022935593;
+`.b1305499147`, no LCCN on file; `.b1351360489`, LCCN 2022940559). The
+original `=505`/`=520` finding never recorded record IDs, only field tags and
+a word fragment ("mmigkeit"), so it can't be traced back directly -- either
+it was specific to an earlier, buggier prototype of the fill algorithm, or it
+lives in a record outside this 396-record sample. **Still no German reader**
+(see WON'T BE DONE above) to catch a bad fill that isn't a decoder-state
+regression (e.g. a wrong-but-plausible vowel) -- this re-check only rules out
+the specific garbling failure mode, not correctness in general.
+**Records fully cleared of 0xB2 (pre-drop baseline): 46**, not the research
+figure of 76: the German gate cost 16 (62 without it) and the junk rule cost
+the rest. The "fully cleared" count has not been recomputed since the junk
+rule was dropped. Tests: `TestFixMarc8B2Umlaut` updated for the new behavior,
+full suite 430 passed/1 skipped, flake8 (max-line 120) clean. Full-corpus run
+**not done**; labels are still mine, no German reader.
+
+**For the German reader (review sheet, 2026-10-07). WON'T BE DONE (2026-10-08)
+-- the user has no access to a German reader, and these are cataloged-materials
+snippets, not running prose, so there's no good substitute reviewer either.**
+Distinct words the 0xB2 fixer filled in `working/GTU_bibs_0xB2_sample.mrc` (53
+forms; 70 occurrences; full before/after with fields in `working/b2run/diff.txt`,
+gitignored; regenerate with the on/off run in the section above). The 99%
+gold-label accuracy therefore stays an estimate from the assistant's own German
+knowledge, never independently checked, and ships (if it ships) on that basis.
 
 Behörden, Bischöfliche, Bischöflichen, Böhmen, Erstveröffentlichungen, Erörterung, Fröhlich, Frömmigkeit, Förderung, Griechisch-römische, Göttingen, Göttlichem, Höhepunkt, Jörg, Könemann, Könige, Körper, Körperschaften, Lösung, Schöningh, Schöpfung, Sprichwörter, Strömungen, Tröndle, Töpelmann, Versöhnung, Veröffentlichungen, Völkern, befördern, bischöflichen, böhmische, böhmischen, deutsch-französische, eröffnen, eröffnet, gehören, gehört, göttliche, höchsten, können, könnte, nördlichen, persönlich, persönlichen, zeitgenössische, zeitgenössischen, zwölf, Öffentliche, öffentliche, öffentlichen, öffentlicher, ökumenische, ökumenischen
 
-**Tomorrow:** (1) get this list checked; (2) if clean, consider relaxing the
-German gate / junk rule (62 / 76 records vs 46 now); (3) then PR (not opened,
-per user); (4) not worth doing: displaced-mark mechanism, more lexicon sources,
-more byte work.
+**Known weak spot (stands either way):** surnames like K_hler/B_hler are not
+resolvable by any lexicon.
+
+**Tomorrow:** (1) [WON'T BE DONE] get this list checked by a German reader;
+(2) relaxing the German gate / junk rule effect measured instead on the
+2026-10-08 session -- see "Effect of relaxing the German gate / junk rule"
+below; (3) then PR (not opened, per user); (4) not worth doing: displaced-mark
+mechanism, more lexicon sources, more byte work.
+
+**Effect of relaxing the German gate / junk rule (measured 2026-10-08).**
+First pass used monkeypatching (`_b2_record_is_german` forced True for gate
+off; a copy of `_b2_fill_text` with the bail-out deleted for junk rule off)
+run through the full `marc_repair.py` CLI pipeline (a standalone call to
+`fix_marc8_b2_umlaut` undercounts -- fixer order changes which subfields still
+have "other escape junk" left when this one runs) over the 396-record
+`working/GTU_bibs_0xB2_sample.mrc`:
+
+| config (monkeypatch estimate) | instances | records touched |
+|---|---|---|
+| baseline (both rules on) | 89 | 74 |
+| gate off, junk rule on | 106 | 90 |
+| gate on, junk rule off | 135 | 111 |
+| both off | 135 | 111 |
+
+This suggested relaxing the junk rule alone already reached the same ceiling
+as relaxing both, so the user chose to **drop the junk-rule bail-out from
+`_b2_fill_text` for real** (code change, not a monkeypatch; gate left in
+place) -- see the "no other escape junk left" paragraph above for the actual
+diff. Re-measuring the real edited code against the baseline gave different,
+authoritative numbers that disagree with the monkeypatch estimate above (the
+monkeypatch copy of `_b2_fill_text` apparently didn't reproduce something the
+real pipeline does -- not tracked down, the real numbers are what matters):
+
+| config (real code, re-measured) | instances | records touched |
+|---|---|---|
+| baseline (pre-edit) | 89 | 74 |
+| junk rule dropped (shipped) | 115 | 92 |
+
+So the actual gain from this change is +26 instances / +18 records, not the
+monkeypatch's +46/+37. The German gate was left in place -- it was not
+re-measured against the new junk-rule-dropped code to see whether it's still
+adding reach (the monkeypatch estimate said it would add nothing once the
+junk rule was off, but given the discrepancy above, treat that as unverified
+too). **Not independently re-verified against the gold list** (see WON'T BE
+DONE above) -- this only shows reach, not whether the extra fills are
+correct, and specifically does not re-check the two `=505`/`=520` subfields
+that regressed under this exact change when it was first tried (see above).
+Scratch outputs in `working/b2run_relax/` and `working/b2run/*_v2*`
+(gitignored).
 
 **State at end of session (2026-10-07):** branch `context-language-disambiguation`,
 only research tools changed; `marc_repair.py` untouched. Pickles in `working/`:
