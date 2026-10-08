@@ -8,6 +8,128 @@ current state and open items.
 
 ## Current state
 
+### CLOSED -- oversized-field directory corruption (`dropped_oversized_field`), plus log header reformat
+
+**Status: shipped to both `context-language-disambiguation` (`3bfffe3`) and
+`main` (`db98708`, cherry-picked -- see below for why not a full merge).
+`pytest` clean on both (430 passed/1 skipped on the branch, 419 passed/1
+skipped on `main` -- the gap is the branch's b2-lexicon-only tests, which
+don't exist on `main`). Full-corpus re-run against `working/GTU_bibs.mrc`
+confirms the fix and shows no regressions.**
+
+**The bug report.** User found `working/GTU_bibs.mrc`'s 001 `1456853630`
+(`.b1929265x`) came out of every prior repaired file (`GTU_bibs_repaired.mrc`,
+`_sigfix.mrc`, `_0xa4fix.mrc`) truncated right after its first `505` --
+everything past it (the rest of the `505`, `546`, `520`, every `650`/`600`,
+all five `700`s) was gone from the main output. Isolating the record (see
+`working/single_1456853630*.mrc`) and running it alone reproduced this: the
+tool read it as **2 records**, wrote a 7152-byte truncated one to the main
+output, and silently shunted the real remainder into the `_error.mrc` file
+tagged `UNFIXABLE`, as if it were an unrelated, unparseable fragment.
+
+**Root cause (upstream data, not this tool).** The record's first `505`
+(Hebrew TOC note) is genuinely 10,032 bytes -- bloated by ~900 repeats of a
+malformed per-character MARC-8 escape pattern (`\x1bb9\x1bs...\x1b(XY\x1b(B`,
+apparently from whatever wrapped nearly every individual Hebrew character in
+its own spurious subscript/superscript escape switch instead of one escape
+around the whole run). ISO 2709's directory length field is only 4 digits
+(max 9999), so this field's real length can't be declared at all -- whatever
+produced this GTU export wrote a truncated/wrapped length (`1003`) instead.
+`parse_directory`'s own cumulative-offset sanity check (`start != cum`,
+`marc_repair.py` around line 462 before this fix) caught the lie at the
+*next* entry (whose own declared `start` reflects the true byte layout) and,
+per its existing (correct, for other corruption shapes) design, gave up and
+kept only the entries parsed so far -- silently discarding the other 20 real
+directory entries and everything they pointed to. `_read_intact_at` then
+walked real `\x1e` delimiters for just those surviving entries, happily
+swallowing the entire 10,032-byte blob as "the field's content" (it never
+cross-checked that against the directory's declared length), and returned a
+"successfully parsed" record that stopped right there.
+
+**The fix.** Two changes, both in `marc_repair.py`:
+
+1. `parse_directory`: when the cumulative check fails, before giving up it
+   now checks whether the gap is *fully explained* by the previous entry
+   actually being longer than its declared length -- using the next entry's
+   own (untouched) `start` as ground truth: `recovered_length =
+   entries[-1].length + (start - cum)`. If `recovered_length > 9999` (the
+   signature of this exact defect -- a real, uncorrupted entry can never
+   need more than 9999), it patches that one entry's length in-memory
+   (even past 4-digit range, fine in a Python int) and keeps parsing instead
+   of abandoning the rest of the directory. Anything else (recovered length
+   <= 9999, or no entries yet) falls through to the old `break` --
+   unrelated corruption shapes are untouched.
+2. `_read_intact_at`: any directory entry with `length > 9999` (only
+   reachable via #1's recovery) is dropped rather than assembled into a
+   field -- there's no valid way to declare its real length in a rebuilt
+   directory either, so keeping it would just reproduce the same problem on
+   write. Recorded on a new `ParsedRecord.dropped_oversized_fields` list
+   (tag, true length, 200-char preview), mirroring the existing
+   `indicator_fixes`/`reattached_orphaned_fields` pattern, and logged by both
+   call sites (`repair_holdings_records` and `main`) under a new
+   **`dropped_oversized_field`** category (FIXED/REQUIRES ATTENTION, DATA
+   LOSS, always-full) -- so the one field is dropped and *logged*, but the
+   rest of the record (every field after it) is recovered instead of lost.
+
+**Log header reformat (separate, done same session, same commit).** Every
+category's header in the log file now has a consistent 4-line shape:
+section/category line, then the plain description (never itself stating a
+data-loss call), then that call **in isolation on its own line** (`DATA
+LOSS` / `POSSIBLE DATA LOSS` / `NO DATA LOSS`, no punctuation), then the
+record/instance count. The call used to be embedded inside the (sometimes
+multi-line-wrapped) description text, which read inconsistently once a
+description ran long. New `_CHECK_DATA_LOSS: dict[str, str]` dict (one entry
+per category, next to the existing `_CHECK_DESCRIPTIONS`) carries the call;
+`_write_description_header` no longer appends a closing `" ==="` suffix to
+the description's own lines, since the data-loss line now closes the block.
+Every one of `_CHECK_DESCRIPTIONS`'s 56 (`main`: 55, see below) entries had
+its data-loss phrase mechanically extracted and moved -- verified by
+round-tripping the generated dict text back through `exec()` and diffing
+every value against the intended text before writing, rather than eyeballing
+56 hand-edited strings. Two entries needed hand-handling: `unfixable` and
+`suspect_hex_encoded_marc8` had explanatory text *after* the marker
+(`"DATA LOSS. These records cannot be loaded."`) that got folded back into
+the main description; `holdings_852_b_suspect_content` embeds a live
+f-string reference to `DEFAULT_852_LOCATION_CONTENT` rather than a baked-in
+literal, preserved by hand rather than flattened.
+
+**Why `main` got a cherry-pick, not a full merge.** Asked the user; chose
+cherry-pick. `context-language-disambiguation` is 11 commits ahead of `main`
+with unrelated in-progress work (the 0xB2-lexicon fixer, language/context
+disambiguation research, HANDOFF notes) -- merging the whole branch would
+have pulled all of that into `main` too. The cherry-pick hit one merge
+conflict, entirely inside the `_CHECK_DESCRIPTIONS`/`_CHECK_DATA_LOSS`
+dict-literal region (everything else -- `parse_directory`, `_read_intact_at`,
+`ParsedRecord`, the category-registry sets, both log call sites --
+applied cleanly): the branch's pre-fix state already had one extra category
+(`fixed_marc8_b2_umlaut`, from the unrelated 0xB2-lexicon work, not yet on
+`main`) that `main` doesn't have at all (`main` has no `b2_lexicon`/
+`fix_marc8_b2_umlaut` code whatsoever). Resolved by hand: `main`'s version of
+both new dicts has 55 entries (`dropped_oversized_field` added, no
+`fixed_marc8_b2_umlaut`), everything else byte-identical to the branch's.
+
+**Verification.**
+- Isolated the record into `working/single_1456853630.mrc` (reproduces with
+  1 record in, 2 "records" read, before the fix).
+- After the fix: 1 record in, 1 record out, no `_error.mrc`; 41 fields
+  survive (was: 1 truncated field in the main output, rest orphaned);
+  `dropped_oversized_field` logged once with the record's own identifier
+  (`.b1929265x`), true length (10032), and a content preview.
+- Full-corpus re-run, `working/GTU_bibs.mrc` (404,956 records, 527.5MB,
+  ~3m10s): `dropped_oversized_field` fires **exactly once** across the
+  whole file -- this record is the only one with this defect. Record-count
+  comparison: every prior run (`GTU_bibs_repaired.mrc`/`_sigfix.mrc`/
+  `_0xa4fix.mrc`) wrote 404,956 to the main output (including the 1
+  truncated record) *plus* 1 to the error file -- 404,957 record-slots
+  for 404,956 real source records, because one record was double-counted
+  across two files. The new run (`working/GTU_bibs_repaired_final.mrc`)
+  writes exactly 404,956 to the main output and produces no error file at
+  all -- 1:1 with the input, nothing split or dropped to a side file.
+- `main`'s cherry-picked version produces byte-identical `dropped_oversized_
+  field` behavior on the same isolated record (re-ran the single-record
+  test against `main` after the cherry-pick, confirmed same log output
+  modulo the absent b2-lexicon-only category).
+
 ### Experiment: language/context to disambiguate overloaded bytes (branch `context-language-disambiguation`)
 
 **Status: research only. Nothing in `marc_repair.py` changed.** Scripts are in
