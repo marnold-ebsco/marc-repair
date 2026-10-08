@@ -173,6 +173,28 @@ no German reader will check the fills, so the unverified-fill risk stands
 (cleared records are not reviewed afterwards). If built: German-evidence gate,
 length 4, support 2, default off, plus the on/off transcoded-output diff.
 
+**0xB2 fixer BUILT (default off) -- `fix_marc8_b2_umlaut` in `marc_repair.py`.**
+Enabled only by `--b2-lexicon PATH`; category `fixed_marc8_b2_umlaut`
+(INFORMATIONAL). Lexicon = `lang_lexicon_probe.py trim --base
+working/lexicon_GTU_de_sub_names.pkl --out working/b2_lexicon.json` (4.4 MB JSON
+of only the a/o/u-umlaut variants, 127k keys; not in the repo, source licences).
+Gates: record 008/041 says `ger`; word length >= 4 (gap counts); support >= 2;
+>= 80% agreement; <= 2 gaps; **and the subfield must have no other escape junk
+left after the fill** (otherwise skipped whole). Output is ANSEL diaeresis +
+vowel, transcoded normally. Capital only at a sentence-ish word start (not after
+a hyphen) or in an all-caps word.
+**On/off transcoded diff (`working/GTU_bibs_0xB2_sample.mrc`, 396 records):**
+74 records / 89 subfields changed, 70 words, every one matches the gold-clean
+list (3 hyphenated compounds checked by eye), 0 word-count changes. The junk rule
+exists because the first version *did* trigger the decoder-state regression on
+2 subfields (`=505` lost "mmigkeit", and `=520`): both were already corrupted
+elsewhere, and the fill changed what garbage appeared.
+**Records fully cleared of 0xB2: 46**, not the research figure of 76: the German
+gate costs 16 (62 without it) and the junk rule costs the rest. 28 more records
+get partial fills but stay on the review list. Tests: `TestFixMarc8B2Umlaut`
+(430 pass), flake8 (max-line 120) clean. Full-corpus run **not done**; labels are
+still mine, no German reader.
+
 **State at end of session (2026-10-07):** branch `context-language-disambiguation`,
 only research tools changed; `marc_repair.py` untouched. Pickles in `working/`:
 `lexicon_GTU.pkl` (corpus only), `_de`, `_de_sub`, `_de_sub_names` (full; use

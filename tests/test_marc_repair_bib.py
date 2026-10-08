@@ -14,6 +14,7 @@ extracts exhibiting the three defect classes this tool targets:
 """
 
 import glob
+import json
 import os
 import re
 import sys
@@ -4162,3 +4163,98 @@ class TestCliDefaultBehaviors:
     @pytest.mark.parametrize("case", _FIXED_REQUIRES_ATTENTION_CASES, ids=lambda c: c.id)
     def test_runs_by_default_logged_as_fixed_requires_attention(self, case, tmp_path):
         _run_cli_default_case(case, tmp_path)
+
+
+_B2_LEXICON = {
+    "gocke": {"göcke": 3},
+    "konig": {"könig": 4},
+    "offentliche": {"öffentliche": 5},
+}
+
+
+class TestFixMarc8B2Umlaut:
+    """0xB2 = a whole destroyed umlaut vowel; only filled when a word list
+    backs it, the record shows German evidence, and nothing else in the
+    subfield is still corrupted. See `fix_marc8_b2_umlaut`."""
+
+    JUNK = "\x1bp+\x1bs\xb2"
+
+    def _record(self, raw_a, lang="ger", tag="500"):
+        leader = list(_SYNTHETIC_LEADER)
+        leader[9] = " "  # declare MARC-8
+        f008 = "0" * 35 + lang + "d"
+        return m.ParsedRecord(
+            leader="".join(leader),
+            entries=[],
+            fields=[m.Field_("008", None, None, content=f008),
+                    m.Field_(tag, "  ", [("a", raw_a)])],
+        )
+
+    def test_fills_confirmed_word_and_transcodes_to_umlaut(self):
+        parsed = self._record(f"Von G{self.JUNK}cke")
+        details = m.fix_marc8_b2_umlaut(parsed, _B2_LEXICON)
+        assert len(details) == 1
+        m.transcode_marc8_to_utf8(parsed)
+        assert parsed.fields[1].subfields == [("a", "Von Göcke")]
+
+    def test_word_start_after_space_is_capitalized_when_sentence_start(self):
+        parsed = self._record(f"{self.JUNK}ffentliche Hand")
+        m.fix_marc8_b2_umlaut(parsed, _B2_LEXICON)
+        m.transcode_marc8_to_utf8(parsed)
+        assert parsed.fields[1].subfields == [("a", "Öffentliche Hand")]
+
+    def test_lowercase_after_lowercase_word_and_after_hyphen(self):
+        parsed = self._record(f"die {self.JUNK}ffentliche")
+        m.fix_marc8_b2_umlaut(parsed, _B2_LEXICON)
+        m.transcode_marc8_to_utf8(parsed)
+        assert parsed.fields[1].subfields == [("a", "die öffentliche")]
+        parsed = self._record(f"staatlich-{self.JUNK}ffentliche")
+        m.fix_marc8_b2_umlaut(parsed, _B2_LEXICON)
+        m.transcode_marc8_to_utf8(parsed)
+        assert parsed.fields[1].subfields == [("a", "staatlich-öffentliche")]
+
+    def test_needs_german_evidence(self):
+        raw = f"Von G{self.JUNK}cke"
+        parsed = self._record(raw, lang="eng")
+        assert m.fix_marc8_b2_umlaut(parsed, _B2_LEXICON) == []
+        assert parsed.fields[1].subfields == [("a", raw)]
+
+    def test_041_german_counts_as_evidence(self):
+        parsed = self._record(f"Von G{self.JUNK}cke", lang="eng")
+        parsed.fields.append(m.Field_("041", "  ", [("a", "eng"), ("a", "ger")]))
+        assert len(m.fix_marc8_b2_umlaut(parsed, _B2_LEXICON)) == 1
+
+    def test_leaves_short_fragment_alone(self):
+        raw = f"g{self.JUNK}"  # "g_" -- too short to trust
+        parsed = self._record(raw)
+        assert m.fix_marc8_b2_umlaut(parsed, {"ga": {"gä": 9}}) == []
+
+    def test_leaves_word_with_too_little_support_alone(self):
+        raw = f"G{self.JUNK}cke"
+        parsed = self._record(raw)
+        assert m.fix_marc8_b2_umlaut(parsed, {"gocke": {"göcke": 1}}) == []
+        assert parsed.fields[1].subfields == [("a", raw)]
+
+    def test_leaves_ambiguous_word_alone(self):
+        raw = f"G{self.JUNK}cke"
+        parsed = self._record(raw)
+        lexicon = {"gocke": {"göcke": 3}, "gucke": {"gücke": 3}}
+        assert m.fix_marc8_b2_umlaut(parsed, lexicon) == []
+
+    def test_skips_subfield_that_still_has_other_escape_junk(self):
+        # Filling one gap in a subfield that is corrupted elsewhere can make
+        # the decoder-state damage worse (HANDOFF.md, .b18157713).
+        raw = f"G{self.JUNK}cke und K{self.JUNK}nig und G\x1bp+\x1bsxyz"
+        parsed = self._record(raw)
+        assert m.fix_marc8_b2_umlaut(parsed, _B2_LEXICON) == []
+        assert parsed.fields[1].subfields == [("a", raw)]
+
+    def test_skipped_for_utf8_declared_record(self):
+        parsed = self._record(f"Von G{self.JUNK}cke")
+        parsed.leader = parsed.leader[:9] + "a" + parsed.leader[10:]
+        assert m.fix_marc8_b2_umlaut(parsed, _B2_LEXICON) == []
+
+    def test_load_lexicon_roundtrip(self, tmp_path):
+        path = tmp_path / "lex.json"
+        path.write_text(json.dumps(_B2_LEXICON), encoding="utf-8")
+        assert m.load_b2_lexicon(str(path)) == _B2_LEXICON

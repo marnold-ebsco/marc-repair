@@ -198,6 +198,25 @@ def merge_wordlist(base: str, wordlist: str, out: str, weight: int = 1) -> None:
         pickle.dump(lex, fh)
 
 
+def trim_for_b2(base: str, out: str) -> None:
+    """Write the small JSON lexicon `marc_repair.py --b2-lexicon` loads: only
+    variants carrying an a/o/u umlaut (all 0xB2 can stand for), as
+    {flattened_key: {nfd_variant: count}}. JSON, not pickle, so it is safe to
+    hand around."""
+    import json
+    with open(base, 'rb') as fh:
+        glob = pickle.load(fh)['glob']
+    trimmed = {}
+    for key, table in glob.items():
+        keep = {v: c for v, c in table.items()
+                if any(ch in unicodedata.normalize('NFC', v) for ch in 'äöü')}
+        if keep:
+            trimmed[key] = keep
+    with open(out, 'w', encoding='utf-8') as fh:
+        json.dump(trimmed, fh, ensure_ascii=False, separators=(',', ':'))
+    print(f'{len(trimmed)} keys -> {out}', file=sys.stderr)
+
+
 # ---------------------------------------------------------------- analyze
 def tokenize(text: str):
     """Yield words as (letters, markers): letters = flat lowercase chars;
@@ -395,6 +414,9 @@ def main() -> None:
     g.add_argument('--base', default=LEXICON_CACHE)
     g.add_argument('--out', required=True)
     g.add_argument('--weight', type=int, default=1)
+    t = sub.add_parser('trim')
+    t.add_argument('--base', required=True)
+    t.add_argument('--out', required=True)
     a = sub.add_parser('analyze')
     a.add_argument('--byte', required=True, help='hex, e.g. a5')
     a.add_argument('--sample', help='default: working/GTU_bibs_0x<BYTE>_sample.mrc')
@@ -413,6 +435,8 @@ def main() -> None:
         lc_words(args.nt_gz, args.out)
     elif args.cmd == 'merge':
         merge_wordlist(args.base, args.wordlist, args.out, args.weight)
+    elif args.cmd == 'trim':
+        trim_for_b2(args.base, args.out)
     else:
         args.byte = args.byte.lower().replace('0x', '')
         args.sample = args.sample or f'working/GTU_bibs_0x{args.byte.upper()}_sample.mrc'
