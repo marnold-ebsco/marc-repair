@@ -148,6 +148,56 @@ def build(corpus: str, cache: str) -> None:
         pickle.dump({'glob': dict(glob_lex), 'lang': dict(lang_lex), 'plain': plain}, fh)
 
 
+LC_LABEL_RE = re.compile(
+    r'<http://www\.w3\.org/2004/02/skos/core#(?:prefLabel|altLabel)> "((?:[^"\\]|\\.)*)"')
+NT_ESCAPE_RE = re.compile(r'\\u([0-9A-Fa-f]{4})|\\U([0-9A-Fa-f]{8})')
+
+
+def lc_words(nt_gz: str, out: str) -> None:
+    """Stream an id.loc.gov SKOS N-Triples dump and write every distinct word
+    containing a non-ASCII letter from its prefLabel/altLabel values, one per
+    line, for `merge`."""
+    import gzip
+    seen: set[str] = set()
+    with gzip.open(nt_gz, 'rt', encoding='utf-8') as fh:
+        for line in fh:
+            hit = LC_LABEL_RE.search(line)
+            if not hit or hit.group(1).isascii() and '\\u' not in hit.group(1):
+                continue
+            label = NT_ESCAPE_RE.sub(
+                lambda g: chr(int(g.group(1) or g.group(2), 16)), hit.group(1))
+            if not label.isascii():
+                label = unicodedata.normalize('NFC', label)
+                seen.update(w.lower() for w in WORD_RE.findall(label) if not w.isascii())
+    with open(out, 'w', encoding='utf-8') as fh:
+        fh.write('\n'.join(sorted(seen)) + '\n')
+    print(f'{len(seen)} distinct diacritic words -> {out}', file=sys.stderr)
+
+
+def merge_wordlist(base: str, wordlist: str, out: str, weight: int = 1) -> None:
+    """Add the diacritic words of a plain UTF-8 word list (one per line) to a
+    copy of the corpus lexicon. The list has no frequencies, so each variant
+    gets `weight`; ambiguous pairs (moechte/maechte) then split their
+    confidence instead of looking certain."""
+    with open(base, 'rb') as fh:
+        lex = pickle.load(fh)
+    added = 0
+    with open(wordlist, encoding='utf-8') as fh:
+        for line in fh:
+            w = line.strip()
+            if w.isascii() or not WORD_RE.fullmatch(w):
+                continue
+            key = flatten(w)
+            if key is None or len(key) < 3:
+                continue
+            lex['glob'].setdefault(key, Counter())[
+                unicodedata.normalize('NFD', w).lower()] += weight
+            added += 1
+    print(f'merged {added} diacritic words; {len(lex["glob"])} keys', file=sys.stderr)
+    with open(out, 'wb') as fh:
+        pickle.dump(lex, fh)
+
+
 # ---------------------------------------------------------------- analyze
 def tokenize(text: str):
     """Yield words as (letters, markers): letters = flat lowercase chars;
@@ -337,6 +387,14 @@ def main() -> None:
     b = sub.add_parser('build')
     b.add_argument('--corpus', default=CORPUS)
     b.add_argument('--cache', default=LEXICON_CACHE)
+    lw = sub.add_parser('lc-words')
+    lw.add_argument('--nt-gz', required=True)
+    lw.add_argument('--out', required=True)
+    g = sub.add_parser('merge')
+    g.add_argument('--wordlist', required=True)
+    g.add_argument('--base', default=LEXICON_CACHE)
+    g.add_argument('--out', required=True)
+    g.add_argument('--weight', type=int, default=1)
     a = sub.add_parser('analyze')
     a.add_argument('--byte', required=True, help='hex, e.g. a5')
     a.add_argument('--sample', help='default: working/GTU_bibs_0x<BYTE>_sample.mrc')
@@ -351,6 +409,10 @@ def main() -> None:
     args = ap.parse_args()
     if args.cmd == 'build':
         build(args.corpus, args.cache)
+    elif args.cmd == 'lc-words':
+        lc_words(args.nt_gz, args.out)
+    elif args.cmd == 'merge':
+        merge_wordlist(args.base, args.wordlist, args.out, args.weight)
     else:
         args.byte = args.byte.lower().replace('0x', '')
         args.sample = args.sample or f'working/GTU_bibs_0x{args.byte.upper()}_sample.mrc'

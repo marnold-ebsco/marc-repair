@@ -137,7 +137,43 @@ only, gated, defaulting to off; skip 0xA5 for now.**
 **Open decision for the user:** start on 0xB2, or merge this research branch
 first and decide later.
 
-**Next session: build an outside lexicon (decided with the user, not started).**
+**Outside lexicon: DONE as research (2026-10-07). Result and recommendation.**
+Built from `wngerman` (Debian, GPL-2+; `apt-get download` + `dpkg -x`, not
+installed) + LC subjects + LC names (`id.loc.gov/download/authorities/
+{subjects,names}.skosrdf.nt.gz`, 100 MB / 2.6 GB). All data lives in
+`working/outside_lex/` (gitignored, not in the repo). Reproduce, from the repo
+root in the venv: `lang_lexicon_probe.py lc-words --nt-gz <file> --out
+<words.txt>` for each LC file, then `lang_lexicon_probe.py merge --base
+working/lexicon_GTU.pkl --wordlist <ngerman|words.txt> --out <new.pkl>`
+(chain `--base` to stack lists), then `b2_context_probe.py --cache <new.pkl>
+--min-support N --min-length L` and `b2_gold_check.py`. Word-list words count
+1 each, so `--min-support 2` throws most of them away unless two sources agree.
+
+Records (of 396 with 0xB2) that would leave the human-review list, i.e. every
+0xB2 occurrence in them is in an accepted word; gold = assistant's labels, no
+German reader:
+
+| lexicon | support 2 | support 1 |
+|---|---|---|
+| corpus only | 48 | 58 |
+| + wngerman | 52 | 93 |
+| + wngerman + LC subjects | 56 | 95 |
+| + wngerman + LC subjects + LC names | 76 | 102 (12 gold-contradicted) |
+
+With the full lexicon, `--min-length 4 --min-support 2` clears **76 records
+with 0 gold contradictions** (length counts the gap; short fragments such as
+`gr_` -> `grü` were the bad fills). Support 1 + length 4: 96 cleared, 2
+contradicted (`h_al` -> `hääl`, Estonian). Surname ambiguity (`K_hler`,
+`B_hler`) is unresolvable by any lexicon. Cost if built: lookups ~0.05 us
+(negligible); full lexicon is a 31 MB pickle, 2.9 s load, ~487 MB RSS, so a
+shipped version needs a trimmed file, and it should load only when the feature
+is on. Record-level language detection cost is unmeasured.
+**Not built into `marc_repair.py`.** The user wants the ~76 fewer reviews but
+no German reader will check the fills, so the unverified-fill risk stands
+(cleared records are not reviewed afterwards). If built: German-evidence gate,
+length 4, support 2, default off, plus the on/off transcoded-output diff.
+
+**(Historical plan) outside lexicon, decided with the user.**
 Coverage, not logic, was the bottleneck in every lexicon test (matched 2/292
 for 0xA5, 1/135 for 0xAE, 127/752 for 0xB2; "religiöse", "gehört",
 "Königsrahmen" absent). A corpus-only lexicon can only know words the corpus

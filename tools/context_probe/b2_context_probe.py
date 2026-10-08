@@ -95,6 +95,8 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument('--min-confidence', type=float, default=0.8)
     ap.add_argument('--min-support', type=int, default=2)
+    ap.add_argument('--min-length', type=int, default=0,
+                    help="accept only words at least this long (gap counts)")
     ap.add_argument('--sample', default='working/GTU_bibs_0xB2_sample.mrc')
     ap.add_argument('--cache', default='working/lexicon_GTU.pkl')
     args = ap.parse_args()
@@ -125,7 +127,8 @@ def main() -> None:
                     top = votes.most_common(1)
                     pick = top[0][0] if top else ()
                     conf = top[0][1] / total if top else 0.0
-                    if total >= args.min_support and conf >= args.min_confidence:
+                    if (total >= args.min_support and conf >= args.min_confidence
+                            and len(word) >= args.min_length):
                         tier = 'accept'
                     elif total and conf >= 0.5:
                         tier = 'review'
