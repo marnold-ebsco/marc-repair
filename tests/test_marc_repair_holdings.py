@@ -1373,3 +1373,25 @@ class TestRepairHoldingsRecords:
             assert result["total"] == n_input == 528
             assert result["unfixable"] == 0
             assert m.count_records(out) == n_input
+
+    def test_repairs_synthetic_kitchen_sink_holdings_file(self):
+        # Always-available counterpart to test_repairs_real_short_bucknell_
+        # holdings_file above, which skips unless a real production export
+        # happens to be present locally: runs the same whole-pipeline
+        # round-trip check against kitchen_sink_holdings.mrc, the
+        # synthetic one-record-per-category fixture build_kitchen_sink.py
+        # generates (see that script for how the counts below arise --
+        # 2 unfixable: an oversized field diverted to the error file, and
+        # one unresolvable trailing record with no parseable directory).
+        import tempfile
+
+        base = _fixture("kitchen_sink_holdings.mrc")
+        n_input = m.count_records(base)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out = os.path.join(tmpdir, "out.mrc")
+            log = os.path.join(tmpdir, "out.log")
+            result = m.repair_holdings_records(base, out, log)
+            assert result["total"] == n_input == 51
+            assert result["unfixable"] == 2
+            assert result["written"] == 50
+            assert m.count_records(out) == result["written"]
