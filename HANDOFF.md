@@ -173,6 +173,21 @@ no German reader will check the fills, so the unverified-fill risk stands
 (cleared records are not reviewed afterwards). If built: German-evidence gate,
 length 4, support 2, default off, plus the on/off transcoded-output diff.
 
+**State at end of session (2026-10-07):** branch `context-language-disambiguation`,
+only research tools changed; `marc_repair.py` untouched. Pickles in `working/`:
+`lexicon_GTU.pkl` (corpus only), `_de`, `_de_sub`, `_de_sub_names` (full; use
+this one). `working/b2_context_probe.tsv` is overwritten by every probe run, so
+re-run the probe with the settings you want before `b2_gold_check.py`. Run
+commands via `wsl.exe -e bash -lc 'cd ~/scratch/marc_repair && source
+venv/bin/activate && ...'` (no `python`; needs the venv for `pymarc`). Gotcha
+hit: a background `curl` started inside a subshell is killed when the WSL shell
+exits and its "completed" notice is the wrapper's, so a partial 2.6 GB download
+looked finished -- run it as the tracked background command itself, resume with
+`curl -C -`, and verify with `gzip -t`. Decisions open for the user: whether to
+build the gated 0xB2 fixer (user wants the ~76 fewer reviews; no German reader
+will check fills), and merge-vs-continue for this branch. Untried: frequency
+list for ties (source 3), Sanskrit/Arabic (source 5), `wfrench` etc.
+
 **(Historical plan) outside lexicon, decided with the user.**
 Coverage, not logic, was the bottleneck in every lexicon test (matched 2/292
 for 0xA5, 1/135 for 0xAE, 127/752 for 0xB2; "religiöse", "gehört",
