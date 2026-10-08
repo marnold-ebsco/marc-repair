@@ -137,6 +137,44 @@ only, gated, defaulting to off; skip 0xA5 for now.**
 **Open decision for the user:** start on 0xB2, or merge this research branch
 first and decide later.
 
+**Next session: build an outside lexicon (decided with the user, not started).**
+Coverage, not logic, was the bottleneck in every lexicon test (matched 2/292
+for 0xA5, 1/135 for 0xAE, 127/752 for 0xB2; "religiöse", "gehört",
+"Königsrahmen" absent). A corpus-only lexicon can only know words the corpus
+spells correctly. An outside lexicon should also *lower* confidence on
+ambiguous pairs ("möchte"/"mächte" would both match), which is desirable.
+It will **not** fix the DISPLACED shape (that is a position problem, not a
+vocabulary one). Sources, cheapest first -- **none of these package names,
+URLs or licences have been verified; check each before relying on it:**
+
+1. *Clean UTF-8 already on disk:* `sample_files/Bucknell00000448.mrc` and any
+   other UTF-8 export. Free, and matches the catalog's own vocabulary. Do
+   **not** use this project's repaired outputs (circular).
+2. *Debian `w*` word-list packages* (e.g. `wngerman`, `wfrench`, `wpolish`,
+   `wportuguese`; one `apt install` each, plain word lists, no setup). No
+   frequencies, so ö-vs-ä ties need source 3. Expect some are GPL.
+3. *Frequency lists for tie-breaking* (e.g. the Hermit Dave FrequencyWords
+   set; licence unchecked): settles "möchte" over "mächte" without hand
+   labels.
+4. *Library of Congress authority files* (name + subject, free bulk download
+   from id.loc.gov): holds exactly the hard cases -- German surnames/places
+   (Köstenberger, Grözinger) and transliterated Sanskrit/Arabic names with
+   their diacritics, which no dictionary package has. Recommended after 1-3
+   if they help.
+5. *Sanskrit/Arabic transliteration:* Cologne Digital Sanskrit Dictionaries
+   (Monier-Williams, IAST spellings) for Sanskrit; Arabic romanizations come
+   mostly from the LC authority files. The only genuinely hard part.
+
+Plan: reuse the existing structure unchanged (flattened-ASCII key -> set of
+diacritic spellings, cached as a pickle -- see `build()` in
+`tools/context_probe/lang_lexicon_probe.py`); only add loaders (pure Python).
+Keep the downloaded data **out of the repo** (licences vary) and commit only
+a download-and-build script. First test: German list + frequencies (sources
+2-3), re-run `b2_context_probe.py` / `b2_gold_check.py`, and compare against
+the corpus-only result above (127 accepted, 4 contradicted by gold; 20.6%
+displaced). Add the LC authority files only if that moves the numbers.
+Estimated 20k-40k tokens for loaders + rebuild.
+
 **Other next steps (not started):**
 
 1. (Superseded by the recommendation above.) Decide whether to build for
