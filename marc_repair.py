@@ -2868,7 +2868,9 @@ def fix_marc8_diacritic_escapes(parsed: ParsedRecord) -> list[str]:
 # word is long enough (short fragments such as "gr_" were the bad fills).
 # The record must also show German evidence (008/041). The fill is a
 # lexicon-backed guess, not a verified fix -- it is logged per word as
-# `fixed_marc8_b2_umlaut`, and off unless a lexicon file is given.
+# `fixed_marc8_b2_umlaut`. On by default when a lexicon file exists at
+# DEFAULT_B2_LEXICON_PATH (working/b2_lexicon.json next to this script);
+# --b2-lexicon PATH points at a different file, --no-b2-lexicon disables it.
 # Measured on the 396 GTU records holding 0xB2: see HANDOFF.md.
 _B2_MARKER = r"(?:\x1b(?!\()[^\x1b\xb2]{1,2})+\xb2"
 _B2_MARKER_RE = re.compile(_B2_MARKER)
@@ -2880,6 +2882,14 @@ _B2_MIN_LENGTH = 4
 _B2_MIN_SUPPORT = 2
 _B2_MIN_CONFIDENCE = 0.8
 _B2_MAX_GAPS = 2
+
+# Default location the 0xB2 lexicon is expected at when --b2-lexicon isn't
+# given explicitly (same place tools/context_probe/build_b2_lexicon.py writes
+# it by default). Resolved relative to this script, not the cwd, so it's
+# found the same way no matter where marc_repair.py is invoked from.
+DEFAULT_B2_LEXICON_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "working", "b2_lexicon.json"
+)
 
 
 def load_b2_lexicon(path: str) -> dict[str, dict[str, int]]:
@@ -5714,7 +5724,8 @@ _CHECK_DESCRIPTIONS: dict[str, str] = {
     "fixed_marc8_b2_umlaut": "A German umlaut vowel destroyed by escape "
     "junk + byte 0xB2 was filled in because a word list confirmed the "
     "word (e.g. \"G_cke\" -> \"Göcke\"). A lexicon-backed guess, not "
-    "verified against the source record; only with --b2-lexicon.",
+    "verified against the source record; on by default when a lexicon "
+    "file is found, off with --no-b2-lexicon.",
     "fixed_marc8_diacritic": "A MARC-8 diacritic mark was lost to "
     "either a bogus script-switching escape sequence around a "
     "confirmed-by-volume payload byte (e.g. \"Haure\" + <escape> + "
@@ -6882,12 +6893,21 @@ def main(argv: list[str] | None = None) -> int:
         "--b2-lexicon",
         metavar="PATH",
         default=None,
-        help="OFF unless given. JSON word list built by "
-        "tools/context_probe/lang_lexicon_probe.py `trim`; enables "
-        "filling a destroyed German umlaut vowel (escape junk + byte "
-        "0xB2) in records with German 008/041 evidence, only for words "
+        help="JSON word list built by tools/context_probe/lang_lexicon_probe.py "
+        "`trim`; enables filling a destroyed German umlaut vowel (escape junk "
+        "+ byte 0xB2) in records with German 008/041 evidence, only for words "
         "the list confirms (logged as fixed_marc8_b2_umlaut). A "
-        "lexicon-backed guess, not a verified fix",
+        "lexicon-backed guess, not a verified fix. ON BY DEFAULT if "
+        f"{DEFAULT_B2_LEXICON_PATH} exists; pass a PATH here to use a "
+        "different lexicon file, or --no-b2-lexicon to turn it off",
+    )
+    parser.add_argument(
+        "--no-b2-lexicon",
+        dest="no_b2_lexicon",
+        action="store_true",
+        default=False,
+        help="force the 0xB2 lexicon-gated umlaut fixer OFF, even if "
+        f"{DEFAULT_B2_LEXICON_PATH} exists or --b2-lexicon was given",
     )
     parser.add_argument(
         "--no-fix-marc8-diacritic-escapes",
@@ -7363,6 +7383,31 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 1
 
+    if args.no_b2_lexicon:
+        b2_lexicon_path = None
+    elif args.b2_lexicon is not None:
+        b2_lexicon_path = args.b2_lexicon
+    elif os.path.isfile(DEFAULT_B2_LEXICON_PATH):
+        b2_lexicon_path = DEFAULT_B2_LEXICON_PATH
+    else:
+        b2_lexicon_path = None
+
+    _banner = "*" * 78
+    print(_banner, file=sys.stderr)
+    if b2_lexicon_path:
+        print(
+            f"*** 0xB2 LEXICON MODE: ON  -- using {b2_lexicon_path} "
+            "(--no-b2-lexicon to disable)",
+            file=sys.stderr,
+        )
+    else:
+        print(
+            "*** 0xB2 LEXICON MODE: OFF -- German umlaut-vowel guessing "
+            "disabled (--b2-lexicon PATH to enable)",
+            file=sys.stderr,
+        )
+    print(_banner, file=sys.stderr)
+
     start_time = time.perf_counter()
     run_started = datetime.now(timezone.utc)
 
@@ -7400,7 +7445,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.marc8_corpus_lookup
         else ({}, {})
     )
-    b2_lexicon = load_b2_lexicon(args.b2_lexicon) if args.b2_lexicon else None
+    b2_lexicon = load_b2_lexicon(b2_lexicon_path) if b2_lexicon_path else None
     mrk_path = None
     if args.mrk is not None:
         mrk_path = args.mrk or os.path.splitext(out_path)[0] + ".mrk"
@@ -7784,7 +7829,7 @@ def main(argv: list[str] | None = None) -> int:
         active_categories.add("fixed_mojibake")
     if args.fix_marc8_diacritic_escapes:
         active_categories.add("fixed_marc8_diacritic")
-    if args.b2_lexicon:
+    if b2_lexicon_path:
         active_categories.add("fixed_marc8_b2_umlaut")
     if args.fix_invalid_leader_bytes:
         active_categories.add("leader_byte_defaulted")
