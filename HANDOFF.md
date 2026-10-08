@@ -183,6 +183,45 @@ Gates: record 008/041 says `ger`; word length >= 4 (gap counts); support >= 2;
 normally. Capital only at a sentence-ish word start (not after a hyphen) or in
 an all-caps word.
 
+**Build tool for `working/b2_lexicon.json`: `tools/context_probe/build_b2_lexicon.py`
+(added 2026-10-08).** Orchestrates the steps above end to end (`build` the
+corpus-only pickle, optionally fetch+merge `wngerman`/LC subjects/LC names,
+`trim` to the final JSON) instead of running each `lang_lexicon_probe.py`
+subcommand by hand; see the HOWTO below for usage. Every step is skipped if
+its output already exists (resumable after an interrupted LC-names download),
+and nothing it produces is committed -- same gitignored-`working/` reasoning
+as the hand-run version. Verified against the pickles already on disk from
+this session: re-running it with all three sources reproduced
+`working/b2_lexicon.json` byte-for-byte (126,870 keys).
+
+**Measured, 2026-10-08: per-source contribution to the lexicon, isolated.**
+The table above only tested sources added cumulatively in a fixed order
+(corpus -> +wngerman -> +wngerman+subjects -> +wngerman+subjects+names), so
+it couldn't show what LC alone (skipping `wngerman`, which is GPL-2+, unlike
+LC's US-government-work data) would buy. Using the word lists already cached
+from building the table above (no new downloads), ran
+`b2_context_probe.py --min-support 2 --min-length 4` against three lexicons
+directly (a different metric than the table's "records cleared" --
+`accept`-tier *occurrence* count, same script/settings across all three, so
+comparable to each other):
+
+| lexicon | accepted occurrences |
+|---|---|
+| corpus only | 123 |
+| + LC subjects + LC names (no wngerman) | 147 |
+| + wngerman too (full, as shipped) | 199 |
+
+**`wngerman` is the bigger of the two outside sources here (+52 over
+corpus-only), not the smaller one** -- LC alone only adds +24. This cuts
+against what the cumulative table above suggests (LC names looked like the
+dominant contributor there, going from 56 to 76 records). LC-only is a real
+option if the `wngerman` licence is a blocker (`build_b2_lexicon.py
+--no-wngerman`), but it leaves roughly a quarter of the currently-accepted
+guesses on the table, not a negligible slice. Not re-measured against the
+gold list (same "no German reader" caveat as everywhere else in this
+section) -- this only shows reach, not whether the extra `wngerman`-sourced
+accepts are correct.
+
 **The "no other escape junk left in the subfield" bail-out was dropped
 (2026-10-08, user's decision -- see "Effect of relaxing the German gate / junk
 rule" below).** It existed because the first version *did* trigger a
@@ -773,6 +812,48 @@ item left in this file as of this entry.
    [docs/HANDOFF_HISTORY.md](docs/HANDOFF_HISTORY.md) for the full writeup and
    a mocked-up example of the improved log line.
 
+   **2026-10-08 addendum: scoped "best-guess, label don't block" idea, costed
+   against the 0xB2 sample file.** Considered a narrower alternative to the
+   external-authority lookup above: reuse what's already resolvable from
+   information already in the file (the existing `corpus_index` same-file
+   match inside `find_suspect_marc8_escapes`), actually apply the guess
+   instead of only suggesting it, and label each occurrence inline in the log
+   body as `FIXED/NEEDS REVIEW` (guessed + applied) vs. `NOT FIXED/NEEDS
+   REVIEW` (no guess available). No section-table change needed for this --
+   `_section_for` gates purely by category, not per-entry `fixed`, so
+   `suspect_marc8_escape` would stay in the NEEDS REVIEW section regardless;
+   only the per-bullet label text would change.
+
+   Tested against `working/GTU_bibs_0xB2_sample.mrc` (396 records, read-only,
+   via `--log-full suspect_marc8_escape`, output discarded): 22 records /
+   ~26 occurrences, **0 of them resolved by the existing `corpus_index`
+   same-file lookup** -- every single one still falls back to the generic
+   "likely a miskeyed accented letter... verify against another source"
+   message. Relabeling with only what's resolvable today would produce an
+   all-"NOT FIXED" report on this file; no visible change without extending
+   resolution beyond what's already built.
+
+   By eye, several of these 22 records ARE guessable -- German (`Gru[?]ung`
+   -> Gründung, `gr[?]ten` -> größten, `Mu[?]ig` -> Mutig, `Referenzgr[?]e`
+   -> Referenzgröße), Polish (`Elz[?]bieta` -> Elżbieta), Slovak
+   (`Karf[?]kov` -> Karfíková) -- but the same 22 records also include Tamil/
+   Sanskrit IAST romanization (`Tiruvitåan[?]kåur`, `Vedåarthasan[?]graha`)
+   and Arabic transliteration (`Mustaòhrag[?]`). A single-language lexicon
+   (like the German-only `b2_lexicon.json` built for the fixer below) would
+   not cover this mix -- guessing these would need per-occurrence
+   morphological/positional heuristics plus manual verification, not a
+   lexicon-hit-rate win.
+
+   **Cost estimate (not started; no decision made):** full generalization
+   across both script shapes this tool already distinguishes in
+   `_MARC8_SCRIPT_CHARSETS` (the 1-char Hebrew/Arabic/Cyrillic/Greek case and
+   the 3-char CJK/EACC case) -- 60-100k tokens, comparable in scope to the
+   0xB2 lexicon-gated fixer work itself (see below). A narrower pilot scoped
+   to just this one sample file's 22 records (one script-escape shape, 1-char
+   gap only, no CJK) -- 25-35k tokens, weighted toward candidate-generation
+   and hand verification rather than lexicon building, given the
+   multi-language mix just described.
+
 2. **CLOSED -- `suspect_hex_encoded_marc8` stays detect-only, auto-replace
    not started.** Its "recoverable" heuristic was tightened and shipped
    (`d4caade`), but auto-replacing even the "recoverable" cases turned out
@@ -919,6 +1000,152 @@ item left in this file as of this entry.
    export has been found to check against; the only holdings `.mrc` on disk
    belongs to an unrelated project/library, not a fair substitute. Deferred by
    the user. Not started.
+
+## HOWTO: build the `--b2-lexicon` file
+
+`marc_repair.py --b2-lexicon PATH` (the gated 0xB2 fixer, `fix_marc8_b2_umlaut`)
+loads a small JSON file -- it ships no lexicon of its own (gitignored, source
+licences vary), so this has to be built once per corpus/checkout before the
+flag does anything. This is the exact chain already run for GTU
+(`working/b2_lexicon.json`, referenced from the "0xB2 fixer BUILT" entry
+above); repeat it for a new corpus by swapping `--corpus`/`--cache` paths.
+Everything below runs from the repo root, in the venv
+(`source venv/bin/activate`), via `wsl.exe -e bash -lc '...'` per the
+standing WSL instruction.
+
+**`tools/context_probe/build_b2_lexicon.py` now does all of steps 1-3 below
+in one call** -- e.g. `python tools/context_probe/build_b2_lexicon.py
+--corpus working/GTU_bibs.mrc --out working/b2_lexicon.json` (add
+`--corpus-only` to skip the outside sources entirely, `--no-wngerman` to
+drop just that one, `--include-lc-names` to pull in the 2.6 GB LC names
+dump, `--force` to rebuild a step whose output already exists). The manual
+walkthrough below is kept for understanding what each stage actually does
+and for debugging a run gone wrong, not because it's the recommended path
+day to day.
+
+### 1. Build the base (corpus-only) lexicon
+
+Scans your own MARC file once for every *cleanly*-encoded (no escape, no
+corruption) diacritic word, and indexes it by its flattened ASCII form --
+this is the "raw data" at its cheapest: nothing to download, just the
+corpus already on disk.
+
+```
+python tools/context_probe/lang_lexicon_probe.py build \
+    --corpus working/GTU_bibs.mrc --cache working/lexicon_GTU.pkl
+```
+
+~5 minutes on a 404,957-record / 527 MB file. Output is a pickle (not the
+final JSON yet): `{'glob': {flattened_key: Counter({nfd_variant: count})},
+'lang': {...by (lang008, key)...}, 'plain': Counter(...)}`.
+
+Coverage from this step alone is thin -- a corpus only knows the words it
+already spells correctly somewhere -- so step 2 below adds outside word
+lists to fill the gaps (matched only 127/752 occurrences for 0xB2 without
+them; see the "Outside lexicon" entry above for the measured per-source
+gain). Skip step 2 and go straight to step 3 if a thinner lexicon is
+acceptable.
+
+### 2. Retrieve and merge outside word lists (optional, but what the shipped lexicon uses)
+
+Two raw sources, cheapest first. **Licences aren't verified here -- check
+each before relying on it**, and keep every downloaded file out of the repo
+(`working/outside_lex/`, already gitignored).
+
+**a. Debian `wngerman` package** -- a plain German word list, no
+frequencies, GPL-2+. Download the `.deb` without installing it system-wide,
+then extract:
+
+```
+mkdir -p working/outside_lex && cd working/outside_lex
+apt-get download wngerman
+dpkg -x wngerman_*.deb extracted/
+# word list lands at extracted/usr/share/dict/ngerman (or similar -- check
+# the actual path dpkg -x produced before pointing merge at it)
+```
+
+**b. Library of Congress SKOS authority dumps** -- holds the hard cases a
+plain dictionary doesn't (German surnames/places, transliterated Sanskrit/
+Arabic names with their diacritics). Bulk download, free, no auth:
+
+```
+curl -O https://id.loc.gov/download/authorities/subjects.skosrdf.nt.gz   # ~100 MB
+curl -O https://id.loc.gov/download/authorities/names.skosrdf.nt.gz      # ~2.6 GB
+```
+
+The names dump is large enough that a `curl` started inside a subshell and
+left to run in the background can get killed when that shell exits while
+still reporting success to whatever's watching it -- run it as the tracked
+background command itself (not nested), resume an interrupted download with
+`curl -C -`, and verify the result with `gzip -t` before trusting it (this
+exact failure mode cost a session earlier -- see the 2026-10-07 "State at
+end of session" entry above).
+
+Convert each `.nt.gz` into a plain one-word-per-line file `merge` can read
+(streams the gzip, no need to decompress to disk first):
+
+```
+python tools/context_probe/lang_lexicon_probe.py lc-words \
+    --nt-gz working/outside_lex/subjects.skosrdf.nt.gz \
+    --out working/outside_lex/subjects_words.txt
+python tools/context_probe/lang_lexicon_probe.py lc-words \
+    --nt-gz working/outside_lex/names.skosrdf.nt.gz \
+    --out working/outside_lex/names_words.txt
+```
+
+Merge each word list into the lexicon in turn, chaining `--base` so each
+step builds on the last (word-list words have no frequency, so each
+occurrence counts as 1 -- `merge`'s `--weight` can raise that, but the
+shipped lexicon used the default):
+
+```
+python tools/context_probe/lang_lexicon_probe.py merge \
+    --base working/lexicon_GTU.pkl \
+    --wordlist working/outside_lex/extracted/usr/share/dict/ngerman \
+    --out working/lexicon_GTU_de.pkl
+python tools/context_probe/lang_lexicon_probe.py merge \
+    --base working/lexicon_GTU_de.pkl \
+    --wordlist working/outside_lex/subjects_words.txt \
+    --out working/lexicon_GTU_de_sub.pkl
+python tools/context_probe/lang_lexicon_probe.py merge \
+    --base working/lexicon_GTU_de_sub.pkl \
+    --wordlist working/outside_lex/names_words.txt \
+    --out working/lexicon_GTU_de_sub_names.pkl
+```
+
+(The suffixes `_de`/`_de_sub`/`_de_sub_names` on the pickle names aren't
+required by the tool -- they're just how the "State at end of session"
+entry above refers back to each stage; name the `--out` files however
+makes sense.) The fully-merged pickle is ~31 MB, ~2.9 s to load, ~487 MB
+resident -- fine as a one-off build artifact, which is exactly why step 3
+trims it down before `marc_repair.py` ever has to load it.
+
+### 3. Trim to the JSON file `marc_repair.py` actually loads
+
+`fix_marc8_b2_umlaut` only ever fills an a/o/u umlaut (that's all a bare
+0xB2 can stand for -- see the block comment above it in `marc_repair.py`),
+so the full pickle's other diacritic variants (acute, cedilla, etc., kept
+around for the unrelated 0xA5/0xA8/0xAE disambiguation probes) are dead
+weight here:
+
+```
+python tools/context_probe/lang_lexicon_probe.py trim \
+    --base working/lexicon_GTU_de_sub_names.pkl \
+    --out working/b2_lexicon.json
+```
+
+Output: JSON, `{flattened_key: {nfd_variant: count}}`, umlaut variants
+only -- 4.4 MB / ~127k keys for GTU. This is the file to hand to
+`--b2-lexicon`:
+
+```
+python marc_repair.py working/GTU_bibs.mrc --b2-lexicon working/b2_lexicon.json ...
+```
+
+Neither this JSON file nor any of the intermediate pickles/downloads are
+committed to the repo (all under the gitignored `working/` tree) -- re-run
+this whole HOWTO after a fresh checkout, or whenever the corpus changes
+enough that `build`'s corpus-only pass should be redone.
 
 ## HOWTO: re-run the 0xA4 disambiguation methodology for a new byte
 
