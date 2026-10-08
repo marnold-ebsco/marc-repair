@@ -8,6 +8,34 @@ current state and open items.
 
 ## Current state
 
+### OPEN -- README never documented the `--b2-lexicon` fixer (found + fixed 2026-10-08, uncommitted)
+
+**Status: fix written, not committed -- WSL was down for the whole session
+(even `wsl.exe -e echo hi` hung), so no `git` command could run. Working
+tree has exactly one modified file, `README.md`; commit it after a WSL
+restart.**
+
+User asked where the lexicon install instructions were, since they weren't
+in the README. They weren't anywhere in the README -- the `0xB2`
+lexicon-gated umlaut fixer (`fix_marc8_b2_umlaut`/`load_b2_lexicon`,
+`--b2-lexicon`/`--no-b2-lexicon`, on by default when `working/b2_lexicon.json`
+exists -- see `marc_repair.py` around line 2901) and the script that builds
+that file (`tools/context_probe/build_b2_lexicon.py`, which already
+orchestrates the corpus scan + `wngerman`/LC-SKOS downloads + merge + trim
+end to end) were both already fully implemented and merged to `main`; only
+the README mention was missing. Nothing in the code was missing or needed
+merging -- this was a documentation gap, not a functionality gap.
+
+Added to `README.md`:
+- A new row in the "What gets fixed automatically vs. flagged" table for
+  the `0xB2` bare-byte fix.
+- A new "0xB2 lexicon-gated umlaut repair" subsection (after "Smart-character
+  normalization") with the one-command build
+  (`python tools/context_probe/build_b2_lexicon.py --corpus ... --out
+  working/b2_lexicon.json`), the `--corpus-only`/`--include-lc-names`
+  options, and a pointer to this file's "HOWTO: build the `--b2-lexicon`
+  file" section for the full manual walkthrough and license notes.
+
 ### CLOSED -- oversized-field directory corruption (`dropped_oversized_field`), plus log header reformat
 
 **Status: shipped to both `context-language-disambiguation` (`3bfffe3`) and

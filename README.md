@@ -143,6 +143,7 @@ left in the main holdings output.
 | `$9` subfields (legacy/local stand-in for `$0`) | Rewritten to `$0` by default; `--no-normalize-subfield-9` to leave as-is. Logged as `normalized_subfield_9_to_0` (INFORMATIONAL — header + count only, never listed in full, since this can be nearly every record in a file that uses `$9`) |
 | Typographic "smart" Unicode punctuation (curly quotes, em/en dashes, ellipsis — see table below) | Normalized to plain ASCII by default; `--no-normalize-smart-characters` to leave as-is. Logged as `normalized_smart_characters` (INFORMATIONAL — header + count only, never listed in full, since this can be nearly every record in a file with typographic punctuation) |
 | Legacy MARC-8/ANSEL encoding | Converted to UTF-8 by default (requires `pymarc`; the run fails loudly if it's missing, rather than silently leaving non-UTF-8 output — install it, or pass `--no-transcode-marc8` if you explicitly want non-UTF-8 records left as-is). Logged as `transcoded_marc8` (INFORMATIONAL — header + count only, never listed in full, since this can be nearly every record in a legacy file) |
+| A bare `0xB2` byte in MARC-8 text (the whole German a/o/u-umlaut letter destroyed, not just its combining mark — e.g. "G" + junk + "cke" meaning "Göcke") | Filled in only when a lexicon word list agrees on which vowel it was (see [0xB2 lexicon-gated umlaut repair](#0xb2-lexicon-gated-umlaut-repair) below); on by default if `working/b2_lexicon.json` exists, `--b2-lexicon PATH` to point at a different file, `--no-b2-lexicon` to disable. A lexicon-backed guess, not a verified fix — logged in full as `fixed_marc8_b2_umlaut` under **FIXED/REQUIRES ATTENTION** |
 | A tag that isn't 3 numeric digits (e.g. `24A` from directory corruption) | Renamed to an unused tag in the 900-999 locally-defined range by default, picked from tags seen during the normal single pass (no extra full pass — only the rare record needing this gets a second, targeted look afterward); logged as `invalid_tag` (INFORMATIONAL). If every 900-999 tag is already taken elsewhere in the file, there's nowhere left to rename to — the whole field is removed instead (FOLIO can't load a non-numeric tag either way), via a full second pass over the output file since removal changes the record's byte length; logged in full as `unfixed_non_numeric_tag` under **FIXED/REQUIRES ATTENTION**, since real field content is discarded. `--no-fix-invalid-tags` skips the rename attempt entirely, leaving the tag untouched instead of removed (also logged as `unfixed_non_numeric_tag`) — named "unfixed" because neither path actually gives the tag a valid replacement |
 | A URL subfield with a literally duplicated proxy prefix (e.g. an ezproxy wrapper repeated twice) | Always detected and logged in full as `doubled_proxy_url` (NEEDS REVIEW), never auto-fixed — no safe correction to guess |
 | Duplicate record identifiers (same `001`, or `907$a` if it looks like a Sierra bib number, on more than one record) | Always detected and logged (DUPLICATE RECORDS), never auto-fixed — no safe correction to guess |
@@ -189,6 +190,42 @@ rather than hardcoded on with no escape. Logged as
 `normalized_smart_characters` under the INFORMATIONAL section (see
 below) since it changes real content via a fixed substitution table
 rather than reconstructing the record's own original data.
+
+### 0xB2 lexicon-gated umlaut repair
+
+A bare `0xB2` byte in MARC-8 text doesn't stand for a combining mark like
+the other overloaded bytes — the whole German umlaut letter (ä/ö/ü) was
+destroyed, so there's nothing left in the byte or the letter before it to
+say which vowel it was. `marc_repair.py` only fills the gap when a word
+list (the "lexicon") backs one vowel with enough support and a clear
+majority, and the record shows German evidence (008/041); otherwise the
+word is left alone. This is opt-in data, not code you need to install —
+`marc_repair.py` runs fine without it, just without this one fix.
+
+To build the lexicon file, run the orchestration script once:
+
+```bash
+python tools/context_probe/build_b2_lexicon.py \
+    --corpus working/GTU_bibs.mrc --out working/b2_lexicon.json
+```
+
+This scans your own corpus for cleanly-encoded diacritic words, then pulls
+in two outside sources for coverage a single corpus can't provide on its
+own: the Debian `wngerman` word list and the Library of Congress SKOS
+subject-authority dump (downloaded via `apt-get download`/`curl`, not
+installed system-wide). Add `--corpus-only` to skip those downloads
+entirely (thinner coverage, nothing to fetch), or `--include-lc-names` to
+also pull in the much larger (~2.6 GB) LC names dump. Every intermediate
+file lands under the gitignored `working/` tree and is never committed —
+the licenses on the outside sources haven't been verified for
+redistribution, only for this kind of local, non-distributed use (see
+`tools/context_probe/build_b2_lexicon.py`'s docstring and `HANDOFF.md`'s
+"HOWTO: build the `--b2-lexicon` file" for the full manual walkthrough and
+license notes).
+
+Once `working/b2_lexicon.json` exists, `marc_repair.py` picks it up
+automatically; no flag needed unless you want a different path
+(`--b2-lexicon PATH`) or want it off (`--no-b2-lexicon`).
 
 ### Logging
 
