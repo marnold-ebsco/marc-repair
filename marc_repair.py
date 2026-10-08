@@ -156,6 +156,7 @@ import re
 import sys
 import textwrap
 import time
+import unicodedata
 from contextlib import contextmanager, redirect_stderr
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
@@ -2897,6 +2898,160 @@ def fix_marc8_diacritic_escapes(parsed: ParsedRecord) -> list[str]:
     return details
 
 
+# --- 0xB2 (destroyed umlaut vowel), lexicon-gated ---------------------
+#
+# Unlike every other bare byte above, 0xB2 doesn't stand for a combining
+# mark: the whole German a/o/u-umlaut letter was destroyed, escape junk
+# + 0xB2 sit where it was ("G" + junk + "cke" is "Göcke"). Which vowel
+# it was can't be told from the byte or the letter before it, so it is
+# only filled when a word list (`--b2-lexicon`, built by
+# tools/context_probe/lang_lexicon_probe.py `trim`) agrees: the gap is
+# filled with each of a/o/u, and the word is rewritten only when the
+# winning vowel has enough lexicon support, a clear majority, and the
+# word is long enough (short fragments such as "gr_" were the bad fills).
+# The record must also show German evidence (008/041). The fill is a
+# lexicon-backed guess, not a verified fix -- it is logged per word as
+# `fixed_marc8_b2_umlaut`. On by default when a lexicon file exists at
+# DEFAULT_B2_LEXICON_PATH (working/b2_lexicon.json next to this script);
+# --b2-lexicon PATH points at a different file, --no-b2-lexicon disables it.
+# Measured on the 396 GTU records holding 0xB2: see HANDOFF.md.
+_B2_MARKER = r"(?:\x1b(?!\()[^\x1b\xb2]{1,2})+\xb2"
+_B2_MARKER_RE = re.compile(_B2_MARKER)
+_B2_WORD_RE = re.compile(r"(?:[A-Za-z]|" + _B2_MARKER + r")+")
+_B2_GAP = "\x00"
+_B2_VOWELS = "aou"
+_B2_ANSEL_DIAERESIS = "\xe8"
+_B2_MIN_LENGTH = 4
+_B2_MIN_SUPPORT = 2
+_B2_MIN_CONFIDENCE = 0.8
+_B2_MAX_GAPS = 2
+
+# Default location the 0xB2 lexicon is expected at when --b2-lexicon isn't
+# given explicitly (same place tools/context_probe/build_b2_lexicon.py writes
+# it by default). Resolved relative to this script, not the cwd, so it's
+# found the same way no matter where marc_repair.py is invoked from.
+DEFAULT_B2_LEXICON_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "working", "b2_lexicon.json"
+)
+
+
+def load_b2_lexicon(path: str) -> dict[str, dict[str, int]]:
+    """Load the JSON file written by `lang_lexicon_probe.py trim`:
+    {flattened lowercase key: {NFD variant: count}}."""
+    with open(path, encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+def _b2_record_is_german(parsed: ParsedRecord) -> bool:
+    for f in parsed.fields:
+        if f.tag == "008" and f.is_control() and (f.content or "")[35:38] == "ger":
+            return True
+        if f.tag == "041" and not f.is_control():
+            if any(code == "a" and data and "ger" in data for code, data in f.subfields):
+                return True
+    return False
+
+
+def _b2_resolve_word(word: str, lexicon: dict[str, dict[str, int]]) -> tuple[str, ...] | None:
+    """-> the winning vowel per gap in `word` (lowercase, GAP chars), or
+    None if the lexicon doesn't back one with enough support/confidence."""
+    gaps = [i for i, c in enumerate(word) if c == _B2_GAP]
+    if not gaps or len(gaps) > _B2_MAX_GAPS or len(word) < _B2_MIN_LENGTH:
+        return None
+    fills = [([], word)]
+    for _ in gaps:
+        fills = [(vs + [v], w.replace(_B2_GAP, v, 1)) for vs, w in fills for v in _B2_VOWELS]
+    votes: dict[tuple[str, ...], int] = {}
+    for vowels, filled in fills:
+        for variant, count in lexicon.get(filled, {}).items():
+            marked = set()
+            base = -1
+            for c in unicodedata.normalize("NFD", variant):
+                if unicodedata.category(c) == "Mn":
+                    if c == "̈":
+                        marked.add(base)
+                else:
+                    base += 1
+            if all(g in marked for g in gaps):
+                votes[tuple(vowels)] = votes.get(tuple(vowels), 0) + count
+    total = sum(votes.values())
+    if total < _B2_MIN_SUPPORT:
+        return None
+    pick, top = max(votes.items(), key=lambda kv: kv[1])
+    if top / total < _B2_MIN_CONFIDENCE:
+        return None
+    return pick
+
+
+def _b2_fill_text(text: str, lexicon: dict[str, dict[str, int]]) -> tuple[str, list[str]]:
+    """Fill every lexicon-confirmed 0xB2 gap in `text`; -> (new text,
+    "before -> after" per word)."""
+    out: list[str] = []
+    changes: list[str] = []
+    pos = 0
+    for wm in _B2_WORD_RE.finditer(text):
+        word = wm.group()
+        if "\xb2" not in word:
+            continue
+        marked = _B2_MARKER_RE.sub(_B2_GAP, word)
+        vowels = _b2_resolve_word(marked.lower(), lexicon)
+        if vowels is None:
+            continue
+        others = [c for c in marked if c != _B2_GAP]
+        all_caps = len(others) > 0 and all(c.isupper() for c in others)
+        preceding = text[:wm.start()].rstrip(" ")
+        sentence_start = (text[wm.start() - 1:wm.start()] != "-" and (
+            not preceding or not preceding[-1].isalpha()
+            or preceding.split(" ")[-1][:1].isupper()))
+        it = iter(vowels)
+        pieces = []
+        idx = 0
+        for piece in re.split("(" + _B2_MARKER + ")", word):
+            if piece.endswith("\xb2") and piece.startswith("\x1b"):
+                v = next(it)
+                upper = all_caps or (idx == 0 and sentence_start)
+                pieces.append(_B2_ANSEL_DIAERESIS + (v.upper() if upper else v))
+                idx += 1
+            else:
+                pieces.append(piece)
+                idx += len(piece)
+        new_word = "".join(pieces)
+        out.append(text[pos:wm.start()])
+        out.append(new_word)
+        pos = wm.end()
+        changes.append(f"{marked.replace(_B2_GAP, '_')} -> {new_word.replace(_B2_ANSEL_DIAERESIS, '')}")
+    out.append(text[pos:])
+    result = "".join(out)
+    return result, changes
+
+
+def fix_marc8_b2_umlaut(parsed: ParsedRecord, lexicon: dict[str, dict[str, int]]) -> list[str]:
+    """Fill a destroyed German umlaut vowel (bare 0xB2 behind escape
+    junk) with the ANSEL diaeresis + the vowel the lexicon backs. Only
+    for records with German evidence, only for confirmed words; raw
+    MARC-8 out, `transcode_marc8_to_utf8` makes it UTF-8 afterwards.
+    Skipped for UTF-8-declared records. See the block comment above."""
+    if parsed.leader[9:10] == UNICODE_ENCODING_BYTE or not _b2_record_is_german(parsed):
+        return []
+    details = []
+    for f in parsed.fields:
+        if f.is_control():
+            continue
+        new_subfields = []
+        changed = []
+        for code, data in f.subfields:
+            if data and "\xb2" in data:
+                fixed, changes = _b2_fill_text(data, lexicon)
+                if changes:
+                    changed.append(f"${code}: " + "; ".join(changes))
+                    data = fixed
+            new_subfields.append((code, data))
+        if changed:
+            f.subfields = new_subfields
+            details.append(f"filled lost umlaut vowel in ={f.tag} " + " | ".join(changed))
+    return details
+
+
 def find_suspect_marc8_escapes(
     parsed: ParsedRecord,
     corpus_index: "_Marc8CorpusIndex | None" = None,
@@ -5378,6 +5533,7 @@ _INFORMATIONAL = {
     "remapped_999_to_945",
     "oversized_sentinel_fixed",
     "fixed_marc8_diacritic",
+    "fixed_marc8_b2_umlaut",
 }
 
 #: NEEDS REVIEW: a detect-only finding that's always listed in full
@@ -5574,6 +5730,10 @@ _CHECK_DESCRIPTIONS: dict[str, str] = {
     "invalid_bibliographic_level": "Leader byte 7 (bibliographic level) held a value outside MARC21's defined "
     "set -- defaulted to 'm' (Monograph/Item).",
     "fixed_mojibake": 'Double-encoded UTF-8 ("mojibake") was corrected.',
+    "fixed_marc8_b2_umlaut": "A German umlaut vowel destroyed by escape junk + byte 0xB2 was filled in "
+    'because a word list confirmed the word (e.g. "G_cke" -> "Göcke"). A '
+    "lexicon-backed guess, not verified against the source record; on by "
+    "default when a lexicon file is found, off with --no-b2-lexicon.",
     "fixed_marc8_diacritic": "A MARC-8 diacritic mark was lost to either a bogus script-switching escape "
     'sequence around a confirmed-by-volume payload byte (e.g. "Haure" + '
     '<escape> + "au" -> "Hauréau") or a bare, un-escaped byte standing in for '
@@ -5664,6 +5824,7 @@ _CHECK_DATA_LOSS: dict[str, str] = {
     "invalid_indicator_value": "NO DATA LOSS",
     "invalid_bibliographic_level": "NO DATA LOSS",
     "fixed_mojibake": "NO DATA LOSS",
+    "fixed_marc8_b2_umlaut": "NO DATA LOSS",
     "fixed_marc8_diacritic": "NO DATA LOSS",
     "remapped_999_to_945": "NO DATA LOSS",
     "oversized_sentinel_fixed": "NO DATA LOSS",
@@ -6811,6 +6972,26 @@ def main(argv: list[str] | None = None) -> int:
         "double-encoded",
     )
     parser.add_argument(
+        "--b2-lexicon",
+        metavar="PATH",
+        default=None,
+        help="JSON word list built by tools/context_probe/lang_lexicon_probe.py "
+        "`trim`; enables filling a destroyed German umlaut vowel (escape junk "
+        "+ byte 0xB2) in records with German 008/041 evidence, only for words "
+        "the list confirms (logged as fixed_marc8_b2_umlaut). A "
+        "lexicon-backed guess, not a verified fix. ON BY DEFAULT if "
+        f"{DEFAULT_B2_LEXICON_PATH} exists; pass a PATH here to use a "
+        "different lexicon file, or --no-b2-lexicon to turn it off",
+    )
+    parser.add_argument(
+        "--no-b2-lexicon",
+        dest="no_b2_lexicon",
+        action="store_true",
+        default=False,
+        help="force the 0xB2 lexicon-gated umlaut fixer OFF, even if "
+        f"{DEFAULT_B2_LEXICON_PATH} exists or --b2-lexicon was given",
+    )
+    parser.add_argument(
         "--no-fix-marc8-diacritic-escapes",
         dest="fix_marc8_diacritic_escapes",
         action="store_false",
@@ -7284,6 +7465,31 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 1
 
+    if args.no_b2_lexicon:
+        b2_lexicon_path = None
+    elif args.b2_lexicon is not None:
+        b2_lexicon_path = args.b2_lexicon
+    elif os.path.isfile(DEFAULT_B2_LEXICON_PATH):
+        b2_lexicon_path = DEFAULT_B2_LEXICON_PATH
+    else:
+        b2_lexicon_path = None
+
+    _banner = "*" * 78
+    print(_banner, file=sys.stderr)
+    if b2_lexicon_path:
+        print(
+            f"*** 0xB2 LEXICON MODE: ON  -- using {b2_lexicon_path} "
+            "(--no-b2-lexicon to disable)",
+            file=sys.stderr,
+        )
+    else:
+        print(
+            "*** 0xB2 LEXICON MODE: OFF -- German umlaut-vowel guessing "
+            "disabled (--b2-lexicon PATH to enable)",
+            file=sys.stderr,
+        )
+    print(_banner, file=sys.stderr)
+
     start_time = time.perf_counter()
     run_started = datetime.now(timezone.utc)
 
@@ -7321,6 +7527,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.marc8_corpus_lookup
         else ({}, {})
     )
+    b2_lexicon = load_b2_lexicon(b2_lexicon_path) if b2_lexicon_path else None
     mrk_path = None
     if args.mrk is not None:
         mrk_path = args.mrk or os.path.splitext(out_path)[0] + ".mrk"
@@ -7447,6 +7654,10 @@ def main(argv: list[str] | None = None) -> int:
                     rec_id = record_identifier(parsed)
                     for detail in fix_marc8_diacritic_escapes(parsed):
                         log("fixed_marc8_diacritic", True, i, rec_id, detail)
+                if b2_lexicon is not None:
+                    rec_id = record_identifier(parsed)
+                    for detail in fix_marc8_b2_umlaut(parsed, b2_lexicon):
+                        log("fixed_marc8_b2_umlaut", True, i, rec_id, detail)
                 for category, detail in find_suspect_marc8_escapes(
                     parsed, corpus_index=marc8_corpus_index,
                 ):
@@ -7708,6 +7919,8 @@ def main(argv: list[str] | None = None) -> int:
         active_categories.add("fixed_mojibake")
     if args.fix_marc8_diacritic_escapes:
         active_categories.add("fixed_marc8_diacritic")
+    if b2_lexicon_path:
+        active_categories.add("fixed_marc8_b2_umlaut")
     if args.fix_invalid_leader_bytes:
         active_categories.add("leader_byte_defaulted")
     if args.remap_999_to_945:

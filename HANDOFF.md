@@ -8,6 +8,501 @@ current state and open items.
 
 ## Current state
 
+### CLOSED -- oversized-field directory corruption (`dropped_oversized_field`), plus log header reformat
+
+**Status: shipped to both `context-language-disambiguation` (`3bfffe3`) and
+`main` (`db98708`, cherry-picked -- see below for why not a full merge).
+`pytest` clean on both (430 passed/1 skipped on the branch, 419 passed/1
+skipped on `main` -- the gap is the branch's b2-lexicon-only tests, which
+don't exist on `main`). Full-corpus re-run against `working/GTU_bibs.mrc`
+confirms the fix and shows no regressions.**
+
+**The bug report.** User found `working/GTU_bibs.mrc`'s 001 `1456853630`
+(`.b1929265x`) came out of every prior repaired file (`GTU_bibs_repaired.mrc`,
+`_sigfix.mrc`, `_0xa4fix.mrc`) truncated right after its first `505` --
+everything past it (the rest of the `505`, `546`, `520`, every `650`/`600`,
+all five `700`s) was gone from the main output. Isolating the record (see
+`working/single_1456853630*.mrc`) and running it alone reproduced this: the
+tool read it as **2 records**, wrote a 7152-byte truncated one to the main
+output, and silently shunted the real remainder into the `_error.mrc` file
+tagged `UNFIXABLE`, as if it were an unrelated, unparseable fragment.
+
+**Root cause (upstream data, not this tool).** The record's first `505`
+(Hebrew TOC note) is genuinely 10,032 bytes -- bloated by ~900 repeats of a
+malformed per-character MARC-8 escape pattern (`\x1bb9\x1bs...\x1b(XY\x1b(B`,
+apparently from whatever wrapped nearly every individual Hebrew character in
+its own spurious subscript/superscript escape switch instead of one escape
+around the whole run). ISO 2709's directory length field is only 4 digits
+(max 9999), so this field's real length can't be declared at all -- whatever
+produced this GTU export wrote a truncated/wrapped length (`1003`) instead.
+`parse_directory`'s own cumulative-offset sanity check (`start != cum`,
+`marc_repair.py` around line 462 before this fix) caught the lie at the
+*next* entry (whose own declared `start` reflects the true byte layout) and,
+per its existing (correct, for other corruption shapes) design, gave up and
+kept only the entries parsed so far -- silently discarding the other 20 real
+directory entries and everything they pointed to. `_read_intact_at` then
+walked real `\x1e` delimiters for just those surviving entries, happily
+swallowing the entire 10,032-byte blob as "the field's content" (it never
+cross-checked that against the directory's declared length), and returned a
+"successfully parsed" record that stopped right there.
+
+**The fix.** Two changes, both in `marc_repair.py`:
+
+1. `parse_directory`: when the cumulative check fails, before giving up it
+   now checks whether the gap is *fully explained* by the previous entry
+   actually being longer than its declared length -- using the next entry's
+   own (untouched) `start` as ground truth: `recovered_length =
+   entries[-1].length + (start - cum)`. If `recovered_length > 9999` (the
+   signature of this exact defect -- a real, uncorrupted entry can never
+   need more than 9999), it patches that one entry's length in-memory
+   (even past 4-digit range, fine in a Python int) and keeps parsing instead
+   of abandoning the rest of the directory. Anything else (recovered length
+   <= 9999, or no entries yet) falls through to the old `break` --
+   unrelated corruption shapes are untouched.
+2. `_read_intact_at`: any directory entry with `length > 9999` (only
+   reachable via #1's recovery) is dropped rather than assembled into a
+   field -- there's no valid way to declare its real length in a rebuilt
+   directory either, so keeping it would just reproduce the same problem on
+   write. Recorded on a new `ParsedRecord.dropped_oversized_fields` list
+   (tag, true length, 200-char preview), mirroring the existing
+   `indicator_fixes`/`reattached_orphaned_fields` pattern, and logged by both
+   call sites (`repair_holdings_records` and `main`) under a new
+   **`dropped_oversized_field`** category (FIXED/REQUIRES ATTENTION, DATA
+   LOSS, always-full) -- so the one field is dropped and *logged*, but the
+   rest of the record (every field after it) is recovered instead of lost.
+
+**Log header reformat (separate, done same session, same commit).** Every
+category's header in the log file now has a consistent 4-line shape:
+section/category line, then the plain description (never itself stating a
+data-loss call), then that call **in isolation on its own line** (`DATA
+LOSS` / `POSSIBLE DATA LOSS` / `NO DATA LOSS`, no punctuation), then the
+record/instance count. The call used to be embedded inside the (sometimes
+multi-line-wrapped) description text, which read inconsistently once a
+description ran long. New `_CHECK_DATA_LOSS: dict[str, str]` dict (one entry
+per category, next to the existing `_CHECK_DESCRIPTIONS`) carries the call;
+`_write_description_header` no longer appends a closing `" ==="` suffix to
+the description's own lines, since the data-loss line now closes the block.
+Every one of `_CHECK_DESCRIPTIONS`'s 56 (`main`: 55, see below) entries had
+its data-loss phrase mechanically extracted and moved -- verified by
+round-tripping the generated dict text back through `exec()` and diffing
+every value against the intended text before writing, rather than eyeballing
+56 hand-edited strings. Two entries needed hand-handling: `unfixable` and
+`suspect_hex_encoded_marc8` had explanatory text *after* the marker
+(`"DATA LOSS. These records cannot be loaded."`) that got folded back into
+the main description; `holdings_852_b_suspect_content` embeds a live
+f-string reference to `DEFAULT_852_LOCATION_CONTENT` rather than a baked-in
+literal, preserved by hand rather than flattened.
+
+**Why `main` got a cherry-pick, not a full merge.** Asked the user; chose
+cherry-pick. `context-language-disambiguation` is 11 commits ahead of `main`
+with unrelated in-progress work (the 0xB2-lexicon fixer, language/context
+disambiguation research, HANDOFF notes) -- merging the whole branch would
+have pulled all of that into `main` too. The cherry-pick hit one merge
+conflict, entirely inside the `_CHECK_DESCRIPTIONS`/`_CHECK_DATA_LOSS`
+dict-literal region (everything else -- `parse_directory`, `_read_intact_at`,
+`ParsedRecord`, the category-registry sets, both log call sites --
+applied cleanly): the branch's pre-fix state already had one extra category
+(`fixed_marc8_b2_umlaut`, from the unrelated 0xB2-lexicon work, not yet on
+`main`) that `main` doesn't have at all (`main` has no `b2_lexicon`/
+`fix_marc8_b2_umlaut` code whatsoever). Resolved by hand: `main`'s version of
+both new dicts has 55 entries (`dropped_oversized_field` added, no
+`fixed_marc8_b2_umlaut`), everything else byte-identical to the branch's.
+
+**Verification.**
+- Isolated the record into `working/single_1456853630.mrc` (reproduces with
+  1 record in, 2 "records" read, before the fix).
+- After the fix: 1 record in, 1 record out, no `_error.mrc`; 41 fields
+  survive (was: 1 truncated field in the main output, rest orphaned);
+  `dropped_oversized_field` logged once with the record's own identifier
+  (`.b1929265x`), true length (10032), and a content preview.
+- Full-corpus re-run, `working/GTU_bibs.mrc` (404,956 records, 527.5MB,
+  ~3m10s): `dropped_oversized_field` fires **exactly once** across the
+  whole file -- this record is the only one with this defect. Record-count
+  comparison: every prior run (`GTU_bibs_repaired.mrc`/`_sigfix.mrc`/
+  `_0xa4fix.mrc`) wrote 404,956 to the main output (including the 1
+  truncated record) *plus* 1 to the error file -- 404,957 record-slots
+  for 404,956 real source records, because one record was double-counted
+  across two files. The new run (`working/GTU_bibs_repaired_final.mrc`)
+  writes exactly 404,956 to the main output and produces no error file at
+  all -- 1:1 with the input, nothing split or dropped to a side file.
+- `main`'s cherry-picked version produces byte-identical `dropped_oversized_
+  field` behavior on the same isolated record (re-ran the single-record
+  test against `main` after the cherry-pick, confirmed same log output
+  modulo the absent b2-lexicon-only category).
+
+### Experiment: language/context to disambiguate overloaded bytes (branch `context-language-disambiguation`)
+
+**Status: research only. Nothing in `marc_repair.py` changed.** Scripts are in
+`tools/context_probe/` (flake8-clean except the user-supplied
+`polyglot_detector_marc.py`, left as received). Run from the repo root, e.g.
+`python tools/context_probe/a5_context_probe.py --ladder`. Data paths are
+`working/...` (gitignored), so the per-byte sample files and
+`working/lexicon_GTU.pkl` must exist; build the pickle once with
+`python tools/context_probe/lang_lexicon_probe.py build` (~5 min on
+`working/GTU_bibs.mrc`). Per the standing instruction, the full corpus was
+not re-run for any of the byte checks -- only the per-byte sample files.
+
+**The question.** Can the field/record's *language* (the user's polyglot
+detector, plus 008/041) decide which mark an overloaded bare byte should
+become (e.g. German -> umlaut), instead of the before-letter table alone?
+
+**What was built** (all in `tools/context_probe/`):
+
+- `polyglot_field_probe.py` -- for every occurrence of 0xA4/A5/A6/A8/AE/B2/B3
+  run the field text through the unmodified detector and tabulate detected
+  language vs. the mark the current rule applies. First-pass signal check.
+- `lang_lexicon_probe.py` -- an earlier, *rejected* approach (a lexicon of
+  cleanly-encoded diacritic words from the corpus). Still used as a data
+  source by `b2_context_probe.py`. Do not expect it to resolve Sanskrit/
+  Arabic: those words never appear cleanly anywhere in this corpus (matched
+  2/292 for 0xA5, 1/135 for 0xAE).
+- `a5_context_probe.py` -- `ContextDetector` (subclass of the user's
+  `MARCPolyglotDetector`) adding English / Sanskrit-IAST / Arabic / Greek /
+  French transliteration profiles, scoring record text + the garbled word
+  itself (x4) + the 008/041 prior, then applying a language -> (mark, letters,
+  how far back) table. Compares against the current rule per occurrence.
+- `b2_context_probe.py` / `b2_gold_check.py` -- 0xB2 (whole destroyed vowel):
+  lexicon vowel-fill (a/o/u in the gap) and hand-labelled-gold accuracy check.
+
+**Findings, by finding (not by script):**
+
+1. **Detector caveats.** The unmodified detector has no English profile (plain
+   English scores as Chinese Pinyin / Japanese Romaji), its French profile's
+   4+ letter "trigrams" can never match a 3-letter window, and short MARC
+   fields give 0.4-0.7 confidence. It is only trustworthy when it says
+   German. Language alone cannot pick a mark: 43 German-detected 0xAE fields
+   are confirmed *dot below* (Arabic/Akkadian words inside German records),
+   so any table must be per (byte, language), never per language.
+2. **Confidence must be top-vs-runner-up among the transliteration classes,
+   with English excluded as a competitor.** English score grows with record
+   length, and "English record containing a Sanskrit word" is the normal
+   case. Share-of-total confidence diluted every clear winner.
+3. **The garbled word itself must carry evidence before any mark is applied.**
+   Record topic alone produced false `s` -> ṣ fixes: in `.b14669675` the
+   junk is a mangled *apostrophe* in English prose ("psalm's place"), not a
+   dot below. Added a word-evidence gate (`MIN_WORD_EVIDENCE`) and the same
+   gate lets a Sanskrit/Arabic word beat a French/Greek *blocking* record.
+
+**0xA5 result** (292 occurrences, `--min-confidence 0.6`, hand-checked):
+244 existing fixes unchanged; **14 new fixes** (11 Sanskrit, all correctly
+on the `r` -- smṛti, saṃskṛti, kṛtaḥ, prabhṛta; 2 Muḥammad; 1 *partial*
+"aḍḥawiyya" where the real word needs a second mark on `h`); **7 existing
+fixes blocked, all genuine false fixes in current output** -- French
+"r<byte>le" (rôle, 4), "jr<byte>me" (Jérôme, 2) and Greek
+"Rōmaiokatholikōn" are being turned into "ṛ" today. 27 unresolved (mostly
+Greek, where the byte is a destroyed long vowel, correctly left alone).
+Dial: at 0.8 only 1 new fix; 0.7 -> 2; 0.6 -> 14. The Sanskrit/French
+profiles were tuned on these same 292 records, so expect retuning.
+**Assessment: 0xA5 alone is not worth building** (~21 occurrences changed
+across a ~400,000-record corpus). The 7 false fixes are the real find; a
+cheap 008/041 French/Greek `r` skip would remove them but would also lose
+legitimate Sanskrit fixes in French-language records (e.g. Bhartṛhari,
+`.b11073056`, `fre`) unless the word-level check is kept.
+
+**0xB2 result** (752 gapped words in `GTU_bibs_0xB2_sample.mrc`, 602 with a
+single gap). Language *does* help here and the volume is an order of
+magnitude larger than 0xA5. Measured against hand-labelled gold
+(`b2_gold_check.py`; **labels are the assistant's German knowledge, no word
+list exists on this machine; ~33 occurrences left UNSURE, 27 unlabelled, so
+read the percentages as estimates, probably optimistic**):
+
+- Of 340 occurrences labelled German: **268 (78.8%) are an o-umlaut that
+  "fill the gap with ö" gets exactly right**; 2 are ü (Bühler, Hübsch); **70
+  (20.6%) are DISPLACED** -- the vowel belongs one position over from the gap
+  (e.g. `relig_ise` is "religiöse", `Rme_r` "Römer", `Gt_tingen` "Göttingen"),
+  so filling the gap gives garbage; that needs a different mechanism.
+  Among the 270 clean words, ö is right 99.3% (no ä seen among labelled).
+- **Gating on 008=`ger` alone is not enough:** 25/342 (7.3%) of single-gap
+  words in `ger` records are not German at all (Tamil n-macron, Arabic,
+  etc.), and 43 real German occurrences sit in *non-ger* records
+  (Göttingen, Schröter, Jörg, Grözinger...) -- the same word-evidence gate
+  as 0xA5 is required, not just the language code.
+- The corpus lexicon vowel-fill accepted 127 words at full confidence (124 ö,
+  3 a) but **4 were contradicted by gold** ("at_" -> "atä" and "R_m" ->
+  "röm", both in English records), and "mächte" is ambiguous with "möchte".
+  Lexicon coverage is also thin ("religiöse", "gehört", "Königsrahmen" absent).
+  So even the lexicon tier needs the language/word gate.
+
+**Cost of building this properly:** roughly 250k-450k tokens to ship 0xA5 +
+0xB2 in `marc_repair.py` (the fixer works one subfield at a time; this needs
+whole-record text + 008/041 plumbed through), then ~50k-100k per additional
+byte. Roughly half the machinery (scoring, confidence dial, word-evidence
+gate, per-language blocking, probe-then-compare workflow) is generic;
+profiles, mark rules and the hand-check are per byte.
+
+**Recommendation (assistant's, not yet approved by the user): build 0xB2
+only, gated, defaulting to off; skip 0xA5 for now.**
+
+- **0xB2 tiers:** (1) *gate* -- apply nothing unless the garbled word itself
+  carries German evidence (008=`ger` alone is not enough: 7.3% non-German
+  inside `ger` records, 43 real German words in non-`ger` records); (2) a
+  lexicon-confirmed vowel; (3) otherwise default to ö (~99% on the clean-gap
+  words I labelled); (4) anything else left for `suspect_marc8_escape`
+  review. Behind a confidence setting, default off. Reach: roughly a third
+  of all 0xB2 occurrences, all unfixed today. Estimated 150k-250k tokens.
+- **Skip 0xA5:** ~21 occurrences changed in ~400,000 records, and its
+  profiles were tuned on those same records. If 0xB2 is built, the
+  French/Greek block (removing the 7 false `r` -> ṛ fixes) comes almost for
+  free -- add it then, not before.
+- **Park the DISPLACED shape, don't forget it:** ~20% of German 0xB2, plus
+  0xA5's Sanskrit `t`/`a` leftovers and 0xAE's Ninḥursag. Language-independent
+  and needs its own design (move the mark, don't fill the gap). Take it up
+  after 0xB2 ships.
+- **Before shipping:** (a) run the on/off transcoded-output diff on every
+  affected record -- not done for anything in this experiment; (b) have a
+  German reader check the gold list in `b2_gold_check.py` -- the labels are
+  the weakest link, treat the 99% as an estimate until then.
+- **Stop condition:** if the diff shows the decoder-state regression on more
+  than a few records, drop it; `.b18157713` already shows it can make a fix
+  worse than doing nothing.
+
+**Open decision for the user:** start on 0xB2, or merge this research branch
+first and decide later.
+
+**Outside lexicon: DONE as research (2026-10-07). Result and recommendation.**
+Built from `wngerman` (Debian, GPL-2+; `apt-get download` + `dpkg -x`, not
+installed) + LC subjects + LC names (`id.loc.gov/download/authorities/
+{subjects,names}.skosrdf.nt.gz`, 100 MB / 2.6 GB). All data lives in
+`working/outside_lex/` (gitignored, not in the repo). Reproduce, from the repo
+root in the venv: `lang_lexicon_probe.py lc-words --nt-gz <file> --out
+<words.txt>` for each LC file, then `lang_lexicon_probe.py merge --base
+working/lexicon_GTU.pkl --wordlist <ngerman|words.txt> --out <new.pkl>`
+(chain `--base` to stack lists), then `b2_context_probe.py --cache <new.pkl>
+--min-support N --min-length L` and `b2_gold_check.py`. Word-list words count
+1 each, so `--min-support 2` throws most of them away unless two sources agree.
+
+Records (of 396 with 0xB2) that would leave the human-review list, i.e. every
+0xB2 occurrence in them is in an accepted word; gold = assistant's labels, no
+German reader:
+
+| lexicon | support 2 | support 1 |
+|---|---|---|
+| corpus only | 48 | 58 |
+| + wngerman | 52 | 93 |
+| + wngerman + LC subjects | 56 | 95 |
+| + wngerman + LC subjects + LC names | 76 | 102 (12 gold-contradicted) |
+
+With the full lexicon, `--min-length 4 --min-support 2` clears **76 records
+with 0 gold contradictions** (length counts the gap; short fragments such as
+`gr_` -> `grü` were the bad fills). Support 1 + length 4: 96 cleared, 2
+contradicted (`h_al` -> `hääl`, Estonian). Surname ambiguity (`K_hler`,
+`B_hler`) is unresolvable by any lexicon. Cost if built: lookups ~0.05 us
+(negligible); full lexicon is a 31 MB pickle, 2.9 s load, ~487 MB RSS, so a
+shipped version needs a trimmed file, and it should load only when the feature
+is on. Record-level language detection cost is unmeasured.
+**Not built into `marc_repair.py`.** The user wants the ~76 fewer reviews but
+no German reader will check the fills, so the unverified-fill risk stands
+(cleared records are not reviewed afterwards). If built: German-evidence gate,
+length 4, support 2, default off, plus the on/off transcoded-output diff.
+
+**0xB2 fixer BUILT (default off) -- `fix_marc8_b2_umlaut` in `marc_repair.py`.**
+Enabled only by `--b2-lexicon PATH`; category `fixed_marc8_b2_umlaut`
+(INFORMATIONAL). Lexicon = `lang_lexicon_probe.py trim --base
+working/lexicon_GTU_de_sub_names.pkl --out working/b2_lexicon.json` (4.4 MB JSON
+of only the a/o/u-umlaut variants, 127k keys; not in the repo, source licences).
+Gates: record 008/041 says `ger`; word length >= 4 (gap counts); support >= 2;
+>= 80% agreement; <= 2 gaps. Output is ANSEL diaeresis + vowel, transcoded
+normally. Capital only at a sentence-ish word start (not after a hyphen) or in
+an all-caps word.
+
+**Build tool for `working/b2_lexicon.json`: `tools/context_probe/build_b2_lexicon.py`
+(added 2026-10-08).** Orchestrates the steps above end to end (`build` the
+corpus-only pickle, optionally fetch+merge `wngerman`/LC subjects/LC names,
+`trim` to the final JSON) instead of running each `lang_lexicon_probe.py`
+subcommand by hand; see the HOWTO below for usage. Every step is skipped if
+its output already exists (resumable after an interrupted LC-names download),
+and nothing it produces is committed -- same gitignored-`working/` reasoning
+as the hand-run version. Verified against the pickles already on disk from
+this session: re-running it with all three sources reproduced
+`working/b2_lexicon.json` byte-for-byte (126,870 keys).
+
+**Measured, 2026-10-08: per-source contribution to the lexicon, isolated.**
+The table above only tested sources added cumulatively in a fixed order
+(corpus -> +wngerman -> +wngerman+subjects -> +wngerman+subjects+names), so
+it couldn't show what LC alone (skipping `wngerman`, which is GPL-2+, unlike
+LC's US-government-work data) would buy. Using the word lists already cached
+from building the table above (no new downloads), ran
+`b2_context_probe.py --min-support 2 --min-length 4` against three lexicons
+directly (a different metric than the table's "records cleared" --
+`accept`-tier *occurrence* count, same script/settings across all three, so
+comparable to each other):
+
+| lexicon | accepted occurrences |
+|---|---|
+| corpus only | 123 |
+| + LC subjects + LC names (no wngerman) | 147 |
+| + wngerman too (full, as shipped) | 199 |
+
+**`wngerman` is the bigger of the two outside sources here (+52 over
+corpus-only), not the smaller one** -- LC alone only adds +24. This cuts
+against what the cumulative table above suggests (LC names looked like the
+dominant contributor there, going from 56 to 76 records). LC-only is a real
+option if the `wngerman` licence is a blocker (`build_b2_lexicon.py
+--no-wngerman`), but it leaves roughly a quarter of the currently-accepted
+guesses on the table, not a negligible slice. Not re-measured against the
+gold list (same "no German reader" caveat as everywhere else in this
+section) -- this only shows reach, not whether the extra `wngerman`-sourced
+accepts are correct.
+
+**The "no other escape junk left in the subfield" bail-out was dropped
+(2026-10-08, user's decision -- see "Effect of relaxing the German gate / junk
+rule" below).** It existed because the first version *did* trigger a
+decoder-state regression on 2 subfields (`=505` lost "mmigkeit", and `=520`):
+both were already corrupted elsewhere, and the fill changed what garbage
+appeared. Dropping it raises reach from 89 instances/74 records to **115
+instances/92 records** on `working/GTU_bibs_0xB2_sample.mrc` (396 records;
+measured directly from the edited code, not a monkeypatch estimate -- see
+below, the two numbers don't agree and the measured one is authoritative).
+**Re-checked 2026-10-08: no regression reproduces on this sample.** Diffed
+old-rule vs new-rule output for all 78 of the 586 `0xB2`-bearing subfields
+where dropping the rule actually changes the result (word count, stray
+`\x1b` bytes, and U+FFFD replacement chars as the regression signature) --
+zero flagged. Every length delta matches exactly the expected shrinkage from
+a successful vowel fill; no new garbage anywhere, including by eye in the
+three longest/most escape-tangled records (`.b1345665009`, LCCN 2022935593;
+`.b1305499147`, no LCCN on file; `.b1351360489`, LCCN 2022940559). The
+original `=505`/`=520` finding never recorded record IDs, only field tags and
+a word fragment ("mmigkeit"), so it can't be traced back directly -- either
+it was specific to an earlier, buggier prototype of the fill algorithm, or it
+lives in a record outside this 396-record sample. **Still no German reader**
+(see WON'T BE DONE above) to catch a bad fill that isn't a decoder-state
+regression (e.g. a wrong-but-plausible vowel) -- this re-check only rules out
+the specific garbling failure mode, not correctness in general.
+**Records fully cleared of 0xB2 (pre-drop baseline): 46**, not the research
+figure of 76: the German gate cost 16 (62 without it) and the junk rule cost
+the rest. The "fully cleared" count has not been recomputed since the junk
+rule was dropped. Tests: `TestFixMarc8B2Umlaut` updated for the new behavior,
+full suite 430 passed/1 skipped, flake8 (max-line 120) clean. Full-corpus run
+**not done**; labels are still mine, no German reader.
+
+**For the German reader (review sheet, 2026-10-07). WON'T BE DONE (2026-10-08)
+-- the user has no access to a German reader, and these are cataloged-materials
+snippets, not running prose, so there's no good substitute reviewer either.**
+Distinct words the 0xB2 fixer filled in `working/GTU_bibs_0xB2_sample.mrc` (53
+forms; 70 occurrences; full before/after with fields in `working/b2run/diff.txt`,
+gitignored; regenerate with the on/off run in the section above). The 99%
+gold-label accuracy therefore stays an estimate from the assistant's own German
+knowledge, never independently checked, and ships (if it ships) on that basis.
+
+Behörden, Bischöfliche, Bischöflichen, Böhmen, Erstveröffentlichungen, Erörterung, Fröhlich, Frömmigkeit, Förderung, Griechisch-römische, Göttingen, Göttlichem, Höhepunkt, Jörg, Könemann, Könige, Körper, Körperschaften, Lösung, Schöningh, Schöpfung, Sprichwörter, Strömungen, Tröndle, Töpelmann, Versöhnung, Veröffentlichungen, Völkern, befördern, bischöflichen, böhmische, böhmischen, deutsch-französische, eröffnen, eröffnet, gehören, gehört, göttliche, höchsten, können, könnte, nördlichen, persönlich, persönlichen, zeitgenössische, zeitgenössischen, zwölf, Öffentliche, öffentliche, öffentlichen, öffentlicher, ökumenische, ökumenischen
+
+**Known weak spot (stands either way):** surnames like K_hler/B_hler are not
+resolvable by any lexicon.
+
+**Tomorrow:** (1) [WON'T BE DONE] get this list checked by a German reader;
+(2) relaxing the German gate / junk rule effect measured instead on the
+2026-10-08 session -- see "Effect of relaxing the German gate / junk rule"
+below; (3) then PR (not opened, per user); (4) not worth doing: displaced-mark
+mechanism, more lexicon sources, more byte work.
+
+**Effect of relaxing the German gate / junk rule (measured 2026-10-08).**
+First pass used monkeypatching (`_b2_record_is_german` forced True for gate
+off; a copy of `_b2_fill_text` with the bail-out deleted for junk rule off)
+run through the full `marc_repair.py` CLI pipeline (a standalone call to
+`fix_marc8_b2_umlaut` undercounts -- fixer order changes which subfields still
+have "other escape junk" left when this one runs) over the 396-record
+`working/GTU_bibs_0xB2_sample.mrc`:
+
+| config (monkeypatch estimate) | instances | records touched |
+|---|---|---|
+| baseline (both rules on) | 89 | 74 |
+| gate off, junk rule on | 106 | 90 |
+| gate on, junk rule off | 135 | 111 |
+| both off | 135 | 111 |
+
+This suggested relaxing the junk rule alone already reached the same ceiling
+as relaxing both, so the user chose to **drop the junk-rule bail-out from
+`_b2_fill_text` for real** (code change, not a monkeypatch; gate left in
+place) -- see the "no other escape junk left" paragraph above for the actual
+diff. Re-measuring the real edited code against the baseline gave different,
+authoritative numbers that disagree with the monkeypatch estimate above (the
+monkeypatch copy of `_b2_fill_text` apparently didn't reproduce something the
+real pipeline does -- not tracked down, the real numbers are what matters):
+
+| config (real code, re-measured) | instances | records touched |
+|---|---|---|
+| baseline (pre-edit) | 89 | 74 |
+| junk rule dropped (shipped) | 115 | 92 |
+
+So the actual gain from this change is +26 instances / +18 records, not the
+monkeypatch's +46/+37. The German gate was left in place -- it was not
+re-measured against the new junk-rule-dropped code to see whether it's still
+adding reach (the monkeypatch estimate said it would add nothing once the
+junk rule was off, but given the discrepancy above, treat that as unverified
+too). **Not independently re-verified against the gold list** (see WON'T BE
+DONE above) -- this only shows reach, not whether the extra fills are
+correct, and specifically does not re-check the two `=505`/`=520` subfields
+that regressed under this exact change when it was first tried (see above).
+Scratch outputs in `working/b2run_relax/` and `working/b2run/*_v2*`
+(gitignored).
+
+**State at end of session (2026-10-07):** branch `context-language-disambiguation`,
+only research tools changed; `marc_repair.py` untouched. Pickles in `working/`:
+`lexicon_GTU.pkl` (corpus only), `_de`, `_de_sub`, `_de_sub_names` (full; use
+this one). `working/b2_context_probe.tsv` is overwritten by every probe run, so
+re-run the probe with the settings you want before `b2_gold_check.py`. Run
+commands via `wsl.exe -e bash -lc 'cd ~/scratch/marc_repair && source
+venv/bin/activate && ...'` (no `python`; needs the venv for `pymarc`). Gotcha
+hit: a background `curl` started inside a subshell is killed when the WSL shell
+exits and its "completed" notice is the wrapper's, so a partial 2.6 GB download
+looked finished -- run it as the tracked background command itself, resume with
+`curl -C -`, and verify with `gzip -t`. Decisions open for the user: whether to
+build the gated 0xB2 fixer (user wants the ~76 fewer reviews; no German reader
+will check fills), and merge-vs-continue for this branch. Untried: frequency
+list for ties (source 3), Sanskrit/Arabic (source 5), `wfrench` etc.
+
+**(Historical plan) outside lexicon, decided with the user.**
+Coverage, not logic, was the bottleneck in every lexicon test (matched 2/292
+for 0xA5, 1/135 for 0xAE, 127/752 for 0xB2; "religiöse", "gehört",
+"Königsrahmen" absent). A corpus-only lexicon can only know words the corpus
+spells correctly. An outside lexicon should also *lower* confidence on
+ambiguous pairs ("möchte"/"mächte" would both match), which is desirable.
+It will **not** fix the DISPLACED shape (that is a position problem, not a
+vocabulary one). Sources, cheapest first -- **none of these package names,
+URLs or licences have been verified; check each before relying on it:**
+
+1. *Clean UTF-8 already on disk:* `sample_files/Bucknell00000448.mrc` and any
+   other UTF-8 export. Free, and matches the catalog's own vocabulary. Do
+   **not** use this project's repaired outputs (circular).
+2. *Debian `w*` word-list packages* (e.g. `wngerman`, `wfrench`, `wpolish`,
+   `wportuguese`; one `apt install` each, plain word lists, no setup). No
+   frequencies, so ö-vs-ä ties need source 3. Expect some are GPL.
+3. *Frequency lists for tie-breaking* (e.g. the Hermit Dave FrequencyWords
+   set; licence unchecked): settles "möchte" over "mächte" without hand
+   labels.
+4. *Library of Congress authority files* (name + subject, free bulk download
+   from id.loc.gov): holds exactly the hard cases -- German surnames/places
+   (Köstenberger, Grözinger) and transliterated Sanskrit/Arabic names with
+   their diacritics, which no dictionary package has. Recommended after 1-3
+   if they help.
+5. *Sanskrit/Arabic transliteration:* Cologne Digital Sanskrit Dictionaries
+   (Monier-Williams, IAST spellings) for Sanskrit; Arabic romanizations come
+   mostly from the LC authority files. The only genuinely hard part.
+
+Plan: reuse the existing structure unchanged (flattened-ASCII key -> set of
+diacritic spellings, cached as a pickle -- see `build()` in
+`tools/context_probe/lang_lexicon_probe.py`); only add loaders (pure Python).
+Keep the downloaded data **out of the repo** (licences vary) and commit only
+a download-and-build script. First test: German list + frequencies (sources
+2-3), re-run `b2_context_probe.py` / `b2_gold_check.py`, and compare against
+the corpus-only result above (127 accepted, 4 contradicted by gold; 20.6%
+displaced). Add the LC authority files only if that moves the numbers.
+Estimated 20k-40k tokens for loaders + rebuild.
+
+**Other next steps (not started):**
+
+1. (Superseded by the recommendation above.) Decide whether to build for
+   0xB2 only: tiers = lexicon-confirmed vowel
+   (with the word/language gate) > German-evidence default ö at lower
+   confidence > leave alone. Estimated reach ~ 60-70% of the German 0xB2
+   occurrences (the clean ones), i.e. roughly 30-40% of all 0xB2.
+2. Separately consider the DISPLACED shape (20% of German 0xB2, and 0xA5's
+   Sanskrit `t`/`a` leftovers, 0xAE's Ninḥursag) -- a "move the mark to the
+   right letter" mechanism is the other big gap, language-independent.
+3. Whatever is built: **every fix still needs the on/off transcoded-output
+   diff** (see "Lessons learned" -- `.b18157713`, `.b12911008`); that has not
+   been run for any of the proposals above.
+
 `marc8-diacritic-fix` was merged into `main` via
 [marc-repair#1](https://github.com/marnold-ebsco/marc-repair/pull/1) and the
 branch deleted (local + remote).
@@ -439,6 +934,48 @@ item left in this file as of this entry.
    [docs/HANDOFF_HISTORY.md](docs/HANDOFF_HISTORY.md) for the full writeup and
    a mocked-up example of the improved log line.
 
+   **2026-10-08 addendum: scoped "best-guess, label don't block" idea, costed
+   against the 0xB2 sample file.** Considered a narrower alternative to the
+   external-authority lookup above: reuse what's already resolvable from
+   information already in the file (the existing `corpus_index` same-file
+   match inside `find_suspect_marc8_escapes`), actually apply the guess
+   instead of only suggesting it, and label each occurrence inline in the log
+   body as `FIXED/NEEDS REVIEW` (guessed + applied) vs. `NOT FIXED/NEEDS
+   REVIEW` (no guess available). No section-table change needed for this --
+   `_section_for` gates purely by category, not per-entry `fixed`, so
+   `suspect_marc8_escape` would stay in the NEEDS REVIEW section regardless;
+   only the per-bullet label text would change.
+
+   Tested against `working/GTU_bibs_0xB2_sample.mrc` (396 records, read-only,
+   via `--log-full suspect_marc8_escape`, output discarded): 22 records /
+   ~26 occurrences, **0 of them resolved by the existing `corpus_index`
+   same-file lookup** -- every single one still falls back to the generic
+   "likely a miskeyed accented letter... verify against another source"
+   message. Relabeling with only what's resolvable today would produce an
+   all-"NOT FIXED" report on this file; no visible change without extending
+   resolution beyond what's already built.
+
+   By eye, several of these 22 records ARE guessable -- German (`Gru[?]ung`
+   -> Gründung, `gr[?]ten` -> größten, `Mu[?]ig` -> Mutig, `Referenzgr[?]e`
+   -> Referenzgröße), Polish (`Elz[?]bieta` -> Elżbieta), Slovak
+   (`Karf[?]kov` -> Karfíková) -- but the same 22 records also include Tamil/
+   Sanskrit IAST romanization (`Tiruvitåan[?]kåur`, `Vedåarthasan[?]graha`)
+   and Arabic transliteration (`Mustaòhrag[?]`). A single-language lexicon
+   (like the German-only `b2_lexicon.json` built for the fixer below) would
+   not cover this mix -- guessing these would need per-occurrence
+   morphological/positional heuristics plus manual verification, not a
+   lexicon-hit-rate win.
+
+   **Cost estimate (not started; no decision made):** full generalization
+   across both script shapes this tool already distinguishes in
+   `_MARC8_SCRIPT_CHARSETS` (the 1-char Hebrew/Arabic/Cyrillic/Greek case and
+   the 3-char CJK/EACC case) -- 60-100k tokens, comparable in scope to the
+   0xB2 lexicon-gated fixer work itself (see below). A narrower pilot scoped
+   to just this one sample file's 22 records (one script-escape shape, 1-char
+   gap only, no CJK) -- 25-35k tokens, weighted toward candidate-generation
+   and hand verification rather than lexicon building, given the
+   multi-language mix just described.
+
 2. **CLOSED -- `suspect_hex_encoded_marc8` stays detect-only, auto-replace
    not started.** Its "recoverable" heuristic was tightened and shipped
    (`d4caade`), but auto-replacing even the "recoverable" cases turned out
@@ -585,6 +1122,152 @@ item left in this file as of this entry.
    export has been found to check against; the only holdings `.mrc` on disk
    belongs to an unrelated project/library, not a fair substitute. Deferred by
    the user. Not started.
+
+## HOWTO: build the `--b2-lexicon` file
+
+`marc_repair.py --b2-lexicon PATH` (the gated 0xB2 fixer, `fix_marc8_b2_umlaut`)
+loads a small JSON file -- it ships no lexicon of its own (gitignored, source
+licences vary), so this has to be built once per corpus/checkout before the
+flag does anything. This is the exact chain already run for GTU
+(`working/b2_lexicon.json`, referenced from the "0xB2 fixer BUILT" entry
+above); repeat it for a new corpus by swapping `--corpus`/`--cache` paths.
+Everything below runs from the repo root, in the venv
+(`source venv/bin/activate`), via `wsl.exe -e bash -lc '...'` per the
+standing WSL instruction.
+
+**`tools/context_probe/build_b2_lexicon.py` now does all of steps 1-3 below
+in one call** -- e.g. `python tools/context_probe/build_b2_lexicon.py
+--corpus working/GTU_bibs.mrc --out working/b2_lexicon.json` (add
+`--corpus-only` to skip the outside sources entirely, `--no-wngerman` to
+drop just that one, `--include-lc-names` to pull in the 2.6 GB LC names
+dump, `--force` to rebuild a step whose output already exists). The manual
+walkthrough below is kept for understanding what each stage actually does
+and for debugging a run gone wrong, not because it's the recommended path
+day to day.
+
+### 1. Build the base (corpus-only) lexicon
+
+Scans your own MARC file once for every *cleanly*-encoded (no escape, no
+corruption) diacritic word, and indexes it by its flattened ASCII form --
+this is the "raw data" at its cheapest: nothing to download, just the
+corpus already on disk.
+
+```
+python tools/context_probe/lang_lexicon_probe.py build \
+    --corpus working/GTU_bibs.mrc --cache working/lexicon_GTU.pkl
+```
+
+~5 minutes on a 404,957-record / 527 MB file. Output is a pickle (not the
+final JSON yet): `{'glob': {flattened_key: Counter({nfd_variant: count})},
+'lang': {...by (lang008, key)...}, 'plain': Counter(...)}`.
+
+Coverage from this step alone is thin -- a corpus only knows the words it
+already spells correctly somewhere -- so step 2 below adds outside word
+lists to fill the gaps (matched only 127/752 occurrences for 0xB2 without
+them; see the "Outside lexicon" entry above for the measured per-source
+gain). Skip step 2 and go straight to step 3 if a thinner lexicon is
+acceptable.
+
+### 2. Retrieve and merge outside word lists (optional, but what the shipped lexicon uses)
+
+Two raw sources, cheapest first. **Licences aren't verified here -- check
+each before relying on it**, and keep every downloaded file out of the repo
+(`working/outside_lex/`, already gitignored).
+
+**a. Debian `wngerman` package** -- a plain German word list, no
+frequencies, GPL-2+. Download the `.deb` without installing it system-wide,
+then extract:
+
+```
+mkdir -p working/outside_lex && cd working/outside_lex
+apt-get download wngerman
+dpkg -x wngerman_*.deb extracted/
+# word list lands at extracted/usr/share/dict/ngerman (or similar -- check
+# the actual path dpkg -x produced before pointing merge at it)
+```
+
+**b. Library of Congress SKOS authority dumps** -- holds the hard cases a
+plain dictionary doesn't (German surnames/places, transliterated Sanskrit/
+Arabic names with their diacritics). Bulk download, free, no auth:
+
+```
+curl -O https://id.loc.gov/download/authorities/subjects.skosrdf.nt.gz   # ~100 MB
+curl -O https://id.loc.gov/download/authorities/names.skosrdf.nt.gz      # ~2.6 GB
+```
+
+The names dump is large enough that a `curl` started inside a subshell and
+left to run in the background can get killed when that shell exits while
+still reporting success to whatever's watching it -- run it as the tracked
+background command itself (not nested), resume an interrupted download with
+`curl -C -`, and verify the result with `gzip -t` before trusting it (this
+exact failure mode cost a session earlier -- see the 2026-10-07 "State at
+end of session" entry above).
+
+Convert each `.nt.gz` into a plain one-word-per-line file `merge` can read
+(streams the gzip, no need to decompress to disk first):
+
+```
+python tools/context_probe/lang_lexicon_probe.py lc-words \
+    --nt-gz working/outside_lex/subjects.skosrdf.nt.gz \
+    --out working/outside_lex/subjects_words.txt
+python tools/context_probe/lang_lexicon_probe.py lc-words \
+    --nt-gz working/outside_lex/names.skosrdf.nt.gz \
+    --out working/outside_lex/names_words.txt
+```
+
+Merge each word list into the lexicon in turn, chaining `--base` so each
+step builds on the last (word-list words have no frequency, so each
+occurrence counts as 1 -- `merge`'s `--weight` can raise that, but the
+shipped lexicon used the default):
+
+```
+python tools/context_probe/lang_lexicon_probe.py merge \
+    --base working/lexicon_GTU.pkl \
+    --wordlist working/outside_lex/extracted/usr/share/dict/ngerman \
+    --out working/lexicon_GTU_de.pkl
+python tools/context_probe/lang_lexicon_probe.py merge \
+    --base working/lexicon_GTU_de.pkl \
+    --wordlist working/outside_lex/subjects_words.txt \
+    --out working/lexicon_GTU_de_sub.pkl
+python tools/context_probe/lang_lexicon_probe.py merge \
+    --base working/lexicon_GTU_de_sub.pkl \
+    --wordlist working/outside_lex/names_words.txt \
+    --out working/lexicon_GTU_de_sub_names.pkl
+```
+
+(The suffixes `_de`/`_de_sub`/`_de_sub_names` on the pickle names aren't
+required by the tool -- they're just how the "State at end of session"
+entry above refers back to each stage; name the `--out` files however
+makes sense.) The fully-merged pickle is ~31 MB, ~2.9 s to load, ~487 MB
+resident -- fine as a one-off build artifact, which is exactly why step 3
+trims it down before `marc_repair.py` ever has to load it.
+
+### 3. Trim to the JSON file `marc_repair.py` actually loads
+
+`fix_marc8_b2_umlaut` only ever fills an a/o/u umlaut (that's all a bare
+0xB2 can stand for -- see the block comment above it in `marc_repair.py`),
+so the full pickle's other diacritic variants (acute, cedilla, etc., kept
+around for the unrelated 0xA5/0xA8/0xAE disambiguation probes) are dead
+weight here:
+
+```
+python tools/context_probe/lang_lexicon_probe.py trim \
+    --base working/lexicon_GTU_de_sub_names.pkl \
+    --out working/b2_lexicon.json
+```
+
+Output: JSON, `{flattened_key: {nfd_variant: count}}`, umlaut variants
+only -- 4.4 MB / ~127k keys for GTU. This is the file to hand to
+`--b2-lexicon`:
+
+```
+python marc_repair.py working/GTU_bibs.mrc --b2-lexicon working/b2_lexicon.json ...
+```
+
+Neither this JSON file nor any of the intermediate pickles/downloads are
+committed to the repo (all under the gitignored `working/` tree) -- re-run
+this whole HOWTO after a fresh checkout, or whenever the corpus changes
+enough that `build`'s corpus-only pass should be redone.
 
 ## HOWTO: re-run the 0xA4 disambiguation methodology for a new byte
 
