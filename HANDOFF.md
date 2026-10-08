@@ -195,6 +195,20 @@ get partial fills but stay on the review list. Tests: `TestFixMarc8B2Umlaut`
 (430 pass), flake8 (max-line 120) clean. Full-corpus run **not done**; labels are
 still mine, no German reader.
 
+**For the German reader (review sheet, 2026-10-07).** Distinct words the 0xB2
+fixer filled in `working/GTU_bibs_0xB2_sample.mrc` (53 forms; 70 occurrences;
+full before/after with fields in `working/b2run/diff.txt`, gitignored; regenerate
+with the on/off run in the section above). Please mark any that are wrong for
+their record (e.g. a surname that should be Buhler not Bohler). Known weak spot:
+surnames like K_hler/B_hler are not resolvable by any lexicon.
+
+Behörden, Bischöfliche, Bischöflichen, Böhmen, Erstveröffentlichungen, Erörterung, Fröhlich, Frömmigkeit, Förderung, Griechisch-römische, Göttingen, Göttlichem, Höhepunkt, Jörg, Könemann, Könige, Körper, Körperschaften, Lösung, Schöningh, Schöpfung, Sprichwörter, Strömungen, Tröndle, Töpelmann, Versöhnung, Veröffentlichungen, Völkern, befördern, bischöflichen, böhmische, böhmischen, deutsch-französische, eröffnen, eröffnet, gehören, gehört, göttliche, höchsten, können, könnte, nördlichen, persönlich, persönlichen, zeitgenössische, zeitgenössischen, zwölf, Öffentliche, öffentliche, öffentlichen, öffentlicher, ökumenische, ökumenischen
+
+**Tomorrow:** (1) get this list checked; (2) if clean, consider relaxing the
+German gate / junk rule (62 / 76 records vs 46 now); (3) then PR (not opened,
+per user); (4) not worth doing: displaced-mark mechanism, more lexicon sources,
+more byte work.
+
 **State at end of session (2026-10-07):** branch `context-language-disambiguation`,
 only research tools changed; `marc_repair.py` untouched. Pickles in `working/`:
 `lexicon_GTU.pkl` (corpus only), `_de`, `_de_sub`, `_de_sub_names` (full; use
