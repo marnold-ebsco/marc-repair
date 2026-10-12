@@ -8,12 +8,41 @@ current state and open items.
 
 ## Current state
 
-### OPEN -- README never documented the `--b2-lexicon` fixer (found + fixed 2026-10-08, uncommitted)
+### CLOSED -- bib records now also flagged for 856 missing $u (2026-10-12)
 
-**Status: fix written, not committed -- WSL was down for the whole session
-(even `wsl.exe -e echo hi` hung), so no `git` command could run. Working
-tree has exactly one modified file, `README.md`; commit it after a WSL
-restart.**
+**Status: shipped to `main` (`1d6911a`), pushed. Full suite 435 passed/1
+skipped.**
+
+`find_856_missing_u` (856 Electronic Location and Access field with no $u
+URI) previously only ran on holdings records (`holdings_856_missing_u`).
+Wired the same check into the bib pipeline in `main()` as a new
+`bib_856_missing_u` category -- NEEDS REVIEW, always active (no flag),
+always listed in full, NO DATA LOSS (detect-only, never auto-fixed -- this
+tool has no way to invent a real URL). Registered in every category table
+that `holdings_856_missing_u` was in (`_NEEDS_REVIEW`,
+`_CHECK_DESCRIPTIONS`, `_CHECK_DATA_LOSS`, `_ALWAYS_FULL_CATEGORIES`, bib's
+`active_categories` base set). `docs/REPAIR_CATEGORIES.md` regenerated via
+`tools/generate_repair_categories_doc.py` (new bib row added there too).
+Tests added in `tests/test_marc_repair_bib.py`
+(`TestDetectOnlyChecks`/`TestBib856MissingUCli`). Both categories'
+descriptions also now end with "Check to see if the link is in an
+incorrect subfield." (user-requested wording -- a missing $u often means
+the real URL landed in the wrong subfield, e.g. $a or $z, not that no URL
+exists at all).
+
+Deployed copies (EC2, via `install.sh`, not a git clone -- see
+`install.sh`'s own header) pick this up with:
+```
+curl -fsSL https://raw.githubusercontent.com/marnold-ebsco/marc-repair/main/install.sh | bash -s -- --dir <install-dir>
+```
+No open follow-up.
+
+### CLOSED -- README never documented the `--b2-lexicon` fixer (found + fixed 2026-10-08)
+
+**Status: committed to `main` (`4981503`, "Document the --b2-lexicon
+umlaut fixer and its build script in the README"). Was previously logged
+here as uncommitted/WSL-down; confirmed closed via `git log` as of
+2026-10-12.**
 
 User asked where the lexicon install instructions were, since they weren't
 in the README. They weren't anywhere in the README -- the `0xB2`
