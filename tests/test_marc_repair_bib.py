@@ -3865,6 +3865,79 @@ class TestDetectOnlyChecks:
         )
         assert m.find_invalid_isbn_issn_checksums(parsed) == []
 
+    # -- find_856_missing_u (applies to both bib and holdings records) --
+
+    def test_flags_856_with_no_u(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[m.Field_("856", "40", [("z", "Available online")])],
+        )
+        findings = m.find_856_missing_u(parsed)
+        assert len(findings) == 1
+        assert "has no $u subfield" in findings[0]
+
+    def test_does_not_flag_856_with_u(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[m.Field_("856", "40", [("u", "https://example.org/resource")])],
+        )
+        assert m.find_856_missing_u(parsed) == []
+
+
+class TestBib856MissingUCli:
+    """bib_856_missing_u runs unconditionally (no flag to disable it,
+    same as holdings' own holdings_856_missing_u -- see
+    test_marc_repair_holdings.py's test_856_missing_u_flagged_needs_review)
+    and is never auto-fixed: this tool has no way to invent a real URL."""
+
+    def test_runs_by_default_and_is_not_fixed(self, tmp_path):
+        src = tmp_path / "in.mrc"
+        src.write_bytes(m.assemble_marc(m.ParsedRecord(
+            leader=_SYNTHETIC_LEADER,
+            entries=[],
+            fields=[
+                m.Field_("008", None, None, content="x" * 40),
+                m.Field_("245", "00", [("a", "Title.")]),
+                m.Field_("856", "40", [("z", "Available online"),
+                                        ("a", "Fulltext EBSCOhost database")]),
+            ],
+        )))
+        out = tmp_path / "out.mrc"
+        log = tmp_path / "run.log"
+        rc = m.main([str(src), "-o", str(out), "--log", str(log)])
+        assert rc == 0
+        content = _resolve_log(log).read_text(encoding="utf-8")
+        assert "=== NEEDS REVIEW: bib_856_missing_u ===" in content
+        assert "has no $u subfield" in content
+        parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
+        f856 = next(f for f in parsed.fields if f.tag == "856")
+        # flagged only, never fixed -- field left exactly as-is
+        assert ("a", "Fulltext EBSCOhost database") in f856.subfields
+        assert not any(code == "u" for code, _ in f856.subfields)
+
+    def test_does_not_flag_856_with_u(self, tmp_path):
+        src = tmp_path / "in.mrc"
+        src.write_bytes(m.assemble_marc(m.ParsedRecord(
+            leader=_SYNTHETIC_LEADER,
+            entries=[],
+            fields=[
+                m.Field_("008", None, None, content="x" * 40),
+                m.Field_("245", "00", [("a", "Title.")]),
+                m.Field_("856", "40", [("u", "https://example.org/resource")]),
+            ],
+        )))
+        out = tmp_path / "out.mrc"
+        log = tmp_path / "run.log"
+        rc = m.main([str(src), "-o", str(out), "--log", str(log)])
+        assert rc == 0
+        content = _resolve_log(log).read_text(encoding="utf-8")
+        # the category always gets a header+count (it's always active --
+        # see active_categories in main()), but with zero matches here
+        assert "=== NEEDS REVIEW: bib_856_missing_u ===" in content
+        assert "=== 0 record(s) ===" in content.split("bib_856_missing_u")[1]
+
 
 # ---------------------------------------------------------------------------
 # CLI-default-behavior wiring, parametrized across categories that share

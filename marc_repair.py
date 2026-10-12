@@ -4592,8 +4592,10 @@ def find_856_missing_u(parsed: ParsedRecord) -> list[str]:
     this institution's own downstream FOLIO/transform validation
     already flags ("Missing one or more required property in entity
     electronicAccess (['uri'])"). Flagged only, one detail line per
-    offending field (category "holdings_856_missing_u", NOT FIXED:
-    this tool has no way to invent a real URL).
+    offending field (NOT FIXED: this tool has no way to invent a real
+    URL); applies equally to bib and holdings records -- logged under
+    category "bib_856_missing_u" or "holdings_856_missing_u" by the
+    caller depending on which pipeline is running.
     """
     details = []
     for f in parsed.fields:
@@ -5554,6 +5556,7 @@ _NEEDS_REVIEW = {
     "unfixed_non_numeric_tag",
     "added_missing_852c",
     "holdings_856_missing_u",
+    "bib_856_missing_u",
 }
 
 #: UNFIXABLE, above even NOT FIXED: a record this tool concluded it
@@ -5679,7 +5682,9 @@ _CHECK_DESCRIPTIONS: dict[str, str] = {
     "number) -- the 863/864/865 enumeration fields that should reference it "
     "can't be linked.",
     "holdings_856_missing_u": "An 856 (Electronic Location and Access) field has no $u (URI) -- the field "
-    "exists but has no actual link.",
+    "exists but has no actual link. Check to see if the link is in an incorrect subfield.",
+    "bib_856_missing_u": "A bib record's 856 (Electronic Location and Access) field has no $u (URI) -- "
+    "the field exists but has no actual link. Check to see if the link is in an incorrect subfield.",
     "split_holdings_multiple_852": "A holdings record had more than one usable 852 (Location) -- split into "
     'one record per 852, with "-2", "-3", etc. appended to each additional '
     "copy's 001.",
@@ -5801,6 +5806,7 @@ _CHECK_DATA_LOSS: dict[str, str] = {
     "holdings_852_b_suspect_content": "POSSIBLE DATA LOSS",
     "holdings_853_missing_8": "POSSIBLE DATA LOSS",
     "holdings_856_missing_u": "NO DATA LOSS",
+    "bib_856_missing_u": "NO DATA LOSS",
     "split_holdings_multiple_852": "NO DATA LOSS",
     "unfixed_non_numeric_tag": "POSSIBLE DATA LOSS",
     "dangling_880_link": "NO DATA LOSS",
@@ -5886,6 +5892,7 @@ _ALWAYS_FULL_CATEGORIES = {
     "holdings_852_b_suspect_content",
     "holdings_853_missing_8",
     "holdings_856_missing_u",
+    "bib_856_missing_u",
     "split_holdings_multiple_852",
     "holdings_escape_sequence",
     "transcode_marc8_failed",
@@ -7768,6 +7775,9 @@ def main(argv: list[str] | None = None) -> int:
                 ):
                     rec_id = record_identifier(parsed)
                     log(category, False, i, rec_id, detail)
+                for detail in find_856_missing_u(parsed):
+                    rec_id = record_identifier(parsed)
+                    log("bib_856_missing_u", False, i, rec_id, detail)
                 for category, detail in find_suspicious_fields(parsed):
                     # unfixed_non_numeric_tag is suppressed here when
                     # --fix-invalid-tags is on (the default): it's
@@ -7906,6 +7916,7 @@ def main(argv: list[str] | None = None) -> int:
         "leader_entry_map_fixed", "oversized_sentinel_fixed", "duplicate_identifier",
         "removed_null_identifier", "suspect_marc8_escape", "suspect_hex_encoded_marc8",
         "removed_010_missing_a", "removed_880_missing_a", "dropped_oversized_field",
+        "bib_856_missing_u",
     }
     if args.fix_bad_indicators:
         active_categories.add("padded_indicators")

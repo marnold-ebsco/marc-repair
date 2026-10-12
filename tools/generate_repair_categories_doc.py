@@ -384,6 +384,14 @@ BIB_ROWS = [
         "detect-only", "`duplicate_identifier`", "DUPLICATE RECORDS",
         "**Yes**", "-- (detect-only, no switch)",
     ),
+    CategoryRow(
+        "856 (Electronic Location and Access) missing $u (URI) -- same "
+        "real-world FOLIO/transform validation as holdings' "
+        "`holdings_856_missing_u`",
+        "Flagged only, no change", "detect-only",
+        "`bib_856_missing_u`", "NEEDS REVIEW", "**Yes**",
+        "-- (detect-only, no switch)",
+    ),
 ]
 
 HOLDINGS_ROWS = [
