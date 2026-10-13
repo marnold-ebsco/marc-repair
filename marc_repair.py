@@ -4257,18 +4257,82 @@ def split_holdings_multiple_852(parsed: ParsedRecord) -> tuple[list[ParsedRecord
 
 def _suffix_holdings_identifier(fields: list[Field_], suffix: str) -> list[Field_]:
     """Return `fields` with field 001's content suffixed -- used by
-    `split_holdings_multiple_852` to give each additional holdings
-    record its own distinct identifier rather than sharing the source
-    record's 001 verbatim with every other copy. Builds a new Field_
-    (via `dataclasses.replace`) rather than mutating in place, since
-    the 001 Field_ instance being replaced here is the SAME object
-    shared across every copy's own `fields` list -- mutating it would
-    change every other copy's 001 too. No-op if there's no 001 field
-    at all."""
+    `split_holdings_multiple_852` and `split_holdings_multiple_004` to
+    give each additional holdings record its own distinct identifier
+    rather than sharing the source record's 001 verbatim with every
+    other copy. Builds a new Field_ (via `dataclasses.replace`) rather
+    than mutating in place, since the 001 Field_ instance being
+    replaced here is the SAME object shared across every copy's own
+    `fields` list -- mutating it would change every other copy's 001
+    too. No-op if there's no 001 field at all."""
     return [
         replace(f, content=(f.content or "") + suffix) if f.tag == "001" else f
         for f in fields
     ]
+
+
+def split_holdings_multiple_004(parsed: ParsedRecord) -> tuple[ParsedRecord, list[ParsedRecord]]:
+    """Resolve a holdings record with more than one 004 (Control
+    Number -- the linked bib record's own control number) the same
+    structural way `split_holdings_multiple_852` resolves multiple
+    852s: a holdings record is meant to link to exactly one bib
+    record, so one that packs several 004s together isn't
+    representable as a single, unambiguous record either.
+
+    Returns `(main_record, additional_records)`. `main_record` is
+    `parsed` with every 004 past the first dropped -- i.e. it keeps
+    the original record's own identity and every other field
+    untouched, just with its linkage narrowed to the first 004.
+    `additional_records` has one entry per remaining 004: a full copy
+    of `main_record` (every field, including its kept first 004,
+    duplicated verbatim) with just that one 004's content swapped in
+    for the copy's own 004 -- so each additional record differs from
+    `main_record` only in which bib record it links to. Each gets
+    "-2", "-3", etc. appended to field 001 (see
+    `_suffix_holdings_identifier`), same reasoning as
+    `split_holdings_multiple_852`: otherwise every copy would share
+    `main_record`'s own identifier.
+
+    This is deliberately NOT a "fix" for a defect -- a holdings record
+    legitimately linking to more than one bib record isn't wrong (see
+    "holdings_multiple_004"'s own INFORMATIONAL/NO DATA LOSS
+    classification) -- just reshaped into the one-004-per-record form
+    every downstream consumer expects. The caller
+    (`repair_holdings_records`) is responsible for routing
+    `additional_records` to a separate "_additional004s" file rather
+    than the main output (see `_additional_004_output_path`) --
+    unlike `split_holdings_multiple_852`'s own extra copies, which
+    belong in the same output file, these shouldn't silently inflate
+    the main output's record count for the (overwhelmingly common)
+    case where this never happens.
+
+    Returns `(parsed, [])` unchanged for a record with at most one
+    004 -- nothing to split."""
+    indices_004 = [i for i, f in enumerate(parsed.fields) if f.tag == "004"]
+    if len(indices_004) <= 1:
+        return parsed, []
+    extra_contents = [parsed.fields[i].content for i in indices_004[1:]]
+    seen_first = False
+    main_fields = []
+    for f in parsed.fields:
+        if f.tag == "004":
+            if seen_first:
+                continue
+            seen_first = True
+        main_fields.append(f)
+    main_record = ParsedRecord(
+        leader=parsed.leader, entries=list(parsed.entries), fields=main_fields,
+    )
+    additional_records = []
+    for copy_num, content in enumerate(extra_contents, start=2):
+        dup_fields = [
+            replace(f, content=content) if f.tag == "004" else f for f in main_fields
+        ]
+        dup_fields = _suffix_holdings_identifier(dup_fields, f"-{copy_num}")
+        additional_records.append(
+            ParsedRecord(leader=parsed.leader, entries=list(parsed.entries), fields=dup_fields)
+        )
+    return main_record, additional_records
 
 
 def strip_empty_852_subfields(parsed: ParsedRecord) -> list[str]:
@@ -5392,6 +5456,21 @@ def _error_output_path(out_path: str) -> str:
     return f"{base}_error{ext}"
 
 
+def _additional_004_output_path(out_path: str) -> str:
+    """Insert "_additional004s" right before `out_path`'s extension --
+    e.g. "bib_repaired.mrc" -> "bib_repaired_additional004s.mrc" --
+    mirroring `_error_output_path`'s own insert-before-extension
+    convention. A holdings record with more than one 004 (Control
+    Number -- see `split_holdings_multiple_004`) has every 004 past
+    the first split out into its own duplicate record here, instead of
+    the main output, so a file that's normally one 004 per holdings
+    record stays that way for every downstream consumer -- created
+    lazily (see `_LazyBinaryWriter`): a run with no multi-004 records
+    never creates an empty file."""
+    base, ext = os.path.splitext(out_path)
+    return f"{base}_additional004s{ext}"
+
+
 class _LazyBinaryWriter:
     """A binary file opened only on its first `write()` -- so a run with
     no UNFIXABLE records never creates an empty "_error" file that never
@@ -5770,7 +5849,9 @@ _CHECK_DESCRIPTIONS: dict[str, str] = {
     "spaces.",
     "holdings_missing_004": "Holdings record has no 004 (link to its bib record) at all.",
     "holdings_multiple_004": "Holdings record has more than one 004 -- not necessarily wrong (can "
-    "legitimately link to more than one bib record), surfaced for awareness.",
+    "legitimately link to more than one bib record). The first is kept here; each "
+    "additional one becomes its own duplicate holdings record in a separate "
+    "_additional004s file.",
     "holdings_852_duplicate_nr_subfield": "852 (Location) had a Not-Repeatable subfield (e.g. $h) more than once -- "
     "every occurrence after the first removed.",
     "fixed_008_length": "008 wasn't exactly 40 characters -- padded (no loss) or truncated "
@@ -6399,10 +6480,17 @@ def repair_holdings_records(
       * a wrong-length 008 is padded/truncated to the holdings-specific
         32 bytes (see `HOLDINGS_008_LENGTH`), not bib's 40
       * a missing 004 (Control Number linking to the bib record) is
-        flagged NOT FIXED (category "holdings_missing_004"); more than
-        one is flagged INFORMATIONAL (category "holdings_multiple_004",
-        since a legitimate multi-bib link isn't necessarily wrong) --
-        see `_find_004_issues`; neither is ever invented or trimmed
+        flagged NOT FIXED (category "holdings_missing_004", never
+        invented -- see `_find_004_issues`); more than one is resolved
+        the same way multiple 852s are (see `split_holdings_multiple_004`):
+        the first 004 is kept on this record, and every additional one
+        becomes its own duplicate holdings record (every other field
+        copied verbatim) written to a separate "_additional004s" file
+        (see `_additional_004_output_path`) rather than the main
+        output -- flagged INFORMATIONAL (category "holdings_multiple_004",
+        since a legitimate multi-bib link isn't necessarily wrong), NO
+        DATA LOSS: every 004 is preserved, just reshaped to one per
+        record
       * more than one 852 (Location) field is actually resolved --
         see `split_holdings_multiple_852`: the record is split into
         one output holdings record per usable ($b-bearing) 852, every
@@ -6550,10 +6638,12 @@ def repair_holdings_records(
     main output (see `_error_output_path`), exactly like the main bib
     pipeline treats its own unfixable records (category "unfixable",
     UNFIXABLE section, DATA LOSS: it's excluded from the main output
-    entirely). The only case where output record count differs from
-    input record count in the *other* direction is
-    `split_holdings_multiple_852` above: one input record with
-    multiple usable 852s becomes multiple output records.
+    entirely). One case where output record count differs from input
+    record count in the *other* direction is `split_holdings_multiple_852`
+    above: one input record with multiple usable 852s becomes multiple
+    output records. `split_holdings_multiple_004` is similar but writes
+    its extra copies to `_additional_004_output_path(output_path)`
+    instead, so it never affects `output_path`'s own record count.
 
     `on_progress`/`on_record` mirror `split_bib_holdings`'s parameters
     of the same name -- liveness only, no effect on the repair.
@@ -6565,15 +6655,20 @@ def repair_holdings_records(
     uses it.
 
     Returns {"total": n, "written": n, "unfixable": n, "log_lines": n,
-    "not_fixed": n} -- "total" is input records read, "written" is
-    output records actually written to `output_path` (excludes
-    anything diverted to the "_error" file; equal to "total" -
-    "unfixable" unless a split also happened).
+    "not_fixed": n, "additional_004_written": n} -- "total" is input
+    records read, "written" is output records actually written to
+    `output_path` (excludes anything diverted to the "_error" file or
+    to the "_additional004s" file; equal to "total" - "unfixable"
+    unless `split_holdings_multiple_852` also happened).
+    "additional_004_written" is how many extra records
+    `split_holdings_multiple_004` wrote to the "_additional004s" file
+    (0 if that file was never created).
     """
     run_started = datetime.now(timezone.utc)
     encoding_used = detect_encoding(input_path)
     holdings_required_a_tags = load_tag_list(DEFAULT_HOLDINGS_REQUIRED_A_TAGS_FILE)
     error_path = _error_output_path(output_path)
+    additional_004_path = _additional_004_output_path(output_path)
     log_entries: list[LogEntry] = []
     used_tags: set[str] = set()
     pending_tag_fixes: list[tuple[int, int, int, str]] = []
@@ -6582,13 +6677,15 @@ def repair_holdings_records(
     n_written = 0
     n_unfixable = 0
     n_new_holdings_records = 0
+    n_additional_004_written = 0
     bytes_consumed_for_estimate = 0
 
     def log(category: str, fixed: bool, record_idx: int, rec_id: str, detail: str) -> None:
         ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         log_entries.append(LogEntry(category, fixed, ts, record_idx, rec_id, detail))
 
-    with open(output_path, "wb") as out_fh, _LazyBinaryWriter(error_path) as error_fh:
+    with open(output_path, "wb") as out_fh, _LazyBinaryWriter(error_path) as error_fh, \
+            _LazyBinaryWriter(additional_004_path) as additional_004_fh:
         record_stream = iter_repair_stream(
             input_path, on_progress=on_progress, fix_bad_indicators=True,
         )
@@ -6692,9 +6789,9 @@ def repair_holdings_records(
                 log("removed_empty_852_subfield", True, i, rec_id, detail)
             for detail in strip_null_identifiers(parsed):
                 log("removed_null_identifier", True, i, rec_id, detail)
-            n_004 = sum(1 for f in parsed.fields if f.tag == "004")
-            for category, detail in _find_004_issues(n_004):
-                log(category, False, i, rec_id, detail)
+            if not any(f.tag == "004" for f in parsed.fields):
+                for category, detail in _find_004_issues(0):
+                    log(category, False, i, rec_id, detail)
             for detail in strip_852_duplicate_non_repeatable_subfields(parsed):
                 log("holdings_852_duplicate_nr_subfield", True, i, rec_id, detail)
             for detail in fix_852_b_suspect_content(parsed, allow_single_digit_852b):
@@ -6716,8 +6813,28 @@ def repair_holdings_records(
                     "holdings records, one per usable 852",
                 )
 
+            resolved_records = []
+            additional_004_records: list[ParsedRecord] = []
+            for rec in records_to_write:
+                main_rec, extra_004_recs = split_holdings_multiple_004(rec)
+                resolved_records.append(main_rec)
+                if extra_004_recs:
+                    n_additional_004_written += len(extra_004_recs)
+                    additional_004_records.extend(extra_004_recs)
+                    log(
+                        "holdings_multiple_004", False, i, rec_id,
+                        f"record has {1 + len(extra_004_recs)} 004 (Control "
+                        "Number) field(s) -- kept the first here, wrote "
+                        f"{len(extra_004_recs)} additional record(s) (one per "
+                        f"remaining 004) to {additional_004_path}",
+                    )
+            records_to_write = resolved_records
+
             try:
                 assembled_records = [assemble_marc(rec) for rec in records_to_write]
+                additional_004_assembled = [
+                    assemble_marc(rec) for rec in additional_004_records
+                ]
             except RepairError as exc:
                 print(
                     f"record {i}: {exc} -- writing to {error_path} instead",
@@ -6756,6 +6873,9 @@ def repair_holdings_records(
                     rec_encoding = "utf-8" if rec.leader[9:10] == "a" else "latin-1"
                     pending_tag_fixes.append((i, offset, len(assembled), rec_encoding))
 
+            for assembled in additional_004_assembled:
+                additional_004_fh.write(assembled)
+
     if pending_tag_fixes:
         replacement_tag = pick_unused_9xx_tag(used_tags)
         fix_ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -6788,13 +6908,17 @@ def repair_holdings_records(
     if fix_missing_852c:
         active_categories.add("added_missing_852c")
     resolved_full_categories = _ALWAYS_FULL_CATEGORIES | (full_categories or set())
-    count_notes = (
-        {
-            "split_holdings_multiple_852":
-                f"{n_new_holdings_records} new holdings record(s) added",
-        }
-        if n_new_holdings_records else None
-    )
+    count_notes = {}
+    if n_new_holdings_records:
+        count_notes["split_holdings_multiple_852"] = (
+            f"{n_new_holdings_records} new holdings record(s) added"
+        )
+    if n_additional_004_written:
+        count_notes["holdings_multiple_004"] = (
+            f"{n_additional_004_written} additional record(s) written to "
+            f"{os.path.basename(additional_004_path)}"
+        )
+    count_notes = count_notes or None
     _write_run_timing_header(
         log_path, run_started, datetime.now(timezone.utc),
         input_path, output_path,
@@ -6812,6 +6936,7 @@ def repair_holdings_records(
         "unfixable": n_unfixable,
         "log_lines": len(log_entries),
         "not_fixed": n_not_fixed,
+        "additional_004_written": n_additional_004_written,
     }
 
 
@@ -7385,6 +7510,13 @@ def main(argv: list[str] | None = None) -> int:
                 f"{result['log_lines'] - result['not_fixed']} fixed)",
                 file=sys.stderr,
             )
+            if result["additional_004_written"]:
+                print(
+                    f"{result['additional_004_written']} additional holdings record(s) "
+                    "(one per 004 past a record's first) written to "
+                    f"{_additional_004_output_path(holdings_repaired_path)}",
+                    file=sys.stderr,
+                )
         if counts["bib"]:
             bib_repaired_path = f"{base}_bib_repaired.mrc"
             # Recurses into this same function for the bib side, exactly
@@ -7436,6 +7568,13 @@ def main(argv: list[str] | None = None) -> int:
             f"fixed, {result['log_lines'] - result['not_fixed']} fixed)",
             file=sys.stderr,
         )
+        if result["additional_004_written"]:
+            print(
+                f"{result['additional_004_written']} additional holdings record(s) "
+                "(one per 004 past a record's first) written to "
+                f"{_additional_004_output_path(out_path)}",
+                file=sys.stderr,
+            )
         if result["unfixable"]:
             print(
                 f"{result['unfixable']} record(s) could not be auto-repaired at all -- "

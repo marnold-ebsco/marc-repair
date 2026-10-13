@@ -217,6 +217,7 @@ class TestRepairHoldingsRecords:
         result, out, log = self._run(tmp_path, [self._holdings_record(leader=clean_leader)])
         assert result == {
             "total": 1, "written": 1, "unfixable": 0, "log_lines": 0, "not_fixed": 0,
+            "additional_004_written": 0,
         }
         assert m.count_records(str(out)) == 1
         # the log file always exists now (a header + count for every
@@ -480,6 +481,85 @@ class TestRepairHoldingsRecords:
         content = _resolve_log(log).read_text(encoding="utf-8")
         assert "holdings_multiple_004" in content
         assert "=== INFORMATIONAL:" in content
+
+    def test_multiple_004_split_into_additional_file(self, tmp_path):
+        fields = [
+            m.Field_("004", None, None, content="ocm123"),
+            m.Field_("004", None, None, content="ocm456"),
+            m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
+            m.Field_(
+                "852", "  ", [("a", "Main Library"), ("c", "Stacks"), ("h", "ABC123")],
+            ),
+        ]
+        result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
+        assert result["total"] == 1
+        assert result["written"] == 1
+        assert result["additional_004_written"] == 1
+        content = _resolve_log(log).read_text(encoding="utf-8")
+        # INFORMATIONAL categories are never listed in full (see
+        # write_log) -- just the header+count, with the additional
+        # file's name appended via count_notes.
+        assert "=== INFORMATIONAL: holdings_multiple_004 ===" in content
+        assert "1 record(s) - 1 additional record(s) written to " in content
+        assert "out_additional004s.mrc" in content
+        main_record = m.read_intact_record(out.read_bytes().decode("utf-8"))
+        main_004s = [f.content for f in main_record.fields if f.tag == "004"]
+        assert main_004s == ["ocm123"]
+
+        additional_path = tmp_path / "out_additional004s.mrc"
+        assert additional_path.exists()
+        assert m.count_records(str(additional_path)) == 1
+        additional_record = m.read_intact_record(
+            additional_path.read_bytes().decode("utf-8")
+        )
+        additional_004s = [f.content for f in additional_record.fields if f.tag == "004"]
+        assert additional_004s == ["ocm456"]
+        # every other field is duplicated verbatim from the main record
+        assert sum(1 for f in additional_record.fields if f.tag == "852") == 1
+        assert any(
+            code == "a" and data == "Main Library"
+            for f in additional_record.fields if f.tag == "852"
+            for code, data in f.subfields
+        )
+
+    def test_multiple_004_additional_file_not_created_when_not_needed(self, tmp_path):
+        fields = [
+            m.Field_("004", None, None, content="ocm123"),
+            m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
+            m.Field_(
+                "852", "  ", [("a", "Main Library"), ("c", "Stacks"), ("h", "ABC123")],
+            ),
+        ]
+        result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
+        assert result["additional_004_written"] == 0
+        assert not (tmp_path / "out_additional004s.mrc").exists()
+
+    def test_multiple_004_split_copies_get_suffixed_001(self, tmp_path):
+        fields = [
+            m.Field_("001", None, None, content="12345"),
+            m.Field_("004", None, None, content="ocm111"),
+            m.Field_("004", None, None, content="ocm222"),
+            m.Field_("004", None, None, content="ocm333"),
+            m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
+            m.Field_(
+                "852", "  ", [("a", "Main Library"), ("c", "Stacks"), ("h", "ABC123")],
+            ),
+        ]
+        result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
+        assert result["additional_004_written"] == 2
+        main_record = m.read_intact_record(out.read_bytes().decode("utf-8"))
+        assert next(f.content for f in main_record.fields if f.tag == "001") == "12345"
+        additional_path = tmp_path / "out_additional004s.mrc"
+        additional_records = [
+            m.read_intact_record(text)
+            for text in additional_path.read_bytes().decode("utf-8").split(m.RECTERM)[:-1]
+        ]
+        by_004 = {
+            next(f.content for f in rec.fields if f.tag == "004"):
+                next(f.content for f in rec.fields if f.tag == "001")
+            for rec in additional_records
+        }
+        assert by_004 == {"ocm222": "12345-2", "ocm333": "12345-3"}
 
     def test_multiple_852_split_into_separate_records(self, tmp_path):
         fields = [

@@ -620,11 +620,17 @@ HOLDINGS_ROWS = [
         "-- (detect-only, no switch)",
     ),
     CategoryRow(
-        "Multiple 004 fields", "Flagged only, no change", "detect-only",
-        "`holdings_multiple_004`", "INFORMATIONAL",
+        "Multiple 004 fields (link to bib record)",
+        "First 004 kept on this record; every additional 004 becomes "
+        "its own duplicate holdings record (every other field "
+        "duplicated verbatim), written to a separate "
+        "`_additional004s` file rather than the main output -- "
+        "\"-2\", \"-3\", etc. appended to field 001 so they no longer "
+        "share one identifier (see `split_holdings_multiple_004`)",
+        "Yes, always", "`holdings_multiple_004`", "INFORMATIONAL",
         "No -- INFORMATIONAL categories are never listed in full, "
         "not even via --log-full",
-        "-- (detect-only, no switch)",
+        "-- (no switch -- always runs and always logged)",
     ),
     CategoryRow(
         "Multiple 852 (Location) fields, each with a usable $b",

@@ -719,7 +719,9 @@ def build_holdings_records() -> list[bytes]:
     ]))
 
     # holdings_multiple_004: more than one 004 -- not necessarily wrong,
-    # just surfaced.
+    # just surfaced; the first is kept here and the second is split out
+    # into kitchen_sink_holdings_additional004s.mrc (see
+    # split_holdings_multiple_004).
     records.append(_record(_HOLDINGS_LEADER, [
         m.Field_("004", None, None, content="ocm100"),
         m.Field_("004", None, None, content="ocm200"),
