@@ -8,6 +8,43 @@ current state and open items.
 
 ## Current state
 
+### CLOSED -- `add_missing_852c`'s $c placeholder gated on WMS-sourced records (2026-10-13)
+
+**Status: shipped to `main` (`5bc3181`), pushed. Full suite 436 passed/1
+skipped. README also updated (`8dcd623`, pushed) to document updating an
+`install.sh` install at a non-default `--dir`.**
+
+User reported a non-WMS holdings record (`$b LAW REF $k REF $h F1651 $i
+B232 2009`, no `004`, already fully populated) coming out of repair with
+a spurious `$c Migration` appended. Root cause: `add_missing_852c`
+(`marc_repair.py`) appended the placeholder to *any* 852 missing `$c`,
+regardless of whether `$a`/`$b` already carried real content -- it only
+ever checked for `$c`'s absence, with no awareness that `$c` is just one
+of several source-system conventions for where location lives (see
+`fix_missing_852_location`'s own docstring on that point). Fixed by
+gating the whole function on `_is_wms_holdings_record(parsed)` (the same
+004-prefix check `fix_missing_852_location` already used to pick `$b` vs
+`$c`) -- it now no-ops entirely for a non-WMS record, since `$c` isn't
+that record's live location subfield at all. Updated the function's
+docstring, the pipeline-summary docstring, `CATEGORY_DESCRIPTIONS`, and
+the `--no-fix-missing-852c` CLI help text to match. Fixed two existing
+tests that implicitly relied on the old non-WMS behavior, added a new
+no-op test for a non-WMS record, and gave
+`tests/fixtures/build_kitchen_sink.py`'s `added_missing_852c` demo record
+an `ocm`-prefixed `004` so it still exercises the category (regenerated
+`kitchen_sink_holdings.mrc`/`kitchen_sink_mixed.mrc` accordingly).
+
+Separately, user asked how to update an existing `install.sh` install at
+a non-default path (`/working/migration/scripts/marc-repair`, an EC2 box
+set up as part of a larger migration checkout). Documented in `README.md`
+(Installation section): pipe `install.sh` in fresh via `curl` with
+`--dir <that-path>` every time -- `install.sh` itself isn't one of the
+files the install fetches into `--dir` (it can't safely rewrite itself
+mid-run), so there's no local copy there to run directly unless placed
+separately.
+
+No open follow-up.
+
 ### CLOSED -- bib records now also flagged for 856 missing $u (2026-10-12)
 
 **Status: shipped to `main` (`1d6911a`), pushed. Full suite 435 passed/1
