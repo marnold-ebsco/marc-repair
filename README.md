@@ -359,6 +359,24 @@ anything:
 ./marc_repair/install.sh --check
 ```
 
+If the tool was installed somewhere other than the default `./marc_repair`
+(e.g. on an EC2 box set up as part of a larger migration checkout, with
+no `.git` directory to `git pull` — `install.sh` is how that install gets
+updated at all), pass that path as `--dir` so `install.sh` updates the
+existing install in place instead of creating a new one next to it:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/marnold-ebsco/marc-repair/main/install.sh \
+  | bash -s -- --dir /working/migration/scripts/marc-repair --check   # report only
+curl -fsSL https://raw.githubusercontent.com/marnold-ebsco/marc-repair/main/install.sh \
+  | bash -s -- --dir /working/migration/scripts/marc-repair           # actually update
+```
+
+`install.sh` isn't one of the files the install fetches into `--dir`
+(it can't safely rewrite itself mid-run), so there's no local copy at
+that path to run directly unless it was put there separately — pipe it
+in fresh via `curl` as above, every time, pointed at that same `--dir`.
+
 Run `install.sh --help` for all options.
 
 ### CPython (standard, recommended for most use)
