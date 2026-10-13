@@ -4431,12 +4431,21 @@ def fix_852_b_suspect_content(
 def add_missing_852c(parsed: ParsedRecord) -> list[str]:
     """Append subfield $c (shelving location) to every 852 (Location)
     field that's missing it, with placeholder content
-    `DEFAULT_852_C_CONTENT`. On by default (see --no-fix-missing-852c);
-    logged (category "added_missing_852c") every time it runs, since
-    it's adding content -- not just correcting structure -- and a
-    placeholder rather than a value recovered from the record's own
-    data. No-op for an 852 that already has a $c, however placed.
+    `DEFAULT_852_C_CONTENT`, but only for a record `_is_wms_holdings_record`
+    identifies as OCLC WMS-sourced -- the one convention where $c is the
+    live location subfield every record is expected to carry (see
+    `fix_missing_852_location`). A non-WMS record missing $c isn't
+    necessarily missing anything: that system may simply keep its
+    location in $b instead, so inserting a $c placeholder there would be
+    adding a subfield the record's own convention never uses. On by
+    default (see --no-fix-missing-852c); logged (category
+    "added_missing_852c") every time it runs, since it's adding content
+    -- not just correcting structure -- and a placeholder rather than a
+    value recovered from the record's own data. No-op for a non-WMS
+    record, or for an 852 that already has a $c, however placed.
     """
+    if not _is_wms_holdings_record(parsed):
+        return []
     details = []
     for f in parsed.fields:
         if f.tag != "852" or f.is_control():
@@ -5711,7 +5720,9 @@ _CHECK_DESCRIPTIONS: dict[str, str] = {
     "added_default_245": 'Record had no 245 -- a placeholder ($a "No title") was inserted.',
     "added_missing_852c": "852 (Location) had no $c (Shelving location) -- a placeholder was inserted "
     "(disable with --no-fix-missing-852c) -- only fills a gap that was already "
-    "empty; never overwrites an existing $c.",
+    "empty; never overwrites an existing $c. Only runs for a record identified "
+    "as OCLC WMS-sourced (see _is_wms_holdings_record), since $c is only that "
+    "system's live location subfield.",
     "normalized_subfield_9_to_0": "A $9 subfield was rewritten to $0 (MARC21's standard "
     "authority-control-number code).",
     "normalized_smart_characters": 'Typographic ("smart") quotes/dashes were flattened to their plain-ASCII '
@@ -6490,9 +6501,12 @@ def repair_holdings_records(
         other systems treat as location-bearing); unlike $c below this
         isn't opt-in
       * if `fix_missing_852c` is set (on by default -- see
-        --no-fix-missing-852c), an 852 (Location) field missing $c
-        (shelving location) gets a placeholder $c appended (see
-        `add_missing_852c`)
+        --no-fix-missing-852c) and the record's own 004 identifies it
+        as OCLC WMS-sourced (see `_is_wms_holdings_record`), an 852
+        (Location) field missing $c (shelving location) gets a
+        placeholder $c appended (see `add_missing_852c`); no-op for a
+        non-WMS record, since $c isn't that record's live location
+        subfield
       * any remaining subfield within an 852 that has no data at all
         (e.g. a bare $2 with nothing after it) is removed -- except
         $h, already handled specifically above -- see
@@ -6876,11 +6890,15 @@ def main(argv: list[str] | None = None) -> int:
         "--repair-holdings) do NOT add a "
         f"placeholder $c (shelving location) subfield -- content "
         f"{DEFAULT_852_C_CONTENT!r} -- to any 852 (Location) field missing "
-        "one. By default one is inserted, same as the 008/245 "
-        "placeholders elsewhere -- 852 $c is real location data this tool "
-        "has no way to know, but leaving it out entirely is worse than a "
-        "clearly-flagged placeholder; each insertion is logged (see "
-        "--log) as a placeholder, not a real value",
+        "one in an OCLC WMS-sourced record (identified by its own 004; see "
+        "_is_wms_holdings_record) -- the one convention where $c is always "
+        "the live location subfield. By default one is inserted there, "
+        "same as the 008/245 placeholders elsewhere -- 852 $c is real "
+        "location data this tool has no way to know, but leaving it out "
+        "entirely is worse than a clearly-flagged placeholder; a non-WMS "
+        "record missing $c is left untouched, since that system's "
+        "location convention may simply be $b instead; each insertion is "
+        "logged (see --log) as a placeholder, not a real value",
     )
     parser.add_argument(
         "--allow-single-digit-852b",

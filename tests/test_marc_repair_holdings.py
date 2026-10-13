@@ -655,6 +655,29 @@ class TestRepairHoldingsRecords:
         assert ("c", "Migration") in field852.subfields
         assert result["log_lines"] == 2  # byte-17 leader default + this
 
+    def test_fix_missing_852c_noop_for_non_wms_record(self, tmp_path):
+        # $c is only the live location subfield for OCLC WMS-sourced
+        # records (004 starting "on"/"ocn"/"ocm"); a non-WMS record
+        # missing $c may simply keep its location in $b instead, so no
+        # placeholder is inserted even though fix_missing_852c is on.
+        fields = [
+            m.Field_("004", None, None, content="local123"),
+            m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
+            m.Field_("852", "  ", [("a", "Main Library"), ("h", "ABC123")]),
+        ]
+        src = self._write_holdings_file(tmp_path, [self._holdings_record(fields=fields)])
+        out = tmp_path / "out.mrc"
+        log = tmp_path / "out.log"
+        result = m.repair_holdings_records(
+            str(src), str(out), str(log), fix_missing_852c=True,
+        )
+        content = _resolve_log(log).read_text(encoding="utf-8")
+        assert not _detail_line_marker("added_missing_852c").search(content)
+        parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
+        field852 = next(f for f in parsed.fields if f.tag == "852")
+        assert not any(code == "c" for code, _ in field852.subfields)
+        assert result["log_lines"] == 1  # only the byte-17 leader default
+
     def test_fix_missing_852c_noop_when_c_already_present(self, tmp_path):
         fields = [
             m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
@@ -671,6 +694,7 @@ class TestRepairHoldingsRecords:
 
     def test_cli_fix_missing_852c_on_by_default(self, tmp_path):
         fields = [
+            m.Field_("004", None, None, content="ocm123"),
             m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
             m.Field_("852", "  ", [("a", "Main Library"), ("h", "ABC123")]),
         ]

@@ -640,9 +640,11 @@ def build_holdings_records() -> list[bytes]:
     ]))
 
     # added_missing_852c: 852 with no $c -- a placeholder "Migration" is
-    # appended by default (--no-fix-missing-852c to disable).
+    # appended by default (--no-fix-missing-852c to disable). Only
+    # applies to a record its 004 identifies as OCLC WMS-sourced, hence
+    # the "ocm" prefix here (see _is_wms_holdings_record).
     records.append(_record(_HOLDINGS_LEADER, [
-        m.Field_("004", None, None, content="ks-hol-missing852c"),
+        m.Field_("004", None, None, content="ocm-ks-hol-missing852c"),
         m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
         m.Field_("852", "  ", [("a", "Main Library")]),
     ]))
