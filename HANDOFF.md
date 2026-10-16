@@ -109,6 +109,31 @@ No commit yet for this HANDOFF entry itself (the 010 fix's own entry
 below was already committed as part of `812c76a`; this new section was
 added after that push).
 
+**2026-10-16 follow-up, abandoned for now:** Re-ran `run_import.py`
+against bugfest-trillium (tenant `fs09000000`) with the 6 test variant
+files combined -- upload succeeded (`UPLOADED`), `processFiles` returned
+204 with `jobExecutionId: 5d409200-53ba-48fe-a615-b3c5a25217e4`, but it
+sat at `status: NEW`, `progress: {current: 0, total: 100}` for the full
+3-minute/60-poll window, never advancing. A sunflower attempt was killed
+by its own timeout before logging anything (stdout buffering), so it's
+inconclusive on its own, but the user separately reported that the Data
+Import **UI** itself wasn't visibly processing any records on sunflower,
+and then also not on trillium. Unlike the original write-up above (where
+a UI-driven job on trillium completed on the same day the script
+stalled), this time neither tenant's UI appeared to be processing either
+-- suggesting today's stall may be a genuine environment-side outage
+rather than (or in addition to) the API-vs-UI payload discrepancy
+originally suspected. Also confirmed: phpFolioClient (all copies under
+`/home/marnold`, including the composer cache) has no data-import class
+at all -- only `dataExport()`/`dataExportAll()` (mod-data-export, a
+different API) and generic `putFile()`/`postFile()` upload helpers in
+`FolioFileHandler.php` -- so there's no reference implementation there to
+diff `run_import.py` against beyond the generic octet-stream upload
+pattern, which already matches. Abandoning this thread for now; pick back
+up with the network-tab capture plan in "Where to pick this up" above,
+and/or re-check whether the environment's Data Import pipeline has
+recovered before assuming the script itself is at fault.
+
 ### OPEN -- Narrowed 010 $a repair to the one condition that actually breaks FOLIO import (2026-10-16)
 
 **Status: code + tests done locally (full suite 443 passed/1 skipped), NOT
