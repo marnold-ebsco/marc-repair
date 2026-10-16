@@ -8,6 +8,107 @@ current state and open items.
 
 ## Current state
 
+### OPEN -- API-driven FOLIO Data Import never completes a job (script unproven, don't move it to `tools/` yet) (2026-10-16)
+
+**Status: unresolved, separate from the 010 fix below. Scripts live in
+`working/folio_import_test/` (NOT yet moved to `tools/` -- that move is
+blocked on this). Session being cleared; picking this back up fresh.**
+
+**Goal:** a reusable script to drive a real FOLIO Data Import run from
+the command line (upload a `.mrc` file, kick off the default "Create
+instance and SRS MARC Bib" job profile, poll to completion, pull back
+the per-record job log) -- so 010/880/etc. $a edge cases (and future
+ones) can be verified against live FOLIO without a human clicking
+through the UI each time.
+
+**What actually works, confirmed:**
+- Login against the Kong API gateway: `POST /authn/login` with
+  `X-Okapi-Tenant: fs09000000`, body `{"username":"folio","password":"folio"}`
+  -- returns 201 with an `okapiToken`/`x-okapi-token` header. The UI host
+  (e.g. `https://bugfest-sunflower.int.aws.folio.org/`) is just the
+  Stripes frontend (serves `index.html` for every path, including API
+  paths -- a trap, see below); the actual API gateway is a separate
+  `kong-` subdomain: `https://kong-bugfest-sunflower.int.aws.folio.org`
+  and `https://kong-bugfest-trillium.int.aws.folio.org` (same tenant
+  `fs09000000`, same `folio`/`folio` creds). This is a Eureka-platform
+  tenant, not classic Okapi -- that's WHY the UI host silently returns
+  200/HTML for every API call instead of a real 404, which burned a lot
+  of time before the user supplied the Kong URL directly.
+- `POST /data-import/uploadDefinitions` (create) and
+  `POST /data-import/uploadDefinitions/{udId}/files/{fdId}` (upload the
+  raw bytes, `Content-Type: application/octet-stream` -- must NOT also
+  send FolioClient's default `application/json` header, or the upload
+  endpoint 400s) -- both work, file status ends up `UPLOADED`.
+- `POST /data-import/uploadDefinitions/{udId}/processFiles` with
+  `{"uploadDefinition": <the uploaded definition>, "jobProfileInfo":
+  {"id": "e34d7b92-9b83-11eb-a8b3-0242ac130003", "name": "Default -
+  Create instance and SRS MARC Bib", "dataType": "MARC"}}` returns
+  **204** (accepted) and a `jobExecutionId` does get created.
+
+**What's actually broken:** every job execution created this way sits
+at `status: NEW` / `uiStatus: INITIALIZATION`, `progress: {current: 0,
+total: 100}` (sometimes `{current: 0, total: 0}` for the composite
+parent) **forever** -- confirmed polling for 3+ minutes across many
+separate attempts, on BOTH bugfest-sunflower and bugfest-trillium
+(`fs09000000` on each). It never advances, never errors out, just
+hangs.
+
+**The key clue, not yet followed up on:** when the user instead
+uploaded the same file (`all_variants_1.mrc`) through the actual Data
+Import **UI** on trillium, it worked -- hrId 12417
+(`f7789947-da97-48c3-b3de-76d9df002b86`) actually completed (status
+`ERROR` only because one of the 6 test records was expected to fail;
+the other 5 show `CREATED`/instance IDs in the job log). That happened
+on the SAME tenant, SAME day, using the SAME job profile ID, after
+every one of this script's own attempts had already stalled. So:
+
+- This is NOT simply "the environment's Data Import pipeline is down" --
+  the UI path demonstrably works. (The earlier write-up in this file
+  speculated about a tenant-wide Kafka/pipeline outage based on the
+  tenant's own same-day `QuickInstanceExport` jobs also being stuck at
+  `NEW` -- that may be true for THAT export feature, but it's no longer
+  good evidence of a general outage once the UI-driven Data Import job
+  is known to have worked fine.)
+- Something the UI does differently from this script's `processFiles`
+  call is the likely cause -- not an environment-wide stall.
+
+**Where to pick this up:**
+1. Use a browser's network tab (or FOLIO's own request logging) to
+   capture the EXACT sequence of requests the Data Import UI makes for
+   upload -> process, on the same trillium tenant, and diff it against
+   `working/folio_import_test/run_import.py`'s `processFiles` call.
+   Candidates for what's missing/different: an extra field in the
+   `uploadDefinition` payload, a different/additional header, a required
+   follow-up call this script never makes (e.g. something that actually
+   triggers the Kafka producer rather than just flipping a status row),
+   or a timing issue (UI might poll/retry `processFiles` or wait on a
+   websocket/SSE signal before considering the upload "ready").
+2. Re-test the script's exact same `processFiles` payload against
+   trillium now that a known-good UI job (12417) has run there --
+   confirms whether the API path is simply always broken on these
+   tenants regardless of payload, or genuinely payload/sequence
+   dependent.
+3. Scripts to resume from, all in `working/folio_import_test/`:
+   `make_records.py` (builds the 6 test `.mrc` variants), `run_import.py`
+   (upload + process + poll + job-log dump -- the one that stalls),
+   `check_jobs.py` / `job_12417_detail.py` (list/inspect job executions
+   and per-record job-log entries by hrId or jobExecutionId -- both
+   confirmed working against `/metadata-provider/jobExecutions` and
+   `/metadata-provider/jobLogEntries/{jobId}`), `fix_locale.py` (unrelated
+   one-off: changed the shared `folio` test user's UI locale on trillium
+   from `de-DE` to `en-US` via `PUT /settings/entries/{id}` on the
+   `stripes-core.prefs.manage`/`localeSettings` entry -- done, not part
+   of this issue).
+4. Once `processFiles` is fixed (or its real constraint understood), THEN
+   move the whole `folio_import_test/` directory into `tools/` (e.g.
+   `tools/folio_data_import_test/`), dropping the throwaway `.venv`,
+   generated `.mrc` files, and `.log`/`.json`/`.run.stdout` output -- per
+   the user's original ask to keep this as a reusable tool, not scratch.
+
+No commit yet for this HANDOFF entry itself (the 010 fix's own entry
+below was already committed as part of `812c76a`; this new section was
+added after that push).
+
 ### OPEN -- Narrowed 010 $a repair to the one condition that actually breaks FOLIO import (2026-10-16)
 
 **Status: code + tests done locally (full suite 443 passed/1 skipped), NOT
@@ -87,17 +188,10 @@ than scratch, but not yet moved.
 - Commit/push once reviewed (nothing has been committed yet).
 - Move `working/folio_import_test/`'s scripts into `tools/` (skip the
   throwaway `.venv`, generated `.mrc` files, and `.log`/`.json` output).
-- Two unrelated FOLIO bugfest environments (sunflower and, initially,
-  trillium) were observed with Data Import jobs stuck at `NEW` /
-  `INITIALIZATION` indefinitely when driven via direct API calls (not
-  through the UI) -- including jobs unrelated to this testing (the
-  tenant's own `QuickInstanceExport` jobs from the same day). Running the
-  same upload through the Data Import UI on trillium worked fine (that's
-  how job hrId 12417, used for the results above, actually completed).
-  Root cause not identified -- never got past job log inspection to the
-  actual mod-source-record-manager/Kafka layer. Not blocking (the UI path
-  works), but worth a look if direct API-driven data import automation is
-  needed later.
+- The `working/folio_import_test/` script itself has never been shown to
+  actually work -- see the dedicated OPEN section below
+  ("API-driven FOLIO Data Import never completes a job"). Don't move it
+  into `tools/` until that's resolved.
 
 ### CLOSED -- `add_missing_852c`'s $c placeholder gated on WMS-sourced records (2026-10-13)
 
