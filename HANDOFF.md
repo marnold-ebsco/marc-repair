@@ -8,6 +8,97 @@ current state and open items.
 
 ## Current state
 
+### OPEN -- Narrowed 010 $a repair to the one condition that actually breaks FOLIO import (2026-10-16)
+
+**Status: code + tests done locally (full suite 443 passed/1 skipped), NOT
+yet committed/pushed -- user asked for the handoff writeup first.**
+
+The old `strip_missing_required_a(parsed, _010_REQUIRED_A_TAGS)` call for
+010 (LCCN) was too strict: it stripped the **entire** 010 field (including
+any $z Canceled/Invalid LCCN riding along) whenever $a was missing
+entirely, empty, or punctuation-only. That turned out to be overcorrecting
+for conditions that don't actually break anything.
+
+Verified directly against FOLIO (bugfest-sunflower, then bugfest-trillium,
+tenant `fs09000000`, default "Create instance and SRS MARC Bib" job
+profile) by building 6 minimal MARC records that each vary only in 010,
+uploading them through Data Import, and reading back the per-record job
+log (`/metadata-provider/jobLogEntries/{jobId}`):
+
+| # | 010 content | Import result |
+|---|---|---|
+| 1 | `$a` only (valid LCCN) | Imported -- LCCN identifier created |
+| 2 | `$z` only | Imported -- Canceled LCCN identifier created |
+| 3 | `$a` + `$z` | Imported -- both identifiers created |
+| 4 | `$z` + `$a` **empty** | Imported -- `$a` silently produces no identifier; `$z` unaffected |
+| 5 | `$z` + `$a` = **single space** | **FAILS -- record discarded.** `"identifiers[0].value" must not be null` |
+| 6 | `$z` + `$a` = punctuation only (`.`) | Imported -- junk-but-valid LCCN identifier `"."` created |
+
+Root cause (confirmed by reading `folio-org/mod-source-record-manager`'s
+`marc_bib_rules.json` and `folio-org/data-import-processing-core`'s
+`Processor.java`): the default mapping rule applies a `trim` to 010 $a
+before setting `identifiers.value`. A whitespace-only $a trims to `""`,
+but the subfield's mere *presence* still causes `identifiers.identifierTypeId`
+to get set to LCCN -- leaving a half-built identifier object with a type
+but no value, which fails the Instance schema's `NotNull` constraint on
+`identifiers[].value` and discards the whole record. An $a that's
+*entirely absent* never triggers that identifier-object build at all, so
+it's harmless; punctuation survives `trim` unchanged, so it's harmless too
+(just junk data).
+
+Only condition 5 (whitespace-only $a) is a real import-breaker. Fixed:
+
+* Replaced the 010-specific `strip_missing_required_a` call with a new,
+  narrow `strip_whitespace_only_010_a` (`marc_repair.py`): fires only when
+  $a is present and composed entirely of whitespace. Removes just the $a
+  subfield -- never the whole field -- so any $z always survives. If
+  removing $a leaves the field with no subfields at all, only then is the
+  (now-empty) field itself dropped. No $a at all, an empty $a, and a
+  punctuation-only (but not whitespace-only) $a are all left untouched.
+* Retired `_010_REQUIRED_A_TAGS` (the old frozenset that fed the generic
+  function for this case).
+* Renamed the log category `removed_010_missing_a` ->
+  `removed_010_whitespace_a` everywhere it was registered
+  (`_FIXED_REQUIRES_ATTENTION`, `_CHECK_DESCRIPTIONS`, `_CHECK_DATA_LOSS`,
+  `_ALWAYS_FULL_CATEGORIES`, bib's `active_categories`) and updated its
+  description and data-loss call from `DATA LOSS` to `NO DATA LOSS` --
+  stripping whitespace that was never real content isn't data loss, unlike
+  the old whole-field removal.
+* `tests/test_marc_repair_bib.py`: renamed `TestStrip010MissingA` ->
+  `TestStrip010WhitespaceOnlyA`, rewrote its 3 old tests and added 4 new
+  ones covering each of the untouched conditions (missing $a, empty $a,
+  punctuation-only $a) plus the whitespace-only $a + $z case (now asserts
+  only $a is removed and $z survives) and the whitespace-only-$a-alone
+  case (whole field dropped, nothing left to keep).
+* `docs/REPAIR_CATEGORIES.md` regenerated via
+  `tools/generate_repair_categories_doc.py` after updating that script's
+  `CategoryRow` entry (the doc's single source of truth) to match.
+* Created a project `.venv` (none existed; only `venv`/`venv2` did) per
+  the standing Python-rules instruction, and added `.venv/` to
+  `.gitignore` alongside the existing `venv/`/`venv2/` entries.
+
+The live-FOLIO test scripts themselves (upload/process/poll a Data Import
+job via the FOLIO API, pull back per-record job-log results) live in
+`working/folio_import_test/` for now -- intended to move into `tools/`
+(e.g. `tools/folio_data_import_test/`) as a kept, reusable utility rather
+than scratch, but not yet moved.
+
+**Open follow-up:**
+- Commit/push once reviewed (nothing has been committed yet).
+- Move `working/folio_import_test/`'s scripts into `tools/` (skip the
+  throwaway `.venv`, generated `.mrc` files, and `.log`/`.json` output).
+- Two unrelated FOLIO bugfest environments (sunflower and, initially,
+  trillium) were observed with Data Import jobs stuck at `NEW` /
+  `INITIALIZATION` indefinitely when driven via direct API calls (not
+  through the UI) -- including jobs unrelated to this testing (the
+  tenant's own `QuickInstanceExport` jobs from the same day). Running the
+  same upload through the Data Import UI on trillium worked fine (that's
+  how job hrId 12417, used for the results above, actually completed).
+  Root cause not identified -- never got past job log inspection to the
+  actual mod-source-record-manager/Kafka layer. Not blocking (the UI path
+  works), but worth a look if direct API-driven data import automation is
+  needed later.
+
 ### CLOSED -- `add_missing_852c`'s $c placeholder gated on WMS-sourced records (2026-10-13)
 
 **Status: shipped to `main` (`5bc3181`), pushed. Full suite 436 passed/1

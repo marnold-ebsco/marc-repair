@@ -1862,24 +1862,50 @@ class TestStripMissingRequiredA:
 
 
 # ---------------------------------------------------------------------------
-# 010 (LCCN) missing/effectively-empty $a -- reuses strip_missing_required_a
-# under its own category (removed_010_missing_a), since a bare 010 commonly
-# still carries a real canceled/invalid LCCN in $z (real shape seen in
-# WTS_source_FOLIO_full.mrc: $a all spaces, $z holding the real number).
+# 010 (LCCN) whitespace-only $a -- strip_whitespace_only_010_a, category
+# removed_010_whitespace_a. Narrowed (2026-10-16) after testing all the
+# 010 $a/$z combinations against a live FOLIO Data Import run: a
+# whitespace-only $a is the only one that actually breaks import, so
+# that's the only case this function touches, and it removes just the
+# $a subfield -- never the whole field, since a $z (Canceled/Invalid
+# LCCN) commonly rides along and still imports fine on its own (real
+# shape seen in WTS_source_FOLIO_full.mrc: $a all spaces, $z holding
+# the real number).
 # ---------------------------------------------------------------------------
 
-class TestStrip010MissingA:
-    def test_space_only_a_with_z_is_removed_and_logged_with_full_field(self):
+class TestStrip010WhitespaceOnlyA:
+    """Confirmed against a live FOLIO Data Import run (default "Create
+    instance and SRS MARC Bib" job profile, FOLIO Sunflower/Trillium
+    bugfest): a whitespace-only 010 $a is the ONE 010 $a condition that
+    actually breaks import (FOLIO's mapper trims $a before setting
+    identifiers.value, so whitespace-only collapses to "" and the
+    instance schema rejects the record on "identifiers[0].value must
+    not be null"). No $a at all, an empty $a, and a punctuation-only
+    (but not whitespace-only) $a were each confirmed to import fine
+    as-is, so `strip_whitespace_only_010_a` leaves all three alone."""
+
+    def test_space_only_a_with_z_removes_only_the_a_and_keeps_the_z(self):
         parsed = m.ParsedRecord(
             leader="0" * 24,
             entries=[],
             fields=[m.Field_("010", "  ", [("a", "            "), ("z", "   70185211")])],
         )
-        details = m.strip_missing_required_a(parsed, m._010_REQUIRED_A_TAGS)
-        assert parsed.fields == []
+        details = m.strip_whitespace_only_010_a(parsed)
+        assert len(parsed.fields) == 1
+        assert parsed.fields[0].subfields == [("z", "   70185211")]
         assert len(details) == 1
         assert "010" in details[0]
         assert "70185211" in details[0]
+
+    def test_space_only_a_alone_drops_the_whole_field(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[m.Field_("010", "  ", [("a", "   ")])],
+        )
+        details = m.strip_whitespace_only_010_a(parsed)
+        assert parsed.fields == []
+        assert len(details) == 1
 
     def test_valid_a_is_kept(self):
         parsed = m.ParsedRecord(
@@ -1887,8 +1913,38 @@ class TestStrip010MissingA:
             entries=[],
             fields=[m.Field_("010", "  ", [("a", "  2007043817")])],
         )
-        details = m.strip_missing_required_a(parsed, m._010_REQUIRED_A_TAGS)
+        details = m.strip_whitespace_only_010_a(parsed)
         assert len(parsed.fields) == 1
+        assert details == []
+
+    def test_missing_a_with_z_only_is_untouched(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[m.Field_("010", "  ", [("z", "   70185211")])],
+        )
+        details = m.strip_whitespace_only_010_a(parsed)
+        assert parsed.fields[0].subfields == [("z", "   70185211")]
+        assert details == []
+
+    def test_empty_a_with_z_is_untouched(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[m.Field_("010", "  ", [("a", ""), ("z", "   70185211")])],
+        )
+        details = m.strip_whitespace_only_010_a(parsed)
+        assert parsed.fields[0].subfields == [("a", ""), ("z", "   70185211")]
+        assert details == []
+
+    def test_punctuation_only_a_is_untouched(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[m.Field_("010", "  ", [("a", "."), ("z", "   70185211")])],
+        )
+        details = m.strip_whitespace_only_010_a(parsed)
+        assert parsed.fields[0].subfields == [("a", "."), ("z", "   70185211")]
         assert details == []
 
     def test_bib_pipeline_logs_under_own_category_unconditionally(self, tmp_path):
@@ -1909,12 +1965,13 @@ class TestStrip010MissingA:
         rc = m.main([str(src), "-o", str(out), "--log", str(log)])
         assert rc == 0
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert "=== FIXED/REQUIRES ATTENTION: removed_010_missing_a ===" in content
-        assert "DATA LOSS" in content
-        assert _detail_line_marker("removed_010_missing_a").search(content)
+        assert "=== FIXED/REQUIRES ATTENTION: removed_010_whitespace_a ===" in content
+        assert "NO DATA LOSS" in content
+        assert _detail_line_marker("removed_010_whitespace_a").search(content)
         assert "70185211" in content
         out_parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
-        assert not any(f.tag == "010" for f in out_parsed.fields)
+        out_010 = next(f for f in out_parsed.fields if f.tag == "010")
+        assert out_010.subfields == [("z", "   70185211")]
 
 
 # ---------------------------------------------------------------------------

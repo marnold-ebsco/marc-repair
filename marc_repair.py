@@ -4848,22 +4848,81 @@ def _is_punctuation_only(data: str) -> bool:
     return bool(data) and bool(_PUNCTUATION_ONLY_A_RE.match(data))
 
 
-#: 010 (LCCN) run of `strip_missing_required_a` on its own, separate
-#: from required_a_tags.txt's heading fields -- see `main`, which logs
-#: it under its own category ("removed_010_missing_a") rather than the
-#: shared "field_removed_because_missing_a" one. Kept apart because the
-#: data-loss call is different: a bare heading field missing $a
-#: usually has nothing else worth keeping, but a 010 with an empty/
-#: whitespace-only $a very often still carries a real canceled/invalid
-#: LCCN in $z (see the LC MARC 21 Bibliographic spec for 010) -- real
-#: production data confirms this is the common case, not a hypothetical
-#: one -- so removing the whole field here is definite DATA LOSS, not
-#: just POSSIBLE.
-_010_REQUIRED_A_TAGS = frozenset({"010"})
+_WHITESPACE_ONLY_RE = re.compile(r"^\s+$")
+
+
+def strip_whitespace_only_010_a(parsed: ParsedRecord) -> list[str]:
+    """Remove a 010 (LCCN) $a that's present but made up entirely of
+    whitespace (e.g. a single space) -- confirmed against a live FOLIO
+    Data Import run (default "Create instance and SRS MARC Bib" job
+    profile) to be the one 010 $a condition that actually breaks
+    import: the mapping rules apply a `trim` to $a before setting
+    identifiers.value, so a whitespace-only $a trims to "" and FOLIO's
+    instance schema then rejects the record with "identifiers[0].value
+    must not be null" -- the whole record is discarded, not just the
+    $a.
+
+    Deliberately narrow, and deliberately does NOT touch any of these
+    (each one was tested the same way and confirmed to import
+    successfully as-is, so "fixing" them would just be data loss for
+    no import-safety benefit):
+
+      * No $a at all (e.g. a 010 with only $z) -- FOLIO's mapper simply
+        produces no LCCN identifier; the $z (Canceled/Invalid LCCN)
+        still maps fine.
+      * $a entirely empty (zero-length) -- same outcome as no $a at
+        all; FOLIO doesn't even treat it as a mappable occurrence.
+      * $a that's punctuation-only (e.g. "." or "--") but not
+        whitespace -- `trim` only strips leading/trailing whitespace,
+        so this survives trim and maps to a real (if junk-looking)
+        LCCN identifier. Still worth flagging for data quality
+        elsewhere, but it does not break import, so it's out of scope
+        here.
+
+    Only the $a subfield itself is removed -- not the whole 010 field,
+    so a $z (Canceled/Invalid LCCN) riding along in the same field is
+    always preserved. If removing $a leaves the field with no
+    subfields at all, the now-empty field is dropped too."""
+    details = []
+    kept_fields = []
+    for f in parsed.fields:
+        if f.is_control() or f.tag != "010":
+            kept_fields.append(f)
+            continue
+        if not any(
+            code == "a" and _WHITESPACE_ONLY_RE.match(data)
+            for code, data in f.subfields
+        ):
+            kept_fields.append(f)
+            continue
+        before = "".join(f"${code}{data}" for code, data in f.subfields)
+        remaining = [
+            (code, data)
+            for code, data in f.subfields
+            if not (code == "a" and _WHITESPACE_ONLY_RE.match(data))
+        ]
+        if remaining:
+            f.subfields = remaining
+            kept_fields.append(f)
+            after = "".join(f"${code}{data}" for code, data in remaining)
+            details.append(
+                f"removed =010  {f.indicators}{before}\t(whitespace-only $a removed; "
+                f"now {f.indicators}{after})"
+            )
+        else:
+            details.append(
+                f"removed =010  {f.indicators}{before}\t(whitespace-only $a removed; "
+                "nothing else left in the field, so the field itself was dropped)"
+            )
+    parsed.fields = kept_fields
+    return details
+
 
 #: 880 (Alternate Graphic Representation) run of `strip_missing_required_a`
-#: on its own, same reasoning as _010_REQUIRED_A_TAGS above -- see `main`,
-#: which logs it under its own category ("removed_880_missing_a") rather
+#: on its own (unlike 010 above, this one still uses the general
+#: missing/punctuation-only-$a rule -- an 880 has no $z-style fallback
+#: content worth preserving) -- see `main`, which logs it under its own
+#: category ("removed_880_missing_a") rather
 #: than the shared "field_removed_because_missing_a" one. An 880 exists
 #: solely to carry a linked vernacular/alternate-script representation of
 #: another field; its only other subfields ($6 linking data, $0-$8
@@ -5589,7 +5648,7 @@ _FIXED_REQUIRES_ATTENTION = {
     "incomplete_852",
     "invalid_bibliographic_level",
     "holdings_852_b_suspect_content",
-    "removed_010_missing_a",
+    "removed_010_whitespace_a",
     "removed_880_missing_a",
     "removed_untranscodable_subfield",
 }
@@ -5724,9 +5783,13 @@ _CHECK_DESCRIPTIONS: dict[str, str] = {
     "record -- all but one copy removed.",
     "field_removed_because_missing_a": "A heading/added-entry field (or a holdings caption field) lacked a "
     "non-empty, non-punctuation-only $a -- the whole field removed.",
-    "removed_010_missing_a": "A 010 (LCCN) field whose $a was empty or effectively empty (e.g. all "
-    "spaces) -- the whole field removed, including any $z (Canceled/Invalid "
-    "LCCN) it carried.",
+    "removed_010_whitespace_a": "A 010 (LCCN) field's $a was present but made up entirely of "
+    "whitespace (e.g. a single space) -- confirmed against a live FOLIO Data Import run to be "
+    "the one 010 $a condition that actually breaks import (FOLIO's mapper trims $a before "
+    "setting identifiers.value, so whitespace-only trims to nothing and the instance schema "
+    "rejects the record). Only the $a subfield is removed; any $z (Canceled/Invalid LCCN) in "
+    "the same field is kept. A 010 with no $a at all, an empty $a, or a punctuation-only (but "
+    "not whitespace-only) $a is left untouched -- each imports successfully as-is.",
     "removed_880_missing_a": "An 880 (Alternate Graphic Representation) field whose $a was empty or "
     "effectively empty (e.g. all spaces, or punctuation only) -- the whole "
     "field removed, including any $6 linking data it carried.",
@@ -5885,7 +5948,7 @@ _CHECK_DATA_LOSS: dict[str, str] = {
     "duplicate_identifier": "POSSIBLE DATA LOSS",
     "removed_non_repeatable_duplicate": "POSSIBLE DATA LOSS",
     "field_removed_because_missing_a": "POSSIBLE DATA LOSS",
-    "removed_010_missing_a": "DATA LOSS",
+    "removed_010_whitespace_a": "NO DATA LOSS",
     "removed_880_missing_a": "DATA LOSS",
     "removed_invalid_subfield": "POSSIBLE DATA LOSS",
     "removed_untranscodable_subfield": "DATA LOSS",
@@ -5970,7 +6033,7 @@ _ALWAYS_FULL_CATEGORIES = {
     "duplicate_identifier",
     "removed_non_repeatable_duplicate",
     "field_removed_because_missing_a",
-    "removed_010_missing_a",
+    "removed_010_whitespace_a",
     "removed_880_missing_a",
     "removed_invalid_subfield",
     "removed_untranscodable_subfield",
@@ -7890,8 +7953,8 @@ def main(argv: list[str] | None = None) -> int:
                     for detail in strip_missing_required_a(parsed, required_a_tags):
                         log("field_removed_because_missing_a", True, i, rec_id, detail)
                 rec_id = record_identifier(parsed)
-                for detail in strip_missing_required_a(parsed, _010_REQUIRED_A_TAGS):
-                    log("removed_010_missing_a", True, i, rec_id, detail)
+                for detail in strip_whitespace_only_010_a(parsed):
+                    log("removed_010_whitespace_a", True, i, rec_id, detail)
                 rec_id = record_identifier(parsed)
                 for detail in strip_missing_required_a(parsed, _880_REQUIRED_A_TAGS):
                     log("removed_880_missing_a", True, i, rec_id, detail)
@@ -8072,7 +8135,7 @@ def main(argv: list[str] | None = None) -> int:
         "unfixed_non_numeric_tag", "invalid_indicator_value", "invalid_bibliographic_level",
         "leader_entry_map_fixed", "oversized_sentinel_fixed", "duplicate_identifier",
         "removed_null_identifier", "suspect_marc8_escape", "suspect_hex_encoded_marc8",
-        "removed_010_missing_a", "removed_880_missing_a", "dropped_oversized_field",
+        "removed_010_whitespace_a", "removed_880_missing_a", "dropped_oversized_field",
         "bib_856_missing_u",
     }
     if args.fix_bad_indicators:

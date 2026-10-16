@@ -196,13 +196,21 @@ BIB_ROWS = [
         "`--no-strip-missing-required-a`; `--required-a-tags-file`",
     ),
     CategoryRow(
-        "010 (LCCN) missing/effectively-empty $a (e.g. all spaces) -- "
-        "reuses the same missing-required-$a check above, as its own "
-        "category: a bare 010 commonly still carries a real canceled/"
-        "invalid LCCN in $z, so removing the whole field here is "
-        "definite DATA LOSS, not just possible",
-        "Removed field (including any $z it carried)",
-        "Yes, always", "`removed_010_missing_a`", "FIXED/REQUIRES ATTENTION",
+        "010 (LCCN) $a present but made up entirely of whitespace (e.g. "
+        "a single space) -- confirmed against a live FOLIO Data Import "
+        "run (default \"Create instance and SRS MARC Bib\" job profile) "
+        "to be the one 010 $a condition that actually breaks import: "
+        "FOLIO's mapping rules `trim` $a before setting "
+        "identifiers.value, so whitespace-only collapses to \"\" and the "
+        "instance schema then rejects the record "
+        "(`identifiers[0].value must not be null`). No $a at all, an "
+        "empty $a, and a punctuation-only (but not whitespace-only) $a "
+        "were each confirmed to import successfully as-is, so none of "
+        "those are touched",
+        "Removed only the $a subfield (any $z -- Canceled/Invalid LCCN "
+        "-- is always kept; the field itself is dropped only if "
+        "nothing but that $a was there)",
+        "Yes, always", "`removed_010_whitespace_a`", "FIXED/REQUIRES ATTENTION",
         "**Yes**",
         "-- (no switch -- always runs and always logged)",
     ),
