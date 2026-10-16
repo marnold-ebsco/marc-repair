@@ -4932,6 +4932,17 @@ def _normalize_010_value(value: str) -> str:
     return _WHITESPACE_RUN_RE.sub("", value)
 
 
+def _010_a_sort_key(norm: str) -> int:
+    """Numeric sort key for a normalized 010 $a value, used by
+    `dedupe_010_fields` to pick which of several genuinely different
+    LCCNs survives. LCCNs mix an optional alphabetic prefix with a
+    numeric year+serial portion (e.g. "sh85035539", "2013008343"), so
+    the digits are pulled out of the whole value and compared as a
+    single integer; a value with no digits at all sorts lowest."""
+    digits = "".join(ch for ch in norm if ch.isdigit())
+    return int(digits) if digits else -1
+
+
 def dedupe_010_fields(parsed: ParsedRecord) -> list[str]:
     """Collapse a record's multiple 010 (LCCN) fields -- or a single 010
     with more than one $a, which is rarer but does happen -- down to
@@ -4961,23 +4972,39 @@ def dedupe_010_fields(parsed: ParsedRecord) -> list[str]:
         LOSS -- only formatting differed -- and the stripped value is
         what's kept.
       * If two or more $a values normalize to genuinely different
-        values, the first one found (document order) is kept and every
-        other one is discarded. This is real DATA LOSS, and is always
-        logged in detail naming every value involved.
+        values, the numerically largest one (see `_010_a_sort_key`) is
+        kept and every other one is discarded. This is real DATA LOSS,
+        and is always logged in detail naming every value involved.
       * Every $z and $b from every 010 on the record is carried onto
         the single surviving field, each normalized the same way and
         de-duplicated (separately per code) -- so a $z or $b is never
         lost just because it happened to live on a different 010 than
         the $a that survived, or because another 010 had no $a at all.
+        The exception is a $z that normalizes to the same value as the
+        surviving $a: a Canceled/Invalid LCCN identical to the LCCN
+        that's actually being kept is a contradiction, not useful
+        data, so that $z is dropped too. ($b -- NUCMC control number --
+        isn't an LCCN-cancellation marker, so it's kept even if it
+        happens to match $a.)
 
     A record with only one 010, carrying only one $a, is untouched
-    (the common case -- nothing to merge)."""
+    (the common case -- nothing to merge) unless that same field also
+    carries a $z matching $a, which is still dropped as a
+    contradiction."""
     tag_fields = [f for f in parsed.fields if f.tag == "010" and not f.is_control()]
     if not tag_fields:
         return []
     total_a = sum(1 for f in tag_fields for code, _ in f.subfields if code == "a")
     if len(tag_fields) == 1 and total_a <= 1:
-        return []
+        only_field = tag_fields[0]
+        only_a = next((d for c, d in only_field.subfields if c == "a"), None)
+        only_a_norm = _normalize_010_value(only_a) if only_a is not None else None
+        has_z_matching_a = only_a_norm is not None and any(
+            c == "z" and _normalize_010_value(d) == only_a_norm
+            for c, d in only_field.subfields
+        )
+        if not has_z_matching_a:
+            return []
 
     kept_field = tag_fields[0]
     tag_field_ids = {id(f) for f in tag_fields}
@@ -4997,14 +5024,20 @@ def dedupe_010_fields(parsed: ParsedRecord) -> list[str]:
         if norm not in distinct_a_norms:
             distinct_a_norms.append(norm)
 
-    surviving_a = distinct_a_norms[0] if distinct_a_norms else None
-    dropped_a_norms = distinct_a_norms[1:]
+    if distinct_a_norms:
+        surviving_a = max(distinct_a_norms, key=_010_a_sort_key)
+        dropped_a_norms = [n for n in distinct_a_norms if n != surviving_a]
+    else:
+        surviving_a = None
+        dropped_a_norms = []
     data_loss = bool(dropped_a_norms)
 
     seen_zb: dict[str, set[str]] = {"z": set(), "b": set()}
     kept_zb: list[tuple[str, str]] = []
     for code, raw in zb_values:
         norm = _normalize_010_value(raw)
+        if code == "z" and norm == surviving_a:
+            continue
         if norm in seen_zb[code]:
             continue
         seen_zb[code].add(norm)
@@ -5921,10 +5954,11 @@ _CHECK_DESCRIPTIONS: dict[str, str] = {
     "deduped_010_lccn": "A record had more than one 010 (LCCN) field, or a single 010 with more "
     "than one $a -- merged into exactly one 010. Every $a on the record is compared with its "
     "whitespace stripped: if they all normalize the same, the stripped value is kept and "
-    "nothing is lost; if two or more normalize to genuinely different values, only the first "
-    "is kept and the rest are discarded. Every $z (Canceled/Invalid LCCN) and $b (NUCMC "
-    "control number -- rare, treated the same as $z) from every original 010 is always "
-    "carried onto the surviving field, de-duplicated.",
+    "nothing is lost; if two or more normalize to genuinely different values, the numerically "
+    "largest one is kept and the rest are discarded. Every $z (Canceled/Invalid LCCN) and $b "
+    "(NUCMC control number -- rare, treated the same as $z) from every original 010 is "
+    "carried onto the surviving field, de-duplicated -- except a $z matching the surviving "
+    "$a, which is dropped as a contradiction.",
     "removed_880_missing_a": "An 880 (Alternate Graphic Representation) field whose $a was empty or "
     "effectively empty (e.g. all spaces, or punctuation only) -- the whole "
     "field removed, including any $6 linking data it carried.",

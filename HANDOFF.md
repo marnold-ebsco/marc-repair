@@ -134,11 +134,10 @@ up with the network-tab capture plan in "Where to pick this up" above,
 and/or re-check whether the environment's Data Import pipeline has
 recovered before assuming the script itself is at fault.
 
-### OPEN -- New `dedupe_010_fields` repair: merges a record's multiple 010s into one (2026-10-16)
+### OPEN -- New `dedupe_010_fields` repair: merges a record's multiple 010s into one, keeps the numerically-largest $a, drops a $z matching it (2026-10-16)
 
-**Status: code + tests done locally (full suite 457 passed/1 skipped,
-flake8 `--max-line-length=100` clean except pre-existing findings), NOT
-yet committed/pushed.**
+**Status: code + tests done locally (full suite 461 passed/1 skipped,
+flake8 clean except pre-existing findings), NOT yet committed/pushed.**
 
 Scanning `working/WTS_bibs_2026-10-01.out` (a MARC-8 file -- had to drop
 `force_utf8=True` from the one-off pymarc scan script to parse it at all)
@@ -161,16 +160,28 @@ occurrence. New dedicated repair instead:
   compared with its whitespace fully stripped (not just leading/
   trailing -- LCCNs are conventionally padded with leading spaces); if
   they all normalize the same, the stripped value is kept (NO DATA LOSS).
-  If two or more normalize to genuinely different values, the first is
-  kept and the rest discarded -- real DATA LOSS, always logged in detail
-  naming every dropped value. Every $z and $b from every original 010 is
-  always carried onto the surviving field, de-duplicated per code
-  (normalized the same way) -- so a $z/$b never gets lost just because
-  the $a it was riding with didn't survive, or because another 010 had
-  no $a at all. $b is treated identically to $z throughout, per the
-  user's explicit instruction (rare in practice, but a legitimate 010
+  If two or more normalize to genuinely different values, the
+  **numerically largest** one is kept (via a new `_010_a_sort_key`
+  helper -- pulls every digit out of the normalized value and compares
+  as a single int; a value with no digits sorts lowest) and the rest
+  discarded -- real DATA LOSS, always logged in detail naming every
+  dropped value. (User-requested change from the original "keep the
+  first one found" rule.) Every $z and $b from every original 010 is
+  carried onto the surviving field, de-duplicated per code (normalized
+  the same way) -- so a $z/$b never gets lost just because the $a it was
+  riding with didn't survive, or because another 010 had no $a at all --
+  **except** a $z that normalizes to the same value as the surviving $a,
+  which is dropped too (also user-requested): a Canceled/Invalid LCCN
+  identical to the LCCN actually being kept is a contradiction, not
+  useful data. This $z-vs-$a check fires even for the single-field/
+  single-$a case that would otherwise short-circuit untouched (the
+  function's early-return guard was widened to check for it). $b is
+  treated identically to $z for merging/dedup purposes, per the user's
+  earlier explicit instruction (rare in practice, but a legitimate 010
   subfield -- added to `KNOWN_SUBFIELD_CODES["010"]`, which only had
-  `az` before).
+  `az` before) -- but NOT for the new $z-vs-$a drop, which is specific to
+  $z's Canceled/Invalid LCCN semantics and doesn't apply to $b (NUCMC
+  control number).
 * Runs unconditionally (no CLI flag, like `strip_whitespace_only_010_a`),
   called right after that function and *before*
   `strip_duplicate_non_repeatable_fields` -- ordering matters here, since
@@ -192,14 +203,19 @@ occurrence. New dedicated repair instead:
 * `docs/REPAIR_CATEGORIES.md` regenerated via
   `tools/generate_repair_categories_doc.py` after adding its `CategoryRow`
   entry.
-* `tests/test_marc_repair_bib.py`: new `TestDedupe010Fields` (14 tests) --
-  every permutation discussed with the user (identical $a, whitespace-
-  only-different $a, two $a in one field, same-$a/different-$z,
-  different-$a/different-$z, different-$a/identical-$z, $a-in-one-$z-in-
-  other, $b-treated-like-$z, duplicate-$z removal, no-$a-anywhere,
-  three-way merge, merged field keeps its original position) plus an
-  end-to-end `main()` + log-format test confirming the category header,
-  the DATA LOSS call, and the dropped value all land in the log.
+* `tests/test_marc_repair_bib.py`: `TestDedupe010Fields` now 18 tests --
+  the original permutations (identical $a, whitespace-only-different $a,
+  two $a in one field, same-$a/different-$z, different-$a/different-$z,
+  different-$a/identical-$z, $a-in-one-$z-in-other, $b-treated-like-$z,
+  duplicate-$z removal, no-$a-anywhere, three-way merge, merged field
+  keeps its original position) plus 4 new ones for this change: two
+  different $a values where the *second* one is numerically larger
+  (confirms it's no longer "first wins"), a $z matching the surviving $a
+  on a single untouched-looking field (confirms the widened early-return
+  guard), a $z matching the surviving $a across a real multi-field merge,
+  and a $b matching $a that's correctly left alone. Plus an end-to-end
+  `main()` + log-format test confirming the category header, the DATA
+  LOSS call, and the dropped value all land in the log.
 * `tests/fixtures/build_kitchen_sink.py`: 10 new `ks-010*` records (one
   per permutation above, reusing the same combinations) --
   `kitchen_sink_bib.mrc`/`kitchen_sink_holdings.mrc`/`kitchen_sink_mixed.mrc`
@@ -213,7 +229,18 @@ on exactly the same 41 records the earlier one-off pymarc scan had found,
 collapsed 39 whitespace-only-difference merges to a count, and listed the
 2 genuinely-different-LCCN records in full (`.b11189708`:
 `2014004555`/`2013036218`; `.b11255201`: `2018031265`/`2018028463`) with
-the dropped value named in each -- matches expectations exactly.
+the dropped value named in each -- matches expectations exactly. (This
+run predates the numerically-largest-wins change below; not re-run
+against real data since, but in both of these pairs the
+numerically-larger value was already the one listed first, so the kept
+value is unaffected -- no behavior change on this particular file.)
+
+Follow-up same day, before committing: user asked for two more changes,
+both implemented above and covered by new tests --
+(1) keep the numerically largest $a on a genuine mismatch, not simply
+the first found; (2) drop a $z that normalizes to the same value as the
+surviving $a (a Canceled/Invalid LCCN that's identical to the LCCN being
+kept is a contradiction). $b is deliberately exempt from (2).
 
 **Open follow-up:**
 - Commit/push once reviewed (nothing has been committed yet).

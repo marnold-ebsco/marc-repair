@@ -2181,6 +2181,64 @@ class TestDedupe010Fields:
             ("a", "2018031265"), ("z", "11111111"), ("z", "22222222"),
         ]
 
+    def test_different_a_numerically_larger_second_one_kept(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[
+                m.Field_("010", "  ", [("a", "2013008343")]),
+                m.Field_("010", "  ", [("a", "2018031265")]),
+            ],
+        )
+        details = m.dedupe_010_fields(parsed)
+        assert len(details) == 1
+        assert "DATA LOSS" in details[0]
+        assert "2013008343" in details[0]
+        remaining = [f for f in parsed.fields if f.tag == "010"]
+        assert remaining[0].subfields == [("a", "2018031265")]
+
+    def test_z_matching_surviving_a_is_dropped(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[
+                m.Field_("010", "  ", [("a", "2013008343"), ("z", "2013008343")]),
+            ],
+        )
+        details = m.dedupe_010_fields(parsed)
+        assert len(details) == 1
+        remaining = [f for f in parsed.fields if f.tag == "010"]
+        assert remaining[0].subfields == [("a", "2013008343")]
+
+    def test_z_matching_surviving_a_dropped_across_merged_fields(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[
+                m.Field_("010", "  ", [("a", "2018031265"), ("z", "11111111")]),
+                m.Field_("010", "  ", [("a", "2018028463"), ("z", "2018031265")]),
+            ],
+        )
+        details = m.dedupe_010_fields(parsed)
+        assert len(details) == 1
+        remaining = [f for f in parsed.fields if f.tag == "010"]
+        assert remaining[0].subfields == [
+            ("a", "2018031265"), ("z", "11111111"),
+        ]
+
+    def test_b_matching_surviving_a_is_kept(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[
+                m.Field_("010", "  ", [("a", "2013008343"), ("b", "2013008343")]),
+            ],
+        )
+        details = m.dedupe_010_fields(parsed)
+        assert details == []
+        remaining = [f for f in parsed.fields if f.tag == "010"]
+        assert remaining[0].subfields == [("a", "2013008343"), ("b", "2013008343")]
+
     def test_merged_field_takes_place_of_first_010(self):
         parsed = m.ParsedRecord(
             leader="0" * 24,
