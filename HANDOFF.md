@@ -134,10 +134,10 @@ up with the network-tab capture plan in "Where to pick this up" above,
 and/or re-check whether the environment's Data Import pipeline has
 recovered before assuming the script itself is at fault.
 
-### OPEN -- New `dedupe_010_fields` repair: merges a record's multiple 010s into one, keeps the numerically-largest $a, drops a $z matching it (2026-10-16)
+### CLOSED -- New `dedupe_010_fields` repair: merges a record's multiple 010s into one, keeps the numerically-largest $a, drops a $z matching it (2026-10-16)
 
-**Status: code + tests done locally (full suite 461 passed/1 skipped,
-flake8 clean except pre-existing findings), NOT yet committed/pushed.**
+**Status: shipped to `main` (`5839e67`), pushed. Full suite 461 passed/1
+skipped, flake8 clean except pre-existing findings.**
 
 Scanning `working/WTS_bibs_2026-10-01.out` (a MARC-8 file -- had to drop
 `force_utf8=True` from the one-off pymarc scan script to parse it at all)
@@ -242,13 +242,56 @@ the first found; (2) drop a $z that normalizes to the same value as the
 surviving $a (a Canceled/Invalid LCCN that's identical to the LCCN being
 kept is a contradiction). $b is deliberately exempt from (2).
 
-**Open follow-up:**
-- Commit/push once reviewed (nothing has been committed yet).
+No open follow-up.
 
-### OPEN -- Narrowed 010 $a repair to the one condition that actually breaks FOLIO import (2026-10-16)
+### CLOSED -- `removed_010_whitespace_a` moved from FIXED/REQUIRES ATTENTION to INFORMATIONAL (2026-10-16)
 
-**Status: code + tests done locally (full suite 443 passed/1 skipped), NOT
-yet committed/pushed -- user asked for the handoff writeup first.**
+**Status: code + tests done, committed to `main` alongside this HANDOFF
+update. Full suite 461 passed/1 skipped.**
+
+User's reasoning: `strip_whitespace_only_010_a` only ever strips a
+whitespace-only $a, which is NO DATA LOSS (the data-loss call was
+already `NO DATA LOSS`, not `DATA LOSS`/`POSSIBLE DATA LOSS`) -- so
+individually listing every record it touched was unnecessary detail; a
+header + count is enough, same as every other NO-DATA-LOSS INFORMATIONAL
+category.
+
+* Moved `removed_010_whitespace_a` out of `_FIXED_REQUIRES_ATTENTION`
+  and into `_INFORMATIONAL` (`marc_repair.py`) -- this alone changes its
+  log section header from `FIXED/REQUIRES ATTENTION` to `INFORMATIONAL`
+  and stops it from ever being listed in full (INFORMATIONAL categories
+  can't be, not even via `--log-full` -- see `write_log`'s existing
+  `label != "INFORMATIONAL"` guard). Also removed it from
+  `_ALWAYS_FULL_CATEGORIES` (redundant now, but left stale there would
+  have been misleading). `_CHECK_DATA_LOSS` entry (`NO DATA LOSS`)
+  unchanged -- that line still prints in the header either way.
+* Shortened the category's `_CHECK_DESCRIPTIONS` text per the user's
+  exact wording: dropped the FOLIO-Data-Import backstory and the
+  "no $a / empty $a / punctuation-only $a is untouched" explanation
+  (still true, just no longer worth stating in a one-line header now
+  that detail isn't shown per-record anyway) down to "A 010 (LCCN)
+  field's $a was present but made up entirely of whitespace (e.g. a
+  single space). Only the $a subfield is removed. Any $b or $z is
+  retained." (also broadened "$z is kept" to "$b or $z is retained",
+  matching the dedupe work above where $b became a first-class
+  026/010-style subfield here too).
+* `docs/REPAIR_CATEGORIES.md` regenerated via
+  `tools/generate_repair_categories_doc.py` after updating that script's
+  matching `CategoryRow` (section -> INFORMATIONAL, description
+  shortened to match, "Logged by default?" -> the standard INFORMATIONAL
+  "No" wording).
+* `tests/test_marc_repair_bib.py`:
+  `test_bib_pipeline_logs_under_own_category_unconditionally` updated --
+  now asserts the `INFORMATIONAL` header (not `FIXED/REQUIRES
+  ATTENTION`) and asserts NO per-record detail line appears, instead of
+  asserting one does.
+
+No open follow-up.
+
+### CLOSED -- Narrowed 010 $a repair to the one condition that actually breaks FOLIO import (2026-10-16)
+
+**Status: shipped to `main` (`812c76a`), pushed. Full suite 443 passed/1
+skipped at the time.**
 
 The old `strip_missing_required_a(parsed, _010_REQUIRED_A_TAGS)` call for
 010 (LCCN) was too strict: it stripped the **entire** 010 field (including
@@ -321,7 +364,6 @@ job via the FOLIO API, pull back per-record job-log results) live in
 than scratch, but not yet moved.
 
 **Open follow-up:**
-- Commit/push once reviewed (nothing has been committed yet).
 - Move `working/folio_import_test/`'s scripts into `tools/` (skip the
   throwaway `.venv`, generated `.mrc` files, and `.log`/`.json` output).
 - The `working/folio_import_test/` script itself has never been shown to

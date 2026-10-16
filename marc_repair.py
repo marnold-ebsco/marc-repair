@@ -5808,7 +5808,6 @@ _FIXED_REQUIRES_ATTENTION = {
     "incomplete_852",
     "invalid_bibliographic_level",
     "holdings_852_b_suspect_content",
-    "removed_010_whitespace_a",
     "deduped_010_lccn",
     "removed_880_missing_a",
     "removed_untranscodable_subfield",
@@ -5844,6 +5843,7 @@ _INFORMATIONAL = {
     "oversized_sentinel_fixed",
     "fixed_marc8_diacritic",
     "fixed_marc8_b2_umlaut",
+    "removed_010_whitespace_a",
 }
 
 #: NEEDS REVIEW: a detect-only finding that's always listed in full
@@ -5945,12 +5945,8 @@ _CHECK_DESCRIPTIONS: dict[str, str] = {
     "field_removed_because_missing_a": "A heading/added-entry field (or a holdings caption field) lacked a "
     "non-empty, non-punctuation-only $a -- the whole field removed.",
     "removed_010_whitespace_a": "A 010 (LCCN) field's $a was present but made up entirely of "
-    "whitespace (e.g. a single space) -- confirmed against a live FOLIO Data Import run to be "
-    "the one 010 $a condition that actually breaks import (FOLIO's mapper trims $a before "
-    "setting identifiers.value, so whitespace-only trims to nothing and the instance schema "
-    "rejects the record). Only the $a subfield is removed; any $z (Canceled/Invalid LCCN) in "
-    "the same field is kept. A 010 with no $a at all, an empty $a, or a punctuation-only (but "
-    "not whitespace-only) $a is left untouched -- each imports successfully as-is.",
+    "whitespace (e.g. a single space). Only the $a subfield is removed. Any $b or $z is "
+    "retained.",
     "deduped_010_lccn": "A record had more than one 010 (LCCN) field, or a single 010 with more "
     "than one $a -- merged into exactly one 010. Every $a on the record is compared with its "
     "whitespace stripped: if they all normalize the same, the stripped value is kept and "
@@ -6203,7 +6199,6 @@ _ALWAYS_FULL_CATEGORIES = {
     "duplicate_identifier",
     "removed_non_repeatable_duplicate",
     "field_removed_because_missing_a",
-    "removed_010_whitespace_a",
     "deduped_010_lccn",
     "removed_880_missing_a",
     "removed_invalid_subfield",

@@ -1965,10 +1965,9 @@ class TestStrip010WhitespaceOnlyA:
         rc = m.main([str(src), "-o", str(out), "--log", str(log)])
         assert rc == 0
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert "=== FIXED/REQUIRES ATTENTION: removed_010_whitespace_a ===" in content
+        assert "=== INFORMATIONAL: removed_010_whitespace_a ===" in content
         assert "NO DATA LOSS" in content
-        assert _detail_line_marker("removed_010_whitespace_a").search(content)
-        assert "70185211" in content
+        assert not _detail_line_marker("removed_010_whitespace_a").search(content)
         out_parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
         out_010 = next(f for f in out_parsed.fields if f.tag == "010")
         assert out_010.subfields == [("z", "   70185211")]

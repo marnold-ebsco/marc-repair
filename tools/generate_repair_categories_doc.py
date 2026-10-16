@@ -197,21 +197,12 @@ BIB_ROWS = [
     ),
     CategoryRow(
         "010 (LCCN) $a present but made up entirely of whitespace (e.g. "
-        "a single space) -- confirmed against a live FOLIO Data Import "
-        "run (default \"Create instance and SRS MARC Bib\" job profile) "
-        "to be the one 010 $a condition that actually breaks import: "
-        "FOLIO's mapping rules `trim` $a before setting "
-        "identifiers.value, so whitespace-only collapses to \"\" and the "
-        "instance schema then rejects the record "
-        "(`identifiers[0].value must not be null`). No $a at all, an "
-        "empty $a, and a punctuation-only (but not whitespace-only) $a "
-        "were each confirmed to import successfully as-is, so none of "
-        "those are touched",
-        "Removed only the $a subfield (any $z -- Canceled/Invalid LCCN "
-        "-- is always kept; the field itself is dropped only if "
-        "nothing but that $a was there)",
-        "Yes, always", "`removed_010_whitespace_a`", "FIXED/REQUIRES ATTENTION",
-        "**Yes**",
+        "a single space)",
+        "Removed only the $a subfield (any $b or $z is retained; the "
+        "field itself is dropped only if nothing but that $a was there)",
+        "Yes, always", "`removed_010_whitespace_a`", "INFORMATIONAL",
+        "No -- INFORMATIONAL categories are never listed in full, "
+        "not even via --log-full",
         "-- (no switch -- always runs and always logged)",
     ),
     CategoryRow(
