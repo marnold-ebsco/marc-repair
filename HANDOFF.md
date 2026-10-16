@@ -134,6 +134,90 @@ up with the network-tab capture plan in "Where to pick this up" above,
 and/or re-check whether the environment's Data Import pipeline has
 recovered before assuming the script itself is at fault.
 
+### OPEN -- New `dedupe_010_fields` repair: merges a record's multiple 010s into one (2026-10-16)
+
+**Status: code + tests done locally (full suite 457 passed/1 skipped,
+flake8 `--max-line-length=100` clean except pre-existing findings), NOT
+yet committed/pushed.**
+
+Scanning `working/WTS_bibs_2026-10-01.out` (a MARC-8 file -- had to drop
+`force_utf8=True` from the one-off pymarc scan script to parse it at all)
+turned up 41 records with more than one 010 (LCCN) field -- almost all
+duplicate/whitespace-variant LCCNs, one genuinely differing pair. None had
+the $a-in-one/$z-in-another split, but the user asked for general-purpose
+dedup logic to handle all of these shapes, not just what happened to
+appear in this one file.
+
+The generic `strip_duplicate_non_repeatable_fields` (010 was previously
+in `non_repeatable_tags.txt`) would have been the wrong tool: it just
+keeps the first occurrence of a duplicated non-repeatable field and drops
+every other one *whole*, which for 010 would silently destroy any $z
+(Canceled/Invalid LCCN) or $b (NUCMC control number) riding on a later
+occurrence. New dedicated repair instead:
+
+* `dedupe_010_fields(parsed)` (`marc_repair.py`): collapses a record's
+  010s -- or a single 010 with more than one $a, which can also happen --
+  down to exactly one. Every $a (across fields, or within one field) is
+  compared with its whitespace fully stripped (not just leading/
+  trailing -- LCCNs are conventionally padded with leading spaces); if
+  they all normalize the same, the stripped value is kept (NO DATA LOSS).
+  If two or more normalize to genuinely different values, the first is
+  kept and the rest discarded -- real DATA LOSS, always logged in detail
+  naming every dropped value. Every $z and $b from every original 010 is
+  always carried onto the surviving field, de-duplicated per code
+  (normalized the same way) -- so a $z/$b never gets lost just because
+  the $a it was riding with didn't survive, or because another 010 had
+  no $a at all. $b is treated identically to $z throughout, per the
+  user's explicit instruction (rare in practice, but a legitimate 010
+  subfield -- added to `KNOWN_SUBFIELD_CODES["010"]`, which only had
+  `az` before).
+* Runs unconditionally (no CLI flag, like `strip_whitespace_only_010_a`),
+  called right after that function and *before*
+  `strip_duplicate_non_repeatable_fields` -- ordering matters here, since
+  the latter would otherwise still clobber 010 as an ordinary
+  non-repeatable field. `non_repeatable_tags.txt` now explicitly excludes
+  `010` with a comment explaining why.
+* New category `deduped_010_lccn`: registered in `_CHECK_DESCRIPTIONS`,
+  `_CHECK_DATA_LOSS` (`POSSIBLE DATA LOSS` at the category level, same as
+  `removed_non_repeatable_duplicate`), `_FIXED_REQUIRES_ATTENTION`,
+  `_ALWAYS_FULL_CATEGORIES`, and -- this is what makes "count every
+  corrected record, but only show full detail for genuine data loss"
+  work -- `_SUMMARIZE_NO_DATA_LOSS_ENTRIES`, which collapses every
+  NO-DATA-LOSS merge in a run into a single count line and only lists
+  the true-DATA-LOSS ones individually (same mechanism
+  `strip_duplicate_non_repeatable_fields` already uses; confirmed working
+  against the kitchen sink run: 10 records matched, 7 collapsed to "7
+  record(s) where the fields are exact duplicates", 3 listed in full with
+  the dropped LCCN named in each).
+* `docs/REPAIR_CATEGORIES.md` regenerated via
+  `tools/generate_repair_categories_doc.py` after adding its `CategoryRow`
+  entry.
+* `tests/test_marc_repair_bib.py`: new `TestDedupe010Fields` (14 tests) --
+  every permutation discussed with the user (identical $a, whitespace-
+  only-different $a, two $a in one field, same-$a/different-$z,
+  different-$a/different-$z, different-$a/identical-$z, $a-in-one-$z-in-
+  other, $b-treated-like-$z, duplicate-$z removal, no-$a-anywhere,
+  three-way merge, merged field keeps its original position) plus an
+  end-to-end `main()` + log-format test confirming the category header,
+  the DATA LOSS call, and the dropped value all land in the log.
+* `tests/fixtures/build_kitchen_sink.py`: 10 new `ks-010*` records (one
+  per permutation above, reusing the same combinations) --
+  `kitchen_sink_bib.mrc`/`kitchen_sink_holdings.mrc`/`kitchen_sink_mixed.mrc`
+  regenerated (still 50 bib records; no test hard-codes a bib-side
+  per-category count, so nothing else needed updating).
+
+Re-ran the full `marc_repair.py` pipeline against
+`working/WTS_bibs_2026-10-01.out` (259,369 records, ~87s) to confirm
+against real data, not just synthetic fixtures: `deduped_010_lccn` fired
+on exactly the same 41 records the earlier one-off pymarc scan had found,
+collapsed 39 whitespace-only-difference merges to a count, and listed the
+2 genuinely-different-LCCN records in full (`.b11189708`:
+`2014004555`/`2013036218`; `.b11255201`: `2018031265`/`2018028463`) with
+the dropped value named in each -- matches expectations exactly.
+
+**Open follow-up:**
+- Commit/push once reviewed (nothing has been committed yet).
+
 ### OPEN -- Narrowed 010 $a repair to the one condition that actually breaks FOLIO import (2026-10-16)
 
 **Status: code + tests done locally (full suite 443 passed/1 skipped), NOT

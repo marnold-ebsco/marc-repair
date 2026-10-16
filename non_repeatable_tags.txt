@@ -28,7 +28,11 @@
 008
 
 # Numbers and codes
-010
+#
+# 010 is deliberately NOT here -- its own dedicated merge
+# (dedupe_010_fields, which always runs, ahead of this generic pass) keeps
+# $z/$b from every occurrence instead of just dropping them along with
+# the rest of a later duplicate field.
 040
 
 # Main entry headings -- only one of 100/110/111 can legitimately be

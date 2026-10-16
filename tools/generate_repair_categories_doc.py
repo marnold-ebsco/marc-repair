@@ -215,6 +215,28 @@ BIB_ROWS = [
         "-- (no switch -- always runs and always logged)",
     ),
     CategoryRow(
+        "010 (LCCN) deduplication -- a record with more than one 010, or a "
+        "single 010 with more than one $a, is merged into exactly one. "
+        "Every $a is compared with its whitespace stripped: if they all "
+        "normalize the same, the stripped value survives and nothing is "
+        "lost; if two or more normalize to genuinely different values, "
+        "only the first is kept and the rest are discarded (real DATA "
+        "LOSS). Every $z (Canceled/Invalid LCCN) and $b (NUCMC control "
+        "number -- rare, treated the same as $z) from every original 010 "
+        "always survives onto the merged field, de-duplicated. Runs "
+        "after the whitespace-only-$a removal above and before the "
+        "generic duplicate-non-repeatable-field removal below, since "
+        "010 is deliberately excluded from that generic pass "
+        "(non_repeatable_tags.txt) to avoid losing $z/$b along with a "
+        "whole discarded duplicate field",
+        "Merged all 010 fields into one (see non_repeatable_tags.txt "
+        "note)",
+        "Yes, always", "`deduped_010_lccn`", "FIXED/REQUIRES ATTENTION",
+        "**Yes** (only true DATA LOSS instances; identical-except-"
+        "whitespace merges are summarized as a count)",
+        "-- (no switch -- always runs and always logged)",
+    ),
+    CategoryRow(
         "880 (Alternate Graphic Representation) missing/effectively-empty "
         "$a -- reuses the same missing-required-$a check above, as its own "
         "category: an 880 exists solely to carry a linked vernacular/"

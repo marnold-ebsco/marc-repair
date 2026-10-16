@@ -170,7 +170,7 @@ RECTERM = "\x1d"
 # needed. Tags not listed fall back to FALLBACK_CODES (permissive: any lowercase
 # letter or digit), which is more likely to produce ambiguous splits.
 KNOWN_SUBFIELD_CODES: dict[str, set[str]] = {
-    "010": set("az"),
+    "010": set("abz"),
     "015": set("a2"),
     "020": set("acz"),
     "022": set("ayz"),
@@ -4918,6 +4918,133 @@ def strip_whitespace_only_010_a(parsed: ParsedRecord) -> list[str]:
     return details
 
 
+_WHITESPACE_RUN_RE = re.compile(r"\s+")
+
+
+def _normalize_010_value(value: str) -> str:
+    """Strip ALL whitespace from a 010 subfield value (not just leading/
+    trailing) -- used both to compare 010 $a/$z/$b values across a
+    record's multiple 010 fields and as the actual stored form once
+    `dedupe_010_fields` has decided which value survives. LCCNs are
+    conventionally padded with leading spaces to a fixed width (e.g.
+    "  2013008343"); that padding is formatting, not data, so the
+    surviving value is always the stripped one."""
+    return _WHITESPACE_RUN_RE.sub("", value)
+
+
+def dedupe_010_fields(parsed: ParsedRecord) -> list[str]:
+    """Collapse a record's multiple 010 (LCCN) fields -- or a single 010
+    with more than one $a, which is rarer but does happen -- down to
+    exactly one. MARC21 (and FOLIO) treat 010 as Not Repeatable, but
+    duplicates show up in practice: almost always the same LCCN typed
+    twice (sometimes with different padding), occasionally a genuinely
+    different number, sometimes a $a on one occurrence and only a $z
+    (Canceled/Invalid LCCN) or $b (NUCMC control number -- rare, and
+    treated identically to $z here) on another.
+
+    Deliberately its own repair rather than relying on
+    `strip_duplicate_non_repeatable_fields`: that generic pass would
+    just keep the first 010 and silently drop every other one whole --
+    $z/$b included -- which is exactly the data this function exists to
+    save. (non_repeatable_tags.txt deliberately excludes "010" for this
+    reason, and this function must run before that one.)
+
+    Must also run after `strip_whitespace_only_010_a`: a 010 $a that's
+    nothing but whitespace needs to already be gone before this looks
+    at what's left on the field.
+
+    Rules:
+
+      * Every $a across all of the record's 010 fields (including more
+        than one within the same field) is compared with its whitespace
+        fully stripped. If they all normalize the same, that's NO DATA
+        LOSS -- only formatting differed -- and the stripped value is
+        what's kept.
+      * If two or more $a values normalize to genuinely different
+        values, the first one found (document order) is kept and every
+        other one is discarded. This is real DATA LOSS, and is always
+        logged in detail naming every value involved.
+      * Every $z and $b from every 010 on the record is carried onto
+        the single surviving field, each normalized the same way and
+        de-duplicated (separately per code) -- so a $z or $b is never
+        lost just because it happened to live on a different 010 than
+        the $a that survived, or because another 010 had no $a at all.
+
+    A record with only one 010, carrying only one $a, is untouched
+    (the common case -- nothing to merge)."""
+    tag_fields = [f for f in parsed.fields if f.tag == "010" and not f.is_control()]
+    if not tag_fields:
+        return []
+    total_a = sum(1 for f in tag_fields for code, _ in f.subfields if code == "a")
+    if len(tag_fields) == 1 and total_a <= 1:
+        return []
+
+    kept_field = tag_fields[0]
+    tag_field_ids = {id(f) for f in tag_fields}
+
+    a_values: list[str] = []
+    zb_values: list[tuple[str, str]] = []
+    for f in tag_fields:
+        for code, data in f.subfields:
+            if code == "a":
+                a_values.append(data)
+            elif code in ("z", "b"):
+                zb_values.append((code, data))
+
+    distinct_a_norms: list[str] = []
+    for raw in a_values:
+        norm = _normalize_010_value(raw)
+        if norm not in distinct_a_norms:
+            distinct_a_norms.append(norm)
+
+    surviving_a = distinct_a_norms[0] if distinct_a_norms else None
+    dropped_a_norms = distinct_a_norms[1:]
+    data_loss = bool(dropped_a_norms)
+
+    seen_zb: dict[str, set[str]] = {"z": set(), "b": set()}
+    kept_zb: list[tuple[str, str]] = []
+    for code, raw in zb_values:
+        norm = _normalize_010_value(raw)
+        if norm in seen_zb[code]:
+            continue
+        seen_zb[code].add(norm)
+        kept_zb.append((code, norm))
+
+    new_subfields = ([("a", surviving_a)] if surviving_a is not None else []) + kept_zb
+
+    before = "; ".join(
+        f.indicators + "".join(f"${c}{d}" for c, d in f.subfields) for f in tag_fields
+    )
+    after = "".join(f"${c}{d}" for c, d in new_subfields)
+
+    if data_loss:
+        detail = (
+            f"merged {len(tag_fields)} =010 field(s) [{before}] into one "
+            f"({kept_field.indicators}{after}) -- kept $a{surviving_a}, "
+            f"DROPPED {', '.join(f'$a{a}' for a in dropped_a_norms)} -- DATA LOSS"
+        )
+    else:
+        detail = (
+            f"merged {len(tag_fields)} =010 field(s) [{before}] into one "
+            f"({kept_field.indicators}{after}) -- NO DATA LOSS"
+        )
+
+    merged_field = Field_(tag="010", indicators=kept_field.indicators, subfields=new_subfields)
+
+    new_fields: list[Field_] = []
+    inserted = False
+    for f in parsed.fields:
+        if id(f) in tag_field_ids:
+            if not inserted:
+                new_fields.append(merged_field)
+                inserted = True
+            continue
+        new_fields.append(f)
+    parsed.fields = new_fields
+
+    return [detail]
+
+
 #: 880 (Alternate Graphic Representation) run of `strip_missing_required_a`
 #: on its own (unlike 010 above, this one still uses the general
 #: missing/punctuation-only-$a rule -- an 880 has no $z-style fallback
@@ -5649,6 +5776,7 @@ _FIXED_REQUIRES_ATTENTION = {
     "invalid_bibliographic_level",
     "holdings_852_b_suspect_content",
     "removed_010_whitespace_a",
+    "deduped_010_lccn",
     "removed_880_missing_a",
     "removed_untranscodable_subfield",
 }
@@ -5790,6 +5918,13 @@ _CHECK_DESCRIPTIONS: dict[str, str] = {
     "rejects the record). Only the $a subfield is removed; any $z (Canceled/Invalid LCCN) in "
     "the same field is kept. A 010 with no $a at all, an empty $a, or a punctuation-only (but "
     "not whitespace-only) $a is left untouched -- each imports successfully as-is.",
+    "deduped_010_lccn": "A record had more than one 010 (LCCN) field, or a single 010 with more "
+    "than one $a -- merged into exactly one 010. Every $a on the record is compared with its "
+    "whitespace stripped: if they all normalize the same, the stripped value is kept and "
+    "nothing is lost; if two or more normalize to genuinely different values, only the first "
+    "is kept and the rest are discarded. Every $z (Canceled/Invalid LCCN) and $b (NUCMC "
+    "control number -- rare, treated the same as $z) from every original 010 is always "
+    "carried onto the surviving field, de-duplicated.",
     "removed_880_missing_a": "An 880 (Alternate Graphic Representation) field whose $a was empty or "
     "effectively empty (e.g. all spaces, or punctuation only) -- the whole "
     "field removed, including any $6 linking data it carried.",
@@ -5949,6 +6084,7 @@ _CHECK_DATA_LOSS: dict[str, str] = {
     "removed_non_repeatable_duplicate": "POSSIBLE DATA LOSS",
     "field_removed_because_missing_a": "POSSIBLE DATA LOSS",
     "removed_010_whitespace_a": "NO DATA LOSS",
+    "deduped_010_lccn": "POSSIBLE DATA LOSS",
     "removed_880_missing_a": "DATA LOSS",
     "removed_invalid_subfield": "POSSIBLE DATA LOSS",
     "removed_untranscodable_subfield": "DATA LOSS",
@@ -6034,6 +6170,7 @@ _ALWAYS_FULL_CATEGORIES = {
     "removed_non_repeatable_duplicate",
     "field_removed_because_missing_a",
     "removed_010_whitespace_a",
+    "deduped_010_lccn",
     "removed_880_missing_a",
     "removed_invalid_subfield",
     "removed_untranscodable_subfield",
@@ -6075,6 +6212,7 @@ _ALWAYS_FULL_CATEGORIES = {
 #: DATA LOSS entries that do.
 _SUMMARIZE_NO_DATA_LOSS_ENTRIES = {
     "removed_non_repeatable_duplicate",
+    "deduped_010_lccn",
 }
 
 
@@ -7955,6 +8093,9 @@ def main(argv: list[str] | None = None) -> int:
                 rec_id = record_identifier(parsed)
                 for detail in strip_whitespace_only_010_a(parsed):
                     log("removed_010_whitespace_a", True, i, rec_id, detail)
+                rec_id = record_identifier(parsed)
+                for detail in dedupe_010_fields(parsed):
+                    log("deduped_010_lccn", True, i, rec_id, detail)
                 rec_id = record_identifier(parsed)
                 for detail in strip_missing_required_a(parsed, _880_REQUIRED_A_TAGS):
                     log("removed_880_missing_a", True, i, rec_id, detail)

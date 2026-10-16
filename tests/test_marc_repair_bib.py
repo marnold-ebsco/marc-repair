@@ -1975,6 +1975,261 @@ class TestStrip010WhitespaceOnlyA:
 
 
 # ---------------------------------------------------------------------------
+# dedupe_010_fields -- collapses a record's multiple 010 (LCCN) fields (or
+# a single 010 with more than one $a) down to exactly one. Must run after
+# strip_whitespace_only_010_a above and before
+# strip_duplicate_non_repeatable_fields (010 is deliberately excluded from
+# non_repeatable_tags.txt for exactly this reason -- that generic pass
+# would otherwise just keep the first 010 and silently drop every $z/$b on
+# the rest).
+# ---------------------------------------------------------------------------
+
+class TestDedupe010Fields:
+    def test_single_010_one_a_is_untouched(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[m.Field_("010", "  ", [("a", "2013008343")])],
+        )
+        assert m.dedupe_010_fields(parsed) == []
+        assert len(parsed.fields) == 1
+
+    def test_two_010s_identical_a_merge_no_data_loss(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[
+                m.Field_("010", "  ", [("a", "2013008343")]),
+                m.Field_("010", "  ", [("a", "2013008343")]),
+            ],
+        )
+        details = m.dedupe_010_fields(parsed)
+        assert len(details) == 1
+        assert "NO DATA LOSS" in details[0]
+        assert "DROPPED" not in details[0]
+        remaining = [f for f in parsed.fields if f.tag == "010"]
+        assert len(remaining) == 1
+        assert remaining[0].subfields == [("a", "2013008343")]
+
+    def test_two_010s_a_differs_only_by_whitespace_merges_to_stripped_value(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[
+                m.Field_("010", "  ", [("a", "  2013008343")]),
+                m.Field_("010", "  ", [("a", "2013008343")]),
+            ],
+        )
+        details = m.dedupe_010_fields(parsed)
+        assert len(details) == 1
+        assert "NO DATA LOSS" in details[0]
+        remaining = [f for f in parsed.fields if f.tag == "010"]
+        assert len(remaining) == 1
+        assert remaining[0].subfields == [("a", "2013008343")]
+
+    def test_two_a_in_one_field_first_kept_second_dropped(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[
+                m.Field_("010", "  ", [("a", "2018031265"), ("a", "2018031265")]),
+            ],
+        )
+        details = m.dedupe_010_fields(parsed)
+        assert len(details) == 1
+        assert "NO DATA LOSS" in details[0]
+        assert parsed.fields[0].subfields == [("a", "2018031265")]
+
+    def test_same_a_different_z_keeps_a_and_both_z(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[
+                m.Field_("010", "  ", [("a", "2013008343"), ("z", "11111111")]),
+                m.Field_("010", "  ", [("a", "2013008343"), ("z", "22222222")]),
+            ],
+        )
+        details = m.dedupe_010_fields(parsed)
+        assert len(details) == 1
+        assert "NO DATA LOSS" in details[0]
+        remaining = [f for f in parsed.fields if f.tag == "010"]
+        assert len(remaining) == 1
+        assert remaining[0].subfields == [
+            ("a", "2013008343"), ("z", "11111111"), ("z", "22222222"),
+        ]
+
+    def test_different_a_different_z_second_a_dropped_both_z_kept(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[
+                m.Field_("010", "  ", [("a", "2018031265"), ("z", "11111111")]),
+                m.Field_("010", "  ", [("a", "2018028463"), ("z", "22222222")]),
+            ],
+        )
+        details = m.dedupe_010_fields(parsed)
+        assert len(details) == 1
+        assert "DATA LOSS" in details[0]
+        assert "NO DATA LOSS" not in details[0]
+        assert "2018028463" in details[0]
+        remaining = [f for f in parsed.fields if f.tag == "010"]
+        assert len(remaining) == 1
+        assert remaining[0].subfields == [
+            ("a", "2018031265"), ("z", "11111111"), ("z", "22222222"),
+        ]
+
+    def test_different_a_identical_z_second_a_dropped_z_deduped(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[
+                m.Field_("010", "  ", [("a", "2018031265"), ("z", "99999999")]),
+                m.Field_("010", "  ", [("a", "2018028463"), ("z", "99999999")]),
+            ],
+        )
+        details = m.dedupe_010_fields(parsed)
+        assert len(details) == 1
+        assert "DATA LOSS" in details[0]
+        assert "NO DATA LOSS" not in details[0]
+        remaining = [f for f in parsed.fields if f.tag == "010"]
+        assert len(remaining) == 1
+        assert remaining[0].subfields == [("a", "2018031265"), ("z", "99999999")]
+
+    def test_a_in_one_z_only_in_other_combines_no_data_loss(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[
+                m.Field_("010", "  ", [("a", "2018031265")]),
+                m.Field_("010", "  ", [("z", "99999999")]),
+            ],
+        )
+        details = m.dedupe_010_fields(parsed)
+        assert len(details) == 1
+        assert "NO DATA LOSS" in details[0]
+        remaining = [f for f in parsed.fields if f.tag == "010"]
+        assert len(remaining) == 1
+        assert remaining[0].subfields == [("a", "2018031265"), ("z", "99999999")]
+
+    def test_b_treated_exactly_like_z(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[
+                m.Field_("010", "  ", [("a", "2018031265"), ("z", "11111111")]),
+                m.Field_("010", "  ", [("a", "2018031265"), ("b", "  22222222")]),
+            ],
+        )
+        details = m.dedupe_010_fields(parsed)
+        assert len(details) == 1
+        assert "NO DATA LOSS" in details[0]
+        remaining = [f for f in parsed.fields if f.tag == "010"]
+        assert len(remaining) == 1
+        assert remaining[0].subfields == [
+            ("a", "2018031265"), ("z", "11111111"), ("b", "22222222"),
+        ]
+
+    def test_duplicate_z_removed(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[
+                m.Field_("010", "  ", [("a", "2018031265"), ("z", "99999999")]),
+                m.Field_("010", "  ", [("a", "2018031265"), ("z", "  99999999")]),
+            ],
+        )
+        details = m.dedupe_010_fields(parsed)
+        assert len(details) == 1
+        assert "NO DATA LOSS" in details[0]
+        remaining = [f for f in parsed.fields if f.tag == "010"]
+        assert remaining[0].subfields == [("a", "2018031265"), ("z", "99999999")]
+
+    def test_no_a_anywhere_merges_z_only(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[
+                m.Field_("010", "  ", [("z", "11111111")]),
+                m.Field_("010", "  ", [("z", "22222222")]),
+            ],
+        )
+        details = m.dedupe_010_fields(parsed)
+        assert len(details) == 1
+        assert "NO DATA LOSS" in details[0]
+        remaining = [f for f in parsed.fields if f.tag == "010"]
+        assert len(remaining) == 1
+        assert remaining[0].subfields == [("z", "11111111"), ("z", "22222222")]
+
+    def test_three_way_merge(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[
+                m.Field_("010", "  ", [("a", "2018031265")]),
+                m.Field_("010", "  ", [("a", "2018028463"), ("z", "11111111")]),
+                m.Field_("010", "  ", [("z", "22222222")]),
+            ],
+        )
+        details = m.dedupe_010_fields(parsed)
+        assert len(details) == 1
+        assert "DATA LOSS" in details[0]
+        assert "NO DATA LOSS" not in details[0]
+        assert "2018028463" in details[0]
+        remaining = [f for f in parsed.fields if f.tag == "010"]
+        assert len(remaining) == 1
+        assert remaining[0].subfields == [
+            ("a", "2018031265"), ("z", "11111111"), ("z", "22222222"),
+        ]
+
+    def test_merged_field_takes_place_of_first_010(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[
+                m.Field_("245", "00", [("a", "Title.")]),
+                m.Field_("010", "  ", [("a", "2013008343")]),
+                m.Field_("040", "  ", [("a", "DLC")]),
+                m.Field_("010", "  ", [("a", "2013008343")]),
+            ],
+        )
+        m.dedupe_010_fields(parsed)
+        tags = [f.tag for f in parsed.fields]
+        assert tags == ["245", "010", "040"]
+
+    def test_bib_pipeline_logs_under_own_category_and_runs_before_generic_dedup(
+        self, tmp_path,
+    ):
+        parsed = m.ParsedRecord(
+            leader=_VALID_LEADER,
+            entries=[],
+            fields=[
+                m.Field_("001", None, None, content="997"),
+                m.Field_("008", None, None, content="x" * 40),
+                m.Field_("010", "  ", [("a", "2018031265"), ("z", "11111111")]),
+                m.Field_("010", "  ", [("a", "2018028463"), ("z", "22222222")]),
+                m.Field_("245", "00", [("a", "Some title.")]),
+            ],
+        )
+        src = tmp_path / "bib.mrc"
+        src.write_bytes(m.assemble_marc(parsed))
+        out = tmp_path / "out.mrc"
+        log = tmp_path / "run.log"
+        rc = m.main([str(src), "-o", str(out), "--log", str(log)])
+        assert rc == 0
+        content = _resolve_log(log).read_text(encoding="utf-8")
+        assert "=== FIXED/REQUIRES ATTENTION: deduped_010_lccn ===" in content
+        assert "DATA LOSS" in content
+        assert "2018028463" in content
+        assert _detail_line_marker("deduped_010_lccn").search(content)
+        out_parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
+        out_010s = [f for f in out_parsed.fields if f.tag == "010"]
+        assert len(out_010s) == 1
+        assert out_010s[0].subfields == [
+            ("a", "2018031265"), ("z", "11111111"), ("z", "22222222"),
+        ]
+
+
+# ---------------------------------------------------------------------------
 # 880 (Alternate Graphic Representation) missing/effectively-empty $a --
 # reuses strip_missing_required_a under its own category
 # (removed_880_missing_a), since an 880's other subfields ($6 linking data,

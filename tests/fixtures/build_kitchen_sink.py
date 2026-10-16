@@ -300,6 +300,109 @@ def build_bib_records() -> list[bytes]:
         m.Field_("245", "  ", [("a", "2nd ed.")]),
     ]))
 
+    # deduped_010_lccn: two 010s whose $a is the same LCCN, differing
+    # only by whitespace padding -- merged into one, NO DATA LOSS.
+    records.append(_record(_BIB_LEADER, [
+        m.Field_("001", None, None, content="ks-010dup-ws"),
+        m.Field_("008", None, None, content="x" * 40),
+        m.Field_("245", "00", [("a", "Title.")]),
+        m.Field_("010", "  ", [("a", "  2013008343")]),
+        m.Field_("010", "  ", [("a", "2013008343")]),
+    ]))
+
+    # deduped_010_lccn: a single 010 field with two $a subfields --
+    # first kept, second dropped, NO DATA LOSS (identical values).
+    records.append(_record(_BIB_LEADER, [
+        m.Field_("001", None, None, content="ks-010dup-a-within"),
+        m.Field_("008", None, None, content="x" * 40),
+        m.Field_("245", "00", [("a", "Title.")]),
+        m.Field_("010", "  ", [("a", "2018031265"), ("a", "2018031265")]),
+    ]))
+
+    # deduped_010_lccn: same $a, different $z in each -- merged into one
+    # 010 with both $z kept, NO DATA LOSS.
+    records.append(_record(_BIB_LEADER, [
+        m.Field_("001", None, None, content="ks-010dup-a-same-z-diff"),
+        m.Field_("008", None, None, content="x" * 40),
+        m.Field_("245", "00", [("a", "Title.")]),
+        m.Field_("010", "  ", [("a", "2013008343"), ("z", "11111111")]),
+        m.Field_("010", "  ", [("a", "2013008343"), ("z", "22222222")]),
+    ]))
+
+    # deduped_010_lccn: different $a, different $z in each -- second $a
+    # dropped (real DATA LOSS, logged in full), both $z kept.
+    records.append(_record(_BIB_LEADER, [
+        m.Field_("001", None, None, content="ks-010dup-a-diff-z-diff"),
+        m.Field_("008", None, None, content="x" * 40),
+        m.Field_("245", "00", [("a", "Title.")]),
+        m.Field_("010", "  ", [("a", "2018031265"), ("z", "11111111")]),
+        m.Field_("010", "  ", [("a", "2018028463"), ("z", "22222222")]),
+    ]))
+
+    # deduped_010_lccn: different $a, but identical $z in both -- second
+    # $a dropped (DATA LOSS), $z deduped down to one.
+    records.append(_record(_BIB_LEADER, [
+        m.Field_("001", None, None, content="ks-010dup-a-diff-z-same"),
+        m.Field_("008", None, None, content="x" * 40),
+        m.Field_("245", "00", [("a", "Title.")]),
+        m.Field_("010", "  ", [("a", "2018031265"), ("z", "99999999")]),
+        m.Field_("010", "  ", [("a", "2018028463"), ("z", "99999999")]),
+    ]))
+
+    # deduped_010_lccn: one 010 has $a, the other only $z -- combined
+    # into one 010, NO DATA LOSS.
+    records.append(_record(_BIB_LEADER, [
+        m.Field_("001", None, None, content="ks-010-a-and-z-only"),
+        m.Field_("008", None, None, content="x" * 40),
+        m.Field_("245", "00", [("a", "Title.")]),
+        m.Field_("010", "  ", [("a", "2018031265")]),
+        m.Field_("010", "  ", [("z", "99999999")]),
+    ]))
+
+    # deduped_010_lccn: $b (NUCMC control number, rare) treated exactly
+    # like $z -- carried onto the merged field alongside it.
+    records.append(_record(_BIB_LEADER, [
+        m.Field_("001", None, None, content="ks-010-b-like-z"),
+        m.Field_("008", None, None, content="x" * 40),
+        m.Field_("245", "00", [("a", "Title.")]),
+        m.Field_("010", "  ", [("a", "2018031265"), ("z", "11111111")]),
+        m.Field_("010", "  ", [("a", "2018031265"), ("b", "  22222222")]),
+    ]))
+
+    # deduped_010_lccn: all 010s have only $z, no $a anywhere on the
+    # record -- merged into one $z-only 010, dups removed.
+    records.append(_record(_BIB_LEADER, [
+        m.Field_("001", None, None, content="ks-010-z-only-no-a"),
+        m.Field_("008", None, None, content="x" * 40),
+        m.Field_("245", "00", [("a", "Title.")]),
+        m.Field_("010", "  ", [("z", "11111111")]),
+        m.Field_("010", "  ", [("z", "11111111")]),
+        m.Field_("010", "  ", [("z", "22222222")]),
+    ]))
+
+    # deduped_010_lccn: three 010s mixing the above, to confirm the
+    # merge generalizes past a simple pair.
+    records.append(_record(_BIB_LEADER, [
+        m.Field_("001", None, None, content="ks-010-three-way"),
+        m.Field_("008", None, None, content="x" * 40),
+        m.Field_("245", "00", [("a", "Title.")]),
+        m.Field_("010", "  ", [("a", "2018031265")]),
+        m.Field_("010", "  ", [("a", "2018028463"), ("z", "11111111")]),
+        m.Field_("010", "  ", [("z", "22222222")]),
+    ]))
+
+    # deduped_010_lccn interaction with strip_whitespace_only_010_a: one
+    # 010's $a is whitespace-only (stripped by that repair first, which
+    # must run before this one) alongside a second normal 010 -- the
+    # survivor is a clean single 010 with only the real $a.
+    records.append(_record(_BIB_LEADER, [
+        m.Field_("001", None, None, content="ks-010-ws-a-then-dup"),
+        m.Field_("008", None, None, content="x" * 40),
+        m.Field_("245", "00", [("a", "Title.")]),
+        m.Field_("010", "  ", [("a", "   "), ("z", "11111111")]),
+        m.Field_("010", "  ", [("a", "2018031265")]),
+    ]))
+
     # added_field: a record missing tag 590 -- inserted only when
     # --ensure-field "590:  :a=Ensured field" is passed on this whole run.
     records.append(_record(_BIB_LEADER, [
