@@ -300,7 +300,7 @@ class Ambiguous(Exception):
         self.tag = tag
         self.content = content
         self.candidates = candidates
-        super().__init__(f"tag {tag}: {len(candidates)} possible subfield splits for {content!r}")
+        super().__init__(f"={tag}: {len(candidates)} possible subfield splits for {content!r}")
 
 
 @dataclass
@@ -1368,7 +1368,7 @@ def check_holdings_record(rec_text: str, encoding: str) -> tuple[list[tuple[str,
         end = rec_text.find(FIELDTERM, pos)
         if end == -1:
             issues.append((
-                "holdings_bad_directory", f"tag {entry.tag}: field terminator not found"
+                "holdings_bad_directory", f"={entry.tag}: field terminator not found"
             ))
             break
         content = rec_text[pos:end]
@@ -1381,7 +1381,7 @@ def check_holdings_record(rec_text: str, encoding: str) -> tuple[list[tuple[str,
         if spaces_needed:
             issues.append((
                 "holdings_bad_indicators",
-                f"tag {entry.tag}: bad indicators ({spaces_needed} character(s) "
+                f"={entry.tag}: bad indicators ({spaces_needed} character(s) "
                 "missing before the first subfield)",
             ))
         body = content[2:]
@@ -1392,12 +1392,12 @@ def check_holdings_record(rec_text: str, encoding: str) -> tuple[list[tuple[str,
             if code not in FALLBACK_CODES:
                 issues.append((
                     "holdings_invalid_subfield_code",
-                    f"tag {entry.tag}: invalid subfield code {code!r}",
+                    f"={entry.tag}: invalid subfield code {code!r}",
                 ))
             elif not data:
                 issues.append((
                     "holdings_null_identifier",
-                    f"tag {entry.tag}: subfield ${code} has no data (null identifier)",
+                    f"={entry.tag}: subfield ${code} has no data (null identifier)",
                 ))
         pos = end + 1
     return issues, record_id
@@ -1756,13 +1756,13 @@ def assemble_marc(parsed: ParsedRecord) -> bytes:
         length = len(chunk)
         if length > 9999:
             raise RepairError(
-                f"tag {f.tag}: field is {length} bytes, but the directory's "
+                f"={f.tag}: field is {length} bytes, but the directory's "
                 "length field is only 4 digits (max 9999) -- can't represent "
                 "this field in ISO 2709 at all"
             )
         if running > 99999:
             raise RepairError(
-                f"tag {f.tag}: starting offset {running} exceeds the directory's "
+                f"={f.tag}: starting offset {running} exceeds the directory's "
                 "5-digit starting-position field (max 99999)"
             )
         dir_entries.append(f"{f.tag:>3}{length:04d}{running:05d}")
@@ -1957,7 +1957,7 @@ def find_suspicious_fields(parsed: ParsedRecord) -> list[tuple[str, str]]:
             if code == "u" and _DOUBLED_PROXY_PREFIX.search(data):
                 warnings.append((
                     "doubled_proxy_url",
-                    f"tag {f.tag} $u has a literally duplicated proxy prefix: {data!r}",
+                    f"={f.tag} $u has a literally duplicated proxy prefix: {data!r}",
                 ))
     return warnings
 
@@ -1982,7 +1982,7 @@ def find_invalid_indicator_values(parsed: ParsedRecord) -> list[tuple[str, str]]
             if ch not in VALID_INDICATOR_CHARS:
                 findings.append((
                     "invalid_indicator_value",
-                    f"tag {f.tag} indicators {f.indicators!r}: indicator {pos} is "
+                    f"={f.tag} indicators {f.indicators!r}: indicator {pos} is "
                     f"{ch!r}, not a digit or blank",
                 ))
     return findings
@@ -3547,7 +3547,7 @@ def find_suspect_hex_encoded_marc8(parsed: ParsedRecord) -> list[tuple[str, str]
                 subfield_label = f" ${code}" if code else ""
                 findings.append((
                     "suspect_hex_encoded_marc8",
-                    f"tag {f.tag}{subfield_label}: recovers {preview!r}; "
+                    f"={f.tag}{subfield_label}: recovers {preview!r}; "
                     f"{data_loss}; {n_groups} \"{{xxxxxx}}\" hex-brace "
                     f"group(s), {layers} layer(s) deep{context_suffix}",
                 ))
@@ -3660,7 +3660,7 @@ def transcode_marc8_to_utf8(parsed: ParsedRecord) -> tuple[bool, list[str]]:
         return result
 
     def convert_labeled(text: str, label: str) -> str:
-        # Wraps `convert` to re-raise with `label` (e.g. "tag 500 $a")
+        # Wraps `convert` to re-raise with `label` (e.g. "=500 $a")
         # and ~10 characters of context before / ~20 after the actual
         # error position -- a bare UnicodeDecodeError only names a byte
         # offset, giving a human nothing to go on to find the field
@@ -3715,13 +3715,13 @@ def transcode_marc8_to_utf8(parsed: ParsedRecord) -> tuple[bool, list[str]]:
     for idx, f in enumerate(parsed.fields):
         if f.is_control():
             if f.content:
-                new_control_content[idx] = convert_labeled(f.content, f"tag {f.tag}")
+                new_control_content[idx] = convert_labeled(f.content, f"={f.tag}")
             continue
         kept_subfields = []
         whole_field_broken = False
         for code, data in f.subfields:
             try:
-                converted = convert_labeled(data, f"tag {f.tag} ${code}")
+                converted = convert_labeled(data, f"={f.tag} ${code}")
             except RuntimeError as exc:
                 if code == "a":
                     removed_details.append(
@@ -5398,7 +5398,7 @@ def strip_null_identifiers(parsed: ParsedRecord) -> list[str]:
             continue
         f.subfields = [(code, data) for code, data in f.subfields if data]
         for code in removed_codes:
-            details.append(f"tag {f.tag}: removed subfield ${code} (null identifier, had no data)")
+            details.append(f"={f.tag}: removed subfield ${code} (null identifier, had no data)")
     return details
 
 

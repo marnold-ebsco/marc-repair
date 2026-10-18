@@ -1195,7 +1195,7 @@ class TestFindSuspectHexEncodedMarc8:
         assert len(findings) == 1
         category, detail = findings[0]
         assert category == "suspect_hex_encoded_marc8"
-        assert "tag 880 $a" in detail
+        assert "=880 $a" in detail
         assert "2 layer(s) deep" in detail
         assert "마가복음" in detail
         assert "recovered" in detail
@@ -1274,8 +1274,8 @@ class TestFindSuspectHexEncodedMarc8:
         )
         findings = m.find_suspect_hex_encoded_marc8(parsed)
         assert len(findings) == 1
-        assert "tag 007" in findings[0][1]
-        assert "$" not in findings[0][1].split("tag 007", 1)[1].split(":")[0]
+        assert "=007" in findings[0][1]
+        assert "$" not in findings[0][1].split("=007", 1)[1].split(":")[0]
 
 
 class TestTranscodeMarc8:
@@ -1462,7 +1462,7 @@ class TestTranscodeMarc8:
                 m.Field_("007", None, None, content="S\xe5cond"),
             ],
         )
-        with pytest.raises(RuntimeError, match=r"tag 007"):
+        with pytest.raises(RuntimeError, match=r"=007"):
             m.transcode_marc8_to_utf8(parsed)
         assert parsed.fields[0].subfields == [("a", "F\xe5rst")]
         assert parsed.fields[1].content == "S\xe5cond"
@@ -1504,7 +1504,7 @@ class TestTranscodeMarc8:
         assert [f.tag for f in parsed.fields] == ["100"]
         assert parsed.fields[0].subfields == [("a", "Clean name")]
         assert len(removed) == 1
-        assert "tag 880 $a" in removed[0]
+        assert "=880 $a" in removed[0]
         assert "MARC-8 encoding expected" in removed[0]
         assert "more byte(s) than the field provided" in removed[0]
         assert "<escape>" in removed[0]
@@ -1547,7 +1547,7 @@ class TestTranscodeMarc8:
             ("6", "245-01/(S"), ("a", "Clean title"), ("b", "Clean subtitle"),
         ]
         assert len(removed) == 1
-        assert "tag 880 $c" in removed[0]
+        assert "=880 $c" in removed[0]
         assert "MARC-8 encoding expected" in removed[0]
         assert "more byte(s) than the field provided" in removed[0]
         assert "<escape>" in removed[0]
