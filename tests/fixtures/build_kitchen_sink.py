@@ -427,6 +427,97 @@ def build_bib_records() -> list[bytes]:
         m.Field_("245", "00", [("a", "")]),
     ]))
 
+    # added_default_245, fallback-from-240 variant: no 245 at all, but a
+    # 240 (uniform title) with a real $a -- resolve_245_fallback should
+    # find it and use it instead of the bare "No title" placeholder.
+    records.append(_record(_BIB_LEADER, [
+        m.Field_("001", None, None, content="ks-245-from-240"),
+        m.Field_("008", None, None, content="x" * 40),
+        m.Field_("100", "1 ", [("a", "Author, Some.")]),
+        m.Field_("240", "10", [("a", "Uniform title from 240.")]),
+    ]))
+
+    # added_default_245, fallback-from-880 variant: no 245 and none of
+    # the direct fallback tags either, but an 880 (Alternate Graphic
+    # Representation) whose $6 links it to "245-00" with a real $a --
+    # resolve_245_fallback's second pass should find that.
+    records.append(_record(_BIB_LEADER, [
+        m.Field_("001", None, None, content="ks-245-from-880"),
+        m.Field_("008", None, None, content="x" * 40),
+        m.Field_("880", "00", [("6", "245-00"), ("a", "Title in original script.")]),
+    ]))
+
+    # added_default_245, abandoned-record heuristic variant: no 245 and
+    # no fallback source anywhere (no 130/240/246/242/222, no 880), and
+    # otherwise only the bare minimum a parser will keep around (001,
+    # 008, one local 907 $a) -- looks_like_abandoned_record should flag
+    # this one, so the "No title" placeholder's log line gets the extra
+    # heuristic note appended.
+    records.append(_record(_BIB_LEADER, [
+        m.Field_("001", None, None, content="ks-245-abandoned"),
+        m.Field_("008", None, None, content="x" * 40),
+        m.Field_("907", "  ", [("a", ".b00000000")]),
+    ]))
+
+    # added_default_245, NOT abandoned variant: no 245 and no fallback
+    # source either, but the record has real substantive content --
+    # looks_like_abandoned_record must NOT flag this one, proving the
+    # heuristic doesn't fire on every plain "No title" case.
+    #
+    # Real production example (working/GTU_bibs.mrc, record index
+    # 404058, identifier ".b19347352" from 907 $a -- there is no 001)
+    # reproduced field-for-field. No 245/130/240/246/242/222/880
+    # anywhere, so this falls through the whole fallback chain to the
+    # bare "No title" placeholder, but it has a 100 (author access
+    # point) plus 260/300/502 -- real cataloging content, just missing a
+    # title -- so the heuristic must not flag it as abandoned. (The 260
+    # $a here is actually a title that was mis-cataloged into 260
+    # instead of 245 -- a real-world cataloging error, left as-is since
+    # it's not what this fixture is exercising.)
+    records.append(_record(_BIB_LEADER, [
+        m.Field_("008", None, None, content=" " * 40),
+        m.Field_("100", "1 ", [("a", "Salazar, Marco Tulio Martinez")]),
+        m.Field_("260", "  ", [
+            ("a", "The ecclesial paradigm of Pope Francis: the good Samaritan Church"),
+        ]),
+        m.Field_("300", "  ", [("a", "lvs. 215")]),
+        m.Field_("502", "  ", [("a", "STD (Thesis), JSTSCU, 2025")]),
+        m.Field_("907", "  ", [
+            ("a", ".b19347352"), ("b", "12-11-25"), ("c", "08-12-25"),
+        ]),
+        m.Field_("998", "  ", [
+            ("a", "gtu"), ("a", "(2)gx"), ("a", "gth"), ("b", "  -  -  "),
+            ("c", "b"), ("d", "a  "), ("e", " "), ("f", "eng"), ("g", "   "),
+            ("h", "0"),
+        ]),
+    ]))
+
+    # added_default_245, abandoned-record heuristic variant, REAL record:
+    # a genuine production record (WTS_bibs_2026-10-01.out, record index
+    # 261564, identifier ".b1279417x" from 907 $a -- there is no 001)
+    # reproduced field-for-field. Only 3 fields total: a blank
+    # (all-spaces, not all-x/all-pipe) 008, and two local 9xx fields
+    # (907/998) -- no title, no author, no subject, nothing
+    # looks_like_abandoned_record treats as substantive. This is the
+    # real-world data point behind that heuristic deliberately NOT
+    # keying off 008 containing specifically 'x'/'|' fill characters:
+    # a real abandoned record's 008 can just be empty/blank instead.
+    records.append(_record(_BIB_LEADER, [
+        m.Field_("008", None, None, content=" " * 40),
+        m.Field_("907", "  ", [("a", ".b1279417x"), ("b", "06-10-25"), ("c", "06-10-25")]),
+        m.Field_("998", "  ", [
+            ("a", "zzzzz"),
+            ("b", "06-10-25"),
+            ("c", "-"),
+            ("d", "-  "),
+            ("e", "-"),
+            ("f", "   "),
+            ("g", "   "),
+            ("h", "0"),
+            ("i", "0"),
+        ]),
+    ]))
+
     # add_default_245, punctuation-only $a variant: a 245 $a with
     # nothing but a period -- NOTE this is a known gap, not a category
     # this tool currently fixes: add_default_245 only checks `data`

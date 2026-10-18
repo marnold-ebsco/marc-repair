@@ -3263,6 +3263,202 @@ class TestAddDefault245:
         field245 = next(f for f in results[0].fields if f.tag == "245")
         assert field245.subfields == [("a", "Real supplied title.")]
 
+    def test_uses_240_fallback_instead_of_placeholder(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[
+                m.Field_("100", "1 ", [("a", "Author, Some.")]),
+                m.Field_("240", "10", [("a", "Uniform title from 240.")]),
+            ],
+        )
+        details = m.add_default_245(parsed)
+        assert len(details) == 1
+        assert "240" in details[0]
+        field245 = next(f for f in parsed.fields if f.tag == "245")
+        assert field245.subfields == [("a", "Uniform title from 240.")]
+
+    def test_uses_880_linked_to_245_fallback(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[
+                m.Field_("880", "00", [("6", "245-00"), ("a", "Title in original script.")]),
+            ],
+        )
+        details = m.add_default_245(parsed)
+        assert len(details) == 1
+        assert "880" in details[0]
+        field245 = next(f for f in parsed.fields if f.tag == "245")
+        assert field245.subfields == [("a", "Title in original script.")]
+
+    def test_abandoned_heuristic_note_on_minimal_record(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[
+                m.Field_("008", None, None, content="x" * 40),
+                m.Field_("907", "  ", [("a", ".b00000000")]),
+            ],
+        )
+        details = m.add_default_245(parsed)
+        assert len(details) == 1
+        assert "abandoned/test record" in details[0]
+        field245 = next(f for f in parsed.fields if f.tag == "245")
+        assert field245.subfields == [("a", "No title")]
+
+    def test_abandoned_heuristic_matches_real_blank_008_record(self):
+        # Real production record (WTS_bibs_2026-10-01.out, record index
+        # 261564, id ".b1279417x" from 907 $a -- no 001 field at all):
+        # only a blank (all-spaces, not all-x/all-pipe) 008 plus two
+        # local 9xx fields. Confirms the heuristic doesn't require any
+        # specific 008 fill character -- an uninformative-but-not-x/|
+        # 008 should still count toward "no real cataloging happened".
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[
+                m.Field_("008", None, None, content=" " * 40),
+                m.Field_(
+                    "907", "  ",
+                    [("a", ".b1279417x"), ("b", "06-10-25"), ("c", "06-10-25")],
+                ),
+                m.Field_("998", "  ", [
+                    ("a", "zzzzz"), ("b", "06-10-25"), ("c", "-"), ("d", "-  "),
+                    ("e", "-"), ("f", "   "), ("g", "   "), ("h", "0"), ("i", "0"),
+                ]),
+            ],
+        )
+        details = m.add_default_245(parsed)
+        assert len(details) == 1
+        assert "abandoned/test record" in details[0]
+        field245 = next(f for f in parsed.fields if f.tag == "245")
+        assert field245.subfields == [("a", "No title")]
+
+    def test_no_abandoned_heuristic_note_with_real_content(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[
+                m.Field_("300", "  ", [("a", "1 online resource.")]),
+                m.Field_("500", "  ", [("a", "General note.")]),
+                m.Field_("650", " 0", [("a", "Some subject.")]),
+            ],
+        )
+        details = m.add_default_245(parsed)
+        assert len(details) == 1
+        assert "abandoned/test record" not in details[0]
+
+
+# ---------------------------------------------------------------------------
+# resolve_245_fallback -- find a stand-in title elsewhere in the record
+# ---------------------------------------------------------------------------
+
+class TestResolve245Fallback:
+    def test_prefers_130_over_later_tags(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[
+                m.Field_("130", "0 ", [("a", "Uniform title from 130.")]),
+                m.Field_("246", "1 ", [("a", "Varying title.")]),
+            ],
+        )
+        result = m.resolve_245_fallback(parsed)
+        assert result == ("130", [("a", "Uniform title from 130.")])
+
+    def test_skips_tag_with_empty_a_falls_through(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[
+                m.Field_("240", "10", [("a", "")]),
+                m.Field_("246", "1 ", [("a", "Varying title.")]),
+            ],
+        )
+        result = m.resolve_245_fallback(parsed)
+        assert result == ("246", [("a", "Varying title.")])
+
+    def test_880_linked_to_fallback_tag_not_just_245(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[
+                m.Field_("880", "1 ", [("6", "246-01"), ("a", "Varying title script.")]),
+            ],
+        )
+        result = m.resolve_245_fallback(parsed)
+        assert result == ("880 linked to 246", [("a", "Varying title script.")])
+
+    def test_returns_none_when_nothing_usable(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[m.Field_("500", "  ", [("a", "General note.")])],
+        )
+        assert m.resolve_245_fallback(parsed) is None
+
+
+# ---------------------------------------------------------------------------
+# looks_like_abandoned_record -- heuristic guess for the log note
+# ---------------------------------------------------------------------------
+
+class TestLooksLikeAbandonedRecord:
+    def test_true_for_minimal_record(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[
+                m.Field_("008", None, None, content="x" * 40),
+                m.Field_("907", "  ", [("a", ".b00000000")]),
+            ],
+        )
+        assert m.looks_like_abandoned_record(parsed) is True
+
+    def test_false_with_author_access_point(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[m.Field_("100", "1 ", [("a", "Author, Some.")])],
+        )
+        assert m.looks_like_abandoned_record(parsed) is False
+
+    def test_false_with_subject_access_point(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[m.Field_("650", " 0", [("a", "Some subject.")])],
+        )
+        assert m.looks_like_abandoned_record(parsed) is False
+
+    def test_false_with_too_many_substantive_fields(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[
+                m.Field_("040", "  ", [("a", "XYZ")]),
+                m.Field_("020", "  ", [("a", "1234567890")]),
+                m.Field_("035", "  ", [("a", "(OCoLC)1")]),
+                m.Field_("090", "  ", [("a", "Z1")]),
+            ],
+        )
+        assert m.looks_like_abandoned_record(parsed) is False
+
+    def test_control_fields_dont_count_toward_the_limit(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[
+                m.Field_("001", None, None, content="x1"),
+                m.Field_("003", None, None, content="x2"),
+                m.Field_("005", None, None, content="x3"),
+                m.Field_("006", None, None, content="x4"),
+                m.Field_("007", None, None, content="x5"),
+                m.Field_("008", None, None, content=" " * 40),
+            ],
+        )
+        assert m.looks_like_abandoned_record(parsed) is True
+
 
 # ---------------------------------------------------------------------------
 # add_default_008 -- placeholder 008 for records missing one entirely
@@ -4269,8 +4465,10 @@ class TestBib856MissingUCli:
             fields=[
                 m.Field_("008", None, None, content="x" * 40),
                 m.Field_("245", "00", [("a", "Title.")]),
-                m.Field_("856", "40", [("z", "Available online"),
-                                        ("a", "Fulltext EBSCOhost database")]),
+                m.Field_("856", "40", [
+                    ("z", "Available online"),
+                    ("a", "Fulltext EBSCOhost database"),
+                ]),
             ],
         )))
         out = tmp_path / "out.mrc"

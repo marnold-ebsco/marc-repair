@@ -4545,9 +4545,89 @@ DEFAULT_245_INDICATORS = "00"
 DEFAULT_245_SUBFIELDS = [("a", "No title")]
 
 
+#: Tags checked, in priority order, for a usable stand-in title when a
+#: record has no 245 $a of its own. See `resolve_245_fallback`.
+_245_FALLBACK_TAGS = ("130", "240", "246", "242", "222")
+
+
+def resolve_245_fallback(parsed: ParsedRecord) -> tuple[str, list[tuple[str, str]]] | None:
+    """Look for a real title value elsewhere in the record to use instead
+    of the bare "No title" placeholder, for a record with no 245 (or a
+    245 with no $a).
+
+    Checks `_245_FALLBACK_TAGS` in order -- 130/240 (uniform title), 246
+    (varying title), 242 (translated title), 222 (key title) -- and
+    returns the first one found with a non-empty $a, as
+    `(tag, [("a", <value>)])`. Only $a is copied, deliberately: the
+    caller is building a minimal placeholder, not reconstructing the
+    whole field, so $b/$n/$p etc. from the source field are left behind.
+
+    Failing that, looks for an 880 (Alternate Graphic Representation)
+    field linked via $6 to 245 itself, or to one of `_245_FALLBACK_TAGS`
+    (same priority order, 245 first since that's the record's own
+    directly-paired 880), with a non-empty $a. Returns
+    `(f"880 linked to {tag}", [("a", <value>)])` for the first match.
+
+    Returns None if nothing usable was found either way.
+    """
+    for tag in _245_FALLBACK_TAGS:
+        field = next((f for f in parsed.fields if f.tag == tag and not f.is_control()), None)
+        if field is None:
+            continue
+        value = next((d for c, d in field.subfields if c == "a" and d), None)
+        if value:
+            return tag, [("a", value)]
+
+    for tag in ("245",) + _245_FALLBACK_TAGS:
+        prefix = f"{tag}-"
+        for f in parsed.fields:
+            if f.tag != "880" or f.is_control():
+                continue
+            if not any(c == "6" and d.startswith(prefix) for c, d in f.subfields):
+                continue
+            value = next((d for c, d in f.subfields if c == "a" and d), None)
+            if value:
+                return f"880 linked to {tag}", [("a", value)]
+    return None
+
+
+#: Tags excluded when counting a record's "substantive" fields for
+#: `looks_like_abandoned_record` -- control fields that every record
+#: carries regardless of how much real cataloging was ever done to it.
+_ABANDONED_HEURISTIC_CONTROL_TAGS = {"001", "003", "005", "006", "007", "008"}
+
+
+def _substantive_field_count(parsed: ParsedRecord) -> int:
+    """How many fields on `parsed` aren't one of
+    `_ABANDONED_HEURISTIC_CONTROL_TAGS`. Used by
+    `looks_like_abandoned_record`."""
+    return sum(1 for f in parsed.fields if f.tag not in _ABANDONED_HEURISTIC_CONTROL_TAGS)
+
+
+def looks_like_abandoned_record(parsed: ParsedRecord) -> bool:
+    """Heuristic (not exact science -- just a judgment call worth
+    surfacing to a human, never one this tool acts on) guess that a
+    record with no title anywhere (see `resolve_245_fallback`) is an
+    abandoned or test stub rather than a genuine record that simply lost
+    its 245: very few substantive fields, no author access point (1xx),
+    no subject or added-entry access point (6xx/7xx), and no 300/500
+    carrying real content either. Only used to annotate
+    `add_default_245`'s "No title" placeholder log line -- it never
+    changes what gets written to the record.
+    """
+    substantive = [f for f in parsed.fields if f.tag not in _ABANDONED_HEURISTIC_CONTROL_TAGS]
+    if len(substantive) > 3:
+        return False
+    for f in substantive:
+        if f.tag in ("100", "110", "111", "130") or f.tag[:1] in ("6", "7"):
+            return False
+        if f.tag in ("300", "500") and not f.is_control() and any(d for _, d in f.subfields):
+            return False
+    return True
+
+
 def add_default_245(parsed: ParsedRecord) -> list[str]:
-    """Ensure every record has a 245 with a non-empty $a, using the
-    placeholder "No title" where one is missing.
+    """Ensure every record has a 245 with a non-empty $a.
 
     245 is mandatory in every MARC21 record, unlike the heading fields
     `strip_missing_required_a` strips when they lack $a (245 itself is
@@ -4558,21 +4638,59 @@ def add_default_245(parsed: ParsedRecord) -> list[str]:
     stripping the field and rebuilding it from scratch. Only a record
     with no 245 field at all gets a brand new one. No-op if 245 already
     has a non-empty $a (e.g. supplied correctly via --ensure-field, which
-    runs before this). Both cases log the same category
-    ("added_default_245") since the net effect is the same: a
-    placeholder title where a real one was missing.
+    runs before this).
+
+    When a real $a is genuinely missing, `resolve_245_fallback` is tried
+    first, so a record that has a usable title elsewhere (130/240/246/
+    242/222, or a linked 880) gets that instead of the bare "No title"
+    placeholder. Only when that also finds nothing does this fall back
+    to "No title" -- and in that case, `looks_like_abandoned_record` is
+    also checked, adding a note to the log detail (not a new log
+    category) when the record looks like a minimal/test stub rather than
+    a genuine title loss, so a human reviewing the log can tell the two
+    apart. All cases log the same category ("added_default_245") since
+    the net effect is the same: a placeholder title where a real one was
+    missing.
     """
     field245 = next((f for f in parsed.fields if f.tag == "245"), None)
-    if field245 is None:
-        ensure_field(parsed, "245", DEFAULT_245_INDICATORS, DEFAULT_245_SUBFIELDS)
-        return ["added placeholder 245 (was missing): 00 $aNo title"]
-    if any(code == "a" and data for code, data in field245.subfields):
+    if field245 is not None and any(code == "a" and data for code, data in field245.subfields):
         return []
-    # drop any $a that's present but empty, so the placeholder doesn't
-    # end up alongside a second, empty $a
-    other_subfields = [(c, d) for c, d in field245.subfields if not (c == "a" and not d)]
-    field245.subfields = list(DEFAULT_245_SUBFIELDS) + other_subfields
-    return ["added placeholder $aNo title to existing 245 (had no $a)"]
+
+    def _patch_or_insert(subfields: list[tuple[str, str]]) -> None:
+        if field245 is None:
+            ensure_field(parsed, "245", DEFAULT_245_INDICATORS, subfields)
+        else:
+            # drop any $a that's present but empty, so the new $a doesn't
+            # end up alongside a second, empty $a
+            other_subfields = [
+                (c, d) for c, d in field245.subfields if not (c == "a" and not d)
+            ]
+            field245.subfields = list(subfields) + other_subfields
+
+    fallback = resolve_245_fallback(parsed)
+    if fallback is not None:
+        source_tag, subfields = fallback
+        value = subfields[0][1]
+        _patch_or_insert(subfields)
+        return [f"populated missing 245 from {source_tag}: $a{value!r}"]
+
+    # checked before inserting the placeholder 245 itself, so a brand
+    # new 245 (field245 is None) doesn't inflate its own substantive
+    # field count
+    abandoned = looks_like_abandoned_record(parsed)
+    n = _substantive_field_count(parsed)
+
+    _patch_or_insert(DEFAULT_245_SUBFIELDS)
+    if field245 is None:
+        detail = "added placeholder 245 (was missing): 00 $aNo title"
+    else:
+        detail = "added placeholder $aNo title to existing 245 (had no $a)"
+    if abandoned:
+        detail += (
+            f" (heuristic: looks like an abandoned/test record -- {n} substantive "
+            "field(s), no author/subject access points)"
+        )
+    return [detail]
 
 
 def parse_ensure_field_spec(
