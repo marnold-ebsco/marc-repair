@@ -3183,6 +3183,29 @@ class TestUnfixableErrorFile:
 # add_default_245 -- placeholder 245 for records missing one entirely
 # ---------------------------------------------------------------------------
 
+class TestRecordMissing245:
+    def test_true_when_no_245_field(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24, entries=[],
+            fields=[m.Field_("008", None, None, content="x" * 40)],
+        )
+        assert m.record_missing_245(parsed) is True
+
+    def test_true_when_245_has_no_a(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24, entries=[],
+            fields=[m.Field_("245", "00", [("h", "[electronic resource]")])],
+        )
+        assert m.record_missing_245(parsed) is True
+
+    def test_false_when_245_has_a(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24, entries=[],
+            fields=[m.Field_("245", "00", [("a", "Real title.")])],
+        )
+        assert m.record_missing_245(parsed) is False
+
+
 class TestAddDefault245:
     def test_inserts_placeholder_when_missing(self):
         parsed = m.ParsedRecord(
@@ -3229,7 +3252,75 @@ class TestAddDefault245:
         assert details == []
         assert parsed.fields[0].subfields == [("a", "Real title.")]
 
-    def test_no_add_default_245_flag_leaves_it_missing(self, tmp_path):
+    def test_no_add_default_245_flag_diverts_to_review_file(self, tmp_path):
+        parsed = m.ParsedRecord(
+            leader=_SYNTHETIC_LEADER,
+            entries=[],
+            fields=[
+                m.Field_("001", None, None, content="no245"),
+                m.Field_("008", None, None, content="x" * 40),
+            ],
+        )
+        src = tmp_path / "no245.mrc"
+        raw = m.assemble_marc(parsed)
+        src.write_bytes(raw)
+        out = tmp_path / "out.mrc"
+        log = tmp_path / "run.log"
+        rc = m.main([str(src), "-o", str(out), "--no-add-default-245", "--log", str(log)])
+        assert rc == 1  # a diverted record makes the CLI exit non-zero, same as unfixable
+        assert m.count_records(str(out)) == 0
+        review_path = tmp_path / "out_needs_review.mrc"
+        assert review_path.exists()
+        assert m.count_records(str(review_path)) == 1
+        assert review_path.read_bytes() == raw
+        content = _resolve_log(log).read_text(encoding="utf-8")
+        assert "=== NOT FIXED: diverted_for_review ===" in content
+        assert _detail_line_marker("diverted_for_review").search(content)
+        assert "--no-add-default-245" in content
+        assert str(review_path) in content or review_path.name in content
+        assert "Needs-review filename: out_needs_review.mrc (1 record)" in content
+
+    def test_review_file_not_created_when_nothing_diverted(self, tmp_path):
+        parsed = m.ParsedRecord(
+            leader=_SYNTHETIC_LEADER,
+            entries=[],
+            fields=[
+                m.Field_("001", None, None, content="has245"),
+                m.Field_("245", "00", [("a", "Real title.")]),
+            ],
+        )
+        src = tmp_path / "has245.mrc"
+        src.write_bytes(m.assemble_marc(parsed))
+        out = tmp_path / "out.mrc"
+        log = tmp_path / "run.log"
+        rc = m.main([str(src), "-o", str(out), "--no-add-default-245", "--log", str(log)])
+        assert rc == 0
+        assert not (tmp_path / "out_needs_review.mrc").exists()
+        content = _resolve_log(log).read_text(encoding="utf-8")
+        assert "Needs-review filename" not in content
+
+    def test_clean_records_unaffected_by_a_later_diverted_one(self, tmp_path):
+        def _record(id_: str, with_245: bool) -> bytes:
+            fields = [m.Field_("001", None, None, content=id_)]
+            if with_245:
+                fields.append(m.Field_("245", "00", [("a", "Title.")]))
+            return m.assemble_marc(
+                m.ParsedRecord(leader=_SYNTHETIC_LEADER, entries=[], fields=fields)
+            )
+
+        src = tmp_path / "in.mrc"
+        src.write_bytes(
+            _record("first", True) + _record("missing245", False) + _record("second", True)
+        )
+        out = tmp_path / "out.mrc"
+        rc = m.main([str(src), "-o", str(out), "--no-add-default-245"])
+        assert rc == 1
+        assert m.count_records(str(out)) == 2
+        text = m._read_text(str(out))
+        assert "first" in text and "second" in text and "missing245" not in text
+        assert m.count_records(str(tmp_path / "out_needs_review.mrc")) == 1
+
+    def test_ensure_field_245_takes_priority_over_diversion(self, tmp_path):
         parsed = m.ParsedRecord(
             leader=_SYNTHETIC_LEADER,
             entries=[],
@@ -3238,11 +3329,15 @@ class TestAddDefault245:
         src = tmp_path / "no245.mrc"
         src.write_bytes(m.assemble_marc(parsed))
         out = tmp_path / "out.mrc"
-        log = tmp_path / "run.log"
-        rc = m.main([str(src), "-o", str(out), "--no-add-default-245", "--log", str(log)])
+        rc = m.main([
+            str(src), "-o", str(out), "--no-add-default-245",
+            "--ensure-field", "245:00:a=Real supplied title.",
+        ])
         assert rc == 0
+        assert not (tmp_path / "out_needs_review.mrc").exists()
         results = m.repair_text(m._read_text(str(out)))
-        assert not any(f.tag == "245" for f in results[0].fields)
+        field245 = next(f for f in results[0].fields if f.tag == "245")
+        assert field245.subfields == [("a", "Real supplied title.")]
 
     def test_explicit_ensure_field_245_takes_priority(self, tmp_path):
         parsed = m.ParsedRecord(

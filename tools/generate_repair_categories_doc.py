@@ -269,6 +269,17 @@ BIB_ROWS = [
         "`--no-add-default-245`; `--ensure-field` (takes priority per-record)",
     ),
     CategoryRow(
+        "Missing 245, with `--no-add-default-245` set (so no placeholder/"
+        "fallback title is invented)",
+        "Diverted to `<output>_needs_review.mrc`, unchanged",
+        "n/a (only with `--no-add-default-245`)", "`diverted_for_review`",
+        "NOT FIXED", "**Yes**",
+        "`--no-add-default-245` (the only way this fires); `--ensure-field` "
+        "(takes priority per-record, same as for `added_default_245`); shared "
+        "with any future \"--no-fix-X diverts instead of leaving it half-"
+        "fixed\" check, each with its own reason text",
+    ),
+    CategoryRow(
         "Placeholder 008 added", "Added default field",
         "Yes, always", "`added_default_008`",
         "FIXED/REQUIRES ATTENTION", "**Yes**",

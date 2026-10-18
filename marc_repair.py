@@ -117,7 +117,10 @@ default:
     inserted) -- these are logged as placeholders (008/245: FIXED;
     9XX rename and other default-driven fixes: INFORMATIONAL) rather than
     silently invented, and each has a --no-... flag to leave it flagged
-    instead if you'd rather supply the real value yourself.
+    instead if you'd rather supply the real value yourself (--no-fix-
+    invalid-tags; --no-add-default-245, which instead diverts a 245-less
+    record, byte-for-byte unchanged, to its own _needs_review file -- see
+    below).
   * A record over 99,999 bytes total is still written out correctly, using
     the sentinel MARC21's own leader spec documents for exactly this case
     (the leader declares length "99999" instead of the real value; any
@@ -4626,6 +4629,20 @@ def looks_like_abandoned_record(parsed: ParsedRecord) -> bool:
     return True
 
 
+def record_missing_245(parsed: ParsedRecord) -> bool:
+    """True if `parsed` has no 245 field, or a 245 with no non-empty $a --
+    the same condition `add_default_245` itself fixes. Pulled out as its
+    own predicate so a caller that wants to know *whether* a record would
+    need fixing, without actually fixing it (e.g. --no-add-default-245
+    diverting such a record to a review file instead), shares the exact
+    same definition of "missing" rather than re-deriving it -- see
+    `main`'s bib loop."""
+    field245 = next((f for f in parsed.fields if f.tag == "245"), None)
+    return field245 is None or not any(
+        code == "a" and data for code, data in field245.subfields
+    )
+
+
 def add_default_245(parsed: ParsedRecord) -> list[str]:
     """Ensure every record has a 245 with a non-empty $a.
 
@@ -4652,9 +4669,9 @@ def add_default_245(parsed: ParsedRecord) -> list[str]:
     the net effect is the same: a placeholder title where a real one was
     missing.
     """
-    field245 = next((f for f in parsed.fields if f.tag == "245"), None)
-    if field245 is not None and any(code == "a" and data for code, data in field245.subfields):
+    if not record_missing_245(parsed):
         return []
+    field245 = next((f for f in parsed.fields if f.tag == "245"), None)
 
     def _patch_or_insert(subfields: list[tuple[str, str]]) -> None:
         if field245 is None:
@@ -5831,6 +5848,49 @@ class _LazyBinaryWriter:
         self._fh.write(data)
 
 
+def _needs_review_output_path(out_path: str) -> str:
+    """Insert "_needs_review" right before `out_path`'s extension -- e.g.
+    "bib_repaired.mrc" -> "bib_repaired_needs_review.mrc" -- mirroring
+    `_error_output_path`'s own insert-before-extension convention. See
+    `_divert_to_review`: a record some auto-fix would normally have
+    touched, but whose fix is disabled via its own --no-... flag, is
+    written here, byte-for-byte unchanged, instead of the main output,
+    so a human can decide what to do with it instead of it silently
+    missing whatever that fix would have supplied."""
+    base, ext = os.path.splitext(out_path)
+    return f"{base}_needs_review{ext}"
+
+
+def _divert_to_review(
+    log: Callable[[str, bool, int, str, str], None],
+    review_fh: "_LazyBinaryWriter",
+    review_path: str,
+    rec_text: str,
+    encoding_used: str,
+    record_idx: int,
+    rec_id: str,
+    reason: str,
+) -> None:
+    """Shared by every "--no-fix-X diverts the record instead of leaving
+    it half-fixed" check (currently just --no-add-default-245; see
+    `main`'s bib loop) -- logs one "diverted_for_review" entry (always
+    fixed=False, so it sorts into NOT FIXED -- see `_section_for`) whose
+    detail states `reason`, that the record was copied unchanged to
+    `review_path`, and the path itself, then writes `rec_text` there
+    byte-for-byte unchanged, same as `_error_output_path`'s own
+    byte-for-byte UNFIXABLE diversion. A future check that wants this
+    same "pull it out for a human instead" behavior just calls this with
+    its own `reason` -- no new log category or section registration
+    needed, since an unregistered fixed=False category already lands in
+    NOT FIXED on its own (see `_section_for`'s docstring)."""
+    log(
+        "diverted_for_review", False, record_idx, rec_id,
+        f"{reason} -- record copied unchanged to {review_path} for manual review "
+        "instead of being auto-fixed",
+    )
+    review_fh.write(rec_text.encode(encoding_used, errors="surrogateescape"))
+
+
 def _read_text(path: str) -> str:
     """Read a MARC file or pasted-text file. See `_read_text_with_encoding`;
     this just discards which encoding was used, for callers that don't need
@@ -6056,6 +6116,11 @@ _CHECK_DESCRIPTIONS: dict[str, str] = {
     "represented in ISO 2709's fixed-width leader/directory -- written "
     "unchanged to the _error file instead of the main output. These records "
     "cannot be loaded.",
+    "diverted_for_review": "A fix that would normally have run was disabled via its own "
+    "--no-... flag, and the record it would have applied to was written unchanged to the "
+    "_needs_review file instead of the main output, for a human to decide what "
+    "to do with it (currently: a record with no 245, with --no-add-default-245 "
+    "set).",
     "duplicate_identifier": "The same identifier (usually 001, or 907 $a for Sierra records) is used by "
     "more than one distinct record in this file.",
     "removed_non_repeatable_duplicate": "A non-repeatable field (e.g. 001/005/008) appeared more than once on one "
@@ -6228,6 +6293,7 @@ _CHECK_DESCRIPTIONS: dict[str, str] = {
 #: the call on its own line no matter how the description wraps.
 _CHECK_DATA_LOSS: dict[str, str] = {
     "unfixable": "DATA LOSS",
+    "diverted_for_review": "DATA LOSS",
     "duplicate_identifier": "POSSIBLE DATA LOSS",
     "removed_non_repeatable_duplicate": "POSSIBLE DATA LOSS",
     "field_removed_because_missing_a": "POSSIBLE DATA LOSS",
@@ -6314,6 +6380,7 @@ _CATEGORY_DISPLAY_NOTE: dict[str, str] = {
 #: invalid_isbn_issn_checksum) -- on request.
 _ALWAYS_FULL_CATEGORIES = {
     "unfixable",
+    "diverted_for_review",
     "duplicate_identifier",
     "removed_non_repeatable_duplicate",
     "field_removed_because_missing_a",
@@ -6417,19 +6484,23 @@ def _write_run_timing_header(
     source_count: int | None = None,
     repaired_count: int | None = None,
     problem_count: int | None = None,
+    review_path: str | None = None,
+    review_count: int | None = None,
 ) -> None:
     """Write a run-level started/finished/elapsed line, followed by the
-    source/repaired/problem filenames for this run, as the very first
-    lines of the log file -- the stdout summary doesn't persist once the
-    terminal scrolls away, so the log file needs its own record of when
-    the run ran, how long it took, and which files it read from/wrote to.
-    Elapsed is wall-clock `finished - started`, to .01s.
+    source/repaired/problem/needs-review filenames for this run, as the
+    very first lines of the log file -- the stdout summary doesn't
+    persist once the terminal scrolls away, so the log file needs its
+    own record of when the run ran, how long it took, and which files it
+    read from/wrote to. Elapsed is wall-clock `finished - started`, to
+    .01s.
 
-    `problem_path` is None when the run has no actual problem/error file to
-    name -- it's written lazily (see `_LazyBinaryWriter`) and never created
-    at all when there's nothing unfixable to put in it, so a caller passing
-    a real path here must first confirm the file actually exists; the line
-    is omitted entirely rather than naming a file that was never written.
+    `problem_path`/`review_path` are None when the run has no actual
+    error/needs-review file to name -- both are written lazily (see
+    `_LazyBinaryWriter`) and never created at all when there's nothing to
+    put in them, so a caller passing a real path here must first confirm
+    the file actually exists; the line is omitted entirely rather than
+    naming a file that was never written.
 
     Each path is reduced to its basename -- the log is meant to be a quick
     at-a-glance record of which files were involved, not a durable pointer
@@ -6457,6 +6528,8 @@ def _write_run_timing_header(
         fh.write(f"Repaired filename: {_named(repaired_path, repaired_count)}\n")
         if problem_path is not None:
             fh.write(f"Problem filename: {_named(problem_path, problem_count)}\n")
+        if review_path is not None:
+            fh.write(f"Needs-review filename: {_named(review_path, review_count)}\n")
         fh.write("\n")
 
 
@@ -7645,8 +7718,11 @@ def main(argv: list[str] | None = None) -> int:
         "logged (see --log) -- many real-world imports outright reject a "
         "record with no title -- rather than leaving such records with "
         "no 245; --ensure-field \"245:...\" for a specific record takes "
-        "priority over this default. Pass this flag to leave 245-less "
-        "records untouched instead",
+        "priority over this default. Pass this flag to instead divert "
+        "such records, byte-for-byte unchanged, to a _needs_review file "
+        "alongside the main output (logged under NOT FIXED, category "
+        "diverted_for_review) rather than inserting a placeholder or "
+        "leaving them without a title in the main output",
     )
     parser.add_argument(
         "--no-fix-invalid-tags",
@@ -8076,7 +8152,9 @@ def main(argv: list[str] | None = None) -> int:
     # nowhere near the size of holding every record itself would be.
     n_total = 0
     n_unfixable = 0
+    n_diverted_review = 0
     error_path = _error_output_path(out_path)
+    review_path = _needs_review_output_path(out_path)
     # Only accumulated until the one-time early estimate fires (see
     # ProgressReporter.maybe_print_estimate) -- cheap to compute (just
     # len() on text already in hand) but no reason to keep paying it for
@@ -8101,6 +8179,7 @@ def main(argv: list[str] | None = None) -> int:
                 if mrk_path else _null_writer()
             ) as mrk_fh, \
             _LazyBinaryWriter(error_path) as error_fh, \
+            _LazyBinaryWriter(review_path) as review_fh, \
             (
                 _LazyBinaryWriter(sample_problems_path)
                 if sample_problems_path else _null_writer()
@@ -8262,6 +8341,28 @@ def main(argv: list[str] | None = None) -> int:
                     rec_id = record_identifier(parsed)
                     for detail in add_default_245(parsed):
                         log("added_default_245", True, i, rec_id, detail)
+                elif record_missing_245(parsed):
+                    # --no-add-default-245: rather than leave this record
+                    # with no 245 at all, pull it out of the main output
+                    # entirely and divert it, byte-for-byte unchanged, to
+                    # the review file instead (see `_divert_to_review`) --
+                    # the `continue` below skips every remaining fix and
+                    # the final assemble/write for this record, same as
+                    # the UNFIXABLE branch above skips them by being in
+                    # the other half of this if/else.
+                    rec_id = record_identifier(parsed)
+                    _divert_to_review(
+                        log, review_fh, review_path, rec_text, encoding_used, i, rec_id,
+                        "record has no 245 (title statement) and --no-add-default-245 "
+                        "is set",
+                    )
+                    if mrk_fh:
+                        mrk_fh.write(
+                            f"=NOT_FIXED  (copied to {os.path.basename(review_path)} "
+                            "for review)\n\n"
+                        )
+                    n_diverted_review += 1
+                    continue
                 rec_id = record_identifier(parsed)
                 for detail in add_default_008(parsed):
                     log("added_default_008", True, i, rec_id, detail)
@@ -8458,6 +8559,8 @@ def main(argv: list[str] | None = None) -> int:
         active_categories.add("added_field")
     if args.add_default_245:
         active_categories.add("added_default_245")
+    else:
+        active_categories.add("diverted_for_review")
     if args.fix_008_length:
         active_categories.add("fixed_008_length")
     if args.check_dangling_880_links:
@@ -8481,8 +8584,10 @@ def main(argv: list[str] | None = None) -> int:
         log_path, run_started, datetime.now(timezone.utc),
         args.input, out_path,
         error_path if os.path.exists(error_path) else None,
-        source_count=n_total, repaired_count=n_total - n_unfixable,
+        source_count=n_total, repaired_count=n_total - n_unfixable - n_diverted_review,
         problem_count=n_unfixable,
+        review_path=review_path if os.path.exists(review_path) else None,
+        review_count=n_diverted_review,
     )
     write_log(
         log_path, log_entries, active_categories=active_categories,
@@ -8508,10 +8613,16 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     elapsed = time.perf_counter() - start_time
-    n_clean = n_total - n_unfixable
+    n_clean = n_total - n_unfixable - n_diverted_review
     print(f"Wrote {n_clean}/{n_total} record(s) to {out_path} in {elapsed:.2f}s")
     if sample_problems_path:
         print(f"{n_sampled} problem record(s) sampled to {sample_problems_path}")
+    if n_diverted_review:
+        print(
+            f"{n_diverted_review} record(s) diverted, byte-for-byte unchanged, to "
+            f"{review_path} instead of {out_path} for manual review (see --log).",
+            file=sys.stderr,
+        )
     if n_unfixable:
         print(
             f"{n_unfixable} record(s) could not be auto-repaired at all -- written, "
@@ -8520,6 +8631,7 @@ def main(argv: list[str] | None = None) -> int:
             "re-run to fix them too.",
             file=sys.stderr,
         )
+    if n_unfixable or n_diverted_review:
         return 1
     return 0
 
