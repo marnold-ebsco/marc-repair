@@ -1465,6 +1465,7 @@ class TestRepairHoldingsRecords:
 
         base = os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "sample_files",
             "short_bucknell_marc_holdings.mrc",
         )
         if not os.path.exists(base):
