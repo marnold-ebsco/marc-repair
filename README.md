@@ -131,7 +131,7 @@ left in the main holdings output.
 | Corrupted leader/directory (Mode 1) | Fixed automatically — no flag needed |
 | Record too large for the leader's 5-digit length field | Fixed automatically, using MARC21's own documented sentinel (`99999`); nothing is lost since the real end is always found from the terminator; logged as `oversized_sentinel_fixed` (INFORMATIONAL) |
 | Single field or base address too large to represent at all | Not fixable — no sentinel exists for these; diverted to a separate `_error` file unchanged, logged as `unfixable` (UNFIXABLE, see above) |
-| Missing 245, or a 245 present but missing $a | Placeholder `$aNo title` added by default — many real-world imports reject a record with no title at all — either as a new field or, if a 245 already exists (e.g. one with only `$h[electronic resource]`), patched into the existing field alongside its other subfields, not stripped and rebuilt; `--ensure-field "245:..."` takes priority per-record if supplied; `--no-add-default-245` to leave such records untouched instead; logged in full as `added_default_245` under **FIXED/REQUIRES ATTENTION**, since a placeholder title is worth a second look even though it's not discarded real data |
+| Missing 245, or a 245 present but missing $a | A stand-in title is looked up first — the first of 130/240/246/242/222 with a non-empty $a, or failing that an 880 linked via $6 to 245 or to one of those tags — and its $a copied in; only when none of those exist does the placeholder `$aNo title` get added, since many real-world imports reject a record with no title at all. Either way the result lands as a new field or, if a 245 already exists (e.g. one with only `$h[electronic resource]`), patched into the existing field alongside its other subfields, not stripped and rebuilt; `--ensure-field "245:..."` takes priority per-record if supplied; `--no-add-default-245` to leave such records untouched instead. When the "No title" placeholder is the one used, a heuristic also flags records that look like abandoned/test stubs (few fields, no author/subject access points) in the log detail. Logged in full as `added_default_245` under **FIXED/REQUIRES ATTENTION**, since a placeholder title is worth a second look even though it's not discarded real data |
 | Missing any other field | `--ensure-field` (opt-in; you supply the content); logged as `added_field` under **FIXED/REQUIRES ATTENTION** since a human-supplied value is worth double-checking |
 | Missing 008 | Placeholder inserted unconditionally (a fixed, material-type-agnostic default — real content still needs `--ensure-field "008:..."`, which takes priority per-record); every MARC21 record must have an 008, so there's no flag to leave one out; logged in full as `added_default_008` under **FIXED/REQUIRES ATTENTION** for the same reason as `added_default_245` above |
 | Fields missing a required `$a` | Removed by default (see `required_a_tags.txt`, editable); `--no-strip-missing-required-a` to leave them instead; the exact removed content is logged in full as `field_removed_because_missing_a` under **FIXED/REQUIRES ATTENTION** since real data was discarded |
@@ -497,11 +497,12 @@ marc_repair bad_length_bib.mrc -o out.mrc --mrk out.mrk
 # in big binary chunks; a 91 MB/48,017-record file counts in ~0.3s).
 marc_repair huge_export.mrc --count
 
-# A record missing 245 or 008 gets a placeholder by default (245: 00
-# $aNo title; 008: a fixed generic default), logged either way. Supply
-# real content per-record instead with --ensure-field (which takes
-# priority over the placeholder); each spec is TAG:INDICATORS:CODE=VALUE,
-# or TAG:CONTENT for a control field.
+# A record missing 245 gets its title backfilled from 130/240/246/242/
+# 222 or a linked 880 if any of those exist, else a placeholder (245: 00
+# $aNo title); a record missing 008 gets a fixed generic default. Either
+# way it's logged. Supply real content per-record instead with
+# --ensure-field (which takes priority over the placeholder); each spec
+# is TAG:INDICATORS:CODE=VALUE, or TAG:CONTENT for a control field.
 marc_repair bad_missing245_bib.mrc --ensure-field "245:00:a=Real title"
 marc_repair bad_bib.mrc \
     --ensure-field "008:780615s19uu    xx a                    d"

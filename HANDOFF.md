@@ -134,6 +134,52 @@ up with the network-tab capture plan in "Where to pick this up" above,
 and/or re-check whether the environment's Data Import pipeline has
 recovered before assuming the script itself is at fault.
 
+### CLOSED -- `missing_245` now backfills from 130/240/246/242/222/880 before falling back to "No title" (2026-10-18)
+
+**Status: shipped to `main` (`6bd2819`), pushed. Full suite 475 passed/1
+skipped, flake8 clean except pre-existing findings.**
+
+`add_default_245` previously went straight to the `$aNo title` placeholder
+any time 245 was missing or had no `$a`. Changed so it first tries
+`resolve_245_fallback(parsed)`: checks 130/240/246/242/222 in that order
+for a non-empty `$a`, then -- if none of those exist -- an 880 linked via
+`$6` to 245 or to one of those tags. Only `$a` is copied (no `$b`/`$n`/
+etc., per the user's "keep it simple" call). Only when nothing usable is
+found does it fall back to the old "No title" placeholder, same as
+before.
+
+When that placeholder *is* the one used, a new heuristic,
+`looks_like_abandoned_record(parsed)`, flags records that look like
+minimal/test stubs (<=3 substantive fields excluding 001/003/005/006/
+007/008, no 1xx/6xx/7xx access point, no 300/500 with real content) and
+appends a note to the same `added_default_245` log line -- no new log
+category, no new CLI flag; `--no-add-default-245` still gates the whole
+rule as before.
+
+Searched `sample_files/` and `working/` logs for real `missing_245` hits
+to build fixtures from -- found none with 130/240/246/242/222/880
+content (the rule has apparently never fired on real data with a usable
+fallback field present), but the user pointed at two real minimal-245
+production records directly:
+* `.b1279417x` (`working/WTS_bibs_2026-10-01.out`, record index 261564)
+  -- only a blank (all-spaces, not all-x/pipe) 008 plus 907/998, no 001
+  at all. Confirms the heuristic can't key off 008 containing a specific
+  fill character; it ignores 008 content entirely and just excludes it
+  from the field count.
+* `.b19347352` (`working/GTU_bibs.mrc`, record index 404058) -- no 245/
+  130/240/246/242/222/880, but has 100/260/300/502 (a thesis record
+  where the title was apparently mis-cataloged into 260 `$a` instead of
+  245). Good proof the heuristic doesn't fire on a record that's merely
+  missing a title, only on one that looks abandoned.
+
+Both are now real-data fixtures in `tests/fixtures/build_kitchen_sink.py`
+alongside synthetic 240-fallback and 880-linked-to-245 cases; new test
+classes `TestResolve245Fallback` and `TestLooksLikeAbandonedRecord` in
+`tests/test_marc_repair_bib.py`. README.md (`added_default_245` table
+row, bulleted category list, usage-example comment) and
+`tools/generate_repair_categories_doc.py` (regenerates
+`docs/REPAIR_CATEGORIES.md`) updated to describe the fallback chain.
+
 ### CLOSED -- New `dedupe_010_fields` repair: merges a record's multiple 010s into one, keeps the numerically-largest $a, drops a $z matching it (2026-10-16)
 
 **Status: shipped to `main` (`5839e67`), pushed. Full suite 461 passed/1

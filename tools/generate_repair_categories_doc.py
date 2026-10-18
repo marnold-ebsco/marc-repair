@@ -262,7 +262,8 @@ BIB_ROWS = [
                                     "--log-full added_field)", "`--ensure-field`",
     ),
     CategoryRow(
-        "Placeholder 245 added", "Added default field",
+        "Missing 245 backfilled from 130/240/246/242/222/880, or "
+        "placeholder 245 added", "Added default field",
         "Yes (`--no-add-default-245`)", "`added_default_245`",
         "FIXED/REQUIRES ATTENTION", "**Yes**",
         "`--no-add-default-245`; `--ensure-field` (takes priority per-record)",
