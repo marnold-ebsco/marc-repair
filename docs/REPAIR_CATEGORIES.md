@@ -31,6 +31,41 @@ unchanged, to a separate `<output>_error.mrc` file next to it, and logged
 in its own UNFIXABLE section at the very top of the log, above even NOT
 FIXED.
 
+## Import-safety: what ends up in `_error.mrc` vs `_needs_review.mrc`
+
+**By default (no flags needed):** `_error.mrc` holds every genuinely
+unparseable record (see `unfixable` below) *and* a record whose true
+length exceeds 99999 bytes (category `unfixable`, reason text mentions
+the oversized-length sentinel) -- confirmed empirically that FOLIO Data
+Import aborts its **entire batch** with no job log at all on a record
+needing that sentinel, rather than rejecting just the one record, so the
+main/repaired output is importable out of the box, not something you
+have to opt into. Pass `--allow-oversized-sentinel` only if your own
+import target is confirmed to handle the sentinel correctly -- the
+record then stays in the main output instead, logged as
+`oversized_sentinel_fixed`.
+
+**With `--guarantee-importable`:** `_needs_review.mrc` additionally gets
+every record with no 245 (title statement) -- category
+`diverted_for_review` (this flag implies `--no-add-default-245`: a
+guessed placeholder or backfilled title is a human's call, not
+something to auto-apply when you're trying to guarantee the main output
+needs no further review). **As of this writing, that is the only
+category `--guarantee-importable` diverts to `_needs_review.mrc`.**
+Categories that looked like candidates but were confirmed importable
+once repaired, and so are NOT diverted -- verified by running a real
+FOLIO Data Import job against the repaired kitchen-sink fixture and
+checking the per-record job log, not by guessing from this tool's own
+"data loss" labels:
+  * 010 (LCCN) whitespace-only `$a` stripped, or duplicate 010s merged
+    (`removed_010_whitespace_a`, `deduped_010_lccn`)
+  * a 6xx/7xx (or other required-`$a`) field removed for lacking `$a`
+    (`field_removed_because_missing_a`, `removed_880_missing_a`)
+If a future FOLIO test turns up a category that genuinely does need
+diverting, add it to the curated set wherever `diverted_for_review` is
+raised in `marc_repair.py` and document it in this section too -- don't
+infer it from a category's DATA LOSS/POSSIBLE DATA LOSS label alone.
+
 ## Bib pipeline (`main()`, no split/holdings flags)
 
 | Repair / check | Action taken | On by default? | Category | Section | Logged by default? | Relevant switches |
