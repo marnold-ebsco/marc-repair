@@ -872,6 +872,103 @@ class TestCLIHelpers:
         results = m.repair_text(m._read_text(str(out)))
         assert all(any(f.tag == "245" for f in r.fields) for r in results)
 
+
+class TestGuaranteeImportable:
+    """--guarantee-importable: a record whose fully-repaired form is known
+    to break a real-world import target gets diverted out of the main
+    output instead of being written to it, same destination file as a
+    genuinely UNFIXABLE record -- so everything left in the main output
+    is guaranteed importable. Currently the only such finding is a
+    record over 99999 bytes (empirically confirmed to make FOLIO Data
+    Import abort its entire batch with no job log at all, rather than
+    rejecting just that one record -- see oversized_sentinel_fixed /
+    --guarantee-importable's own help text in marc_repair.py).
+
+    Run against the real, checked-in kitchen_sink_bib.mrc (not an
+    isolated single-record fixture) so these assertions exercise the
+    same file-wide conditions (shared `used_tags`, whole-file encoding
+    detection, etc.) a real run would hit.
+
+    To add a regression test for a newly-confirmed finding: add one
+    line to _GUARANTEE_IMPORTABLE_CASES below, naming the kitchen-sink
+    record's own identifier (its 001/004, e.g. "ks-oversized-ok") and
+    which of the three output files it should end up in ("repaired",
+    "error", or "needs_review") -- no other code changes needed.
+    """
+
+    #: (record identifier in kitchen_sink_bib.mrc, expected output file)
+    _GUARANTEE_IMPORTABLE_CASES = [
+        ("ks-oversized-ok", "error"),  # >99999 bytes -- confirmed kills FOLIO's whole batch
+        ("ks-smartchar", "repaired"),  # ordinary repaired record -- unaffected by this flag
+        ("ks-dupe-id", "repaired"),  # flagged (duplicate_identifier) but still importable
+    ]
+
+    @pytest.fixture(scope="class")
+    @classmethod
+    def run_with_flag(cls, tmp_path_factory):
+        tmp_path = tmp_path_factory.mktemp("guarantee_importable")
+        src = tmp_path / "kitchen_sink_bib.mrc"
+        src.write_bytes(_read("kitchen_sink_bib.mrc").encode("utf-8"))
+        out = tmp_path / "out.mrc"
+        m.main([str(src), "-o", str(out), "--guarantee-importable"])
+        return {
+            "repaired": out.read_bytes() if out.exists() else b"",
+            "error": (
+                (tmp_path / "out_error.mrc").read_bytes()
+                if (tmp_path / "out_error.mrc").exists() else b""
+            ),
+            "needs_review": (
+                (tmp_path / "out_needs_review.mrc").read_bytes()
+                if (tmp_path / "out_needs_review.mrc").exists() else b""
+            ),
+        }
+
+    @pytest.mark.parametrize("record_id,expected_file", _GUARANTEE_IMPORTABLE_CASES)
+    def test_record_routed_to_expected_file(self, run_with_flag, record_id, expected_file):
+        needle = record_id.encode()
+        for file_label, content in run_with_flag.items():
+            found = needle in content
+            assert found == (file_label == expected_file), (
+                f"{record_id} expected in {expected_file!r}, "
+                f"found in {file_label!r}={found}"
+            )
+
+    def test_oversized_record_stays_in_main_output_without_the_flag(self, tmp_path):
+        # Backward compatibility: default behavior (no --guarantee-importable)
+        # is unchanged -- the oversized record stays in the main output.
+        src = tmp_path / "kitchen_sink_bib.mrc"
+        src.write_bytes(_read("kitchen_sink_bib.mrc").encode("utf-8"))
+        out = tmp_path / "out.mrc"
+        m.main([str(src), "-o", str(out)])
+        assert b"ks-oversized-ok" in out.read_bytes()
+        error_path = tmp_path / "out_error.mrc"
+        if error_path.exists():
+            assert b"ks-oversized-ok" not in error_path.read_bytes()
+
+    def test_diverted_record_logged_as_unfixable_not_oversized_sentinel_fixed(self, tmp_path):
+        src = tmp_path / "kitchen_sink_bib.mrc"
+        src.write_bytes(_read("kitchen_sink_bib.mrc").encode("utf-8"))
+        out = tmp_path / "out.mrc"
+        log_path = tmp_path / "out.log"
+        m.main([str(src), "-o", str(out), "--guarantee-importable", "--log", str(log_path)])
+        log_text = _resolve_log(log_path).read_text(encoding="utf-8")
+        assert "ks-oversized-ok" in log_text
+        assert re.search(r"=== [^\n]*: unfixable ===", log_text)
+        # oversized_sentinel_fixed always gets a header (it's an
+        # always-on category -- see active_categories), but with
+        # --guarantee-importable set it should always show 0 hits: the
+        # one record that would have triggered it was diverted to
+        # unfixable instead.
+        count_match = re.search(
+            r"=== [^\n]*: oversized_sentinel_fixed ===\n(?:=== [^\n]*\n)+?"
+            r"=== (\d+) record\(s\) ===",
+            log_text,
+        )
+        assert count_match is not None
+        assert count_match.group(1) == "0"
+
+
+class TestMissingSubfieldAPatchedInPlace:
     def test_245_missing_a_is_patched_in_place_not_stripped_and_replaced(self, tmp_path):
         # Regression test for record 46032 (u71720) in real data: a 245
         # present but missing its required $a (e.g.

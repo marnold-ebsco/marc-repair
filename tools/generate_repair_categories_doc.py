@@ -326,10 +326,19 @@ BIB_ROWS = [
     ),
     CategoryRow(
         "Oversized record (>99999 bytes) sentinel", "Wrote sentinel length",
-        "n/a (only if it occurs)", "`oversized_sentinel_fixed`",
+        "n/a (only without `--guarantee-importable`)", "`oversized_sentinel_fixed`",
         "INFORMATIONAL", "No -- INFORMATIONAL categories are never listed in full, "
         "not even via --log-full",
-        '--',
+        '`--guarantee-importable` (diverts the record instead -- see next row)',
+    ),
+    CategoryRow(
+        "Oversized record (>99999 bytes) sentinel, with `--guarantee-importable` set",
+        "Diverted to `<output>_error.mrc`, unchanged",
+        "n/a (only with `--guarantee-importable`)", "`unfixable`", "UNFIXABLE",
+        "**Yes**",
+        "`--guarantee-importable` (the only way this fires -- confirmed empirically "
+        "that FOLIO Data Import aborts its entire batch with no job log on a record "
+        "needing this sentinel, rather than rejecting just that one record)",
     ),
     CategoryRow(
         "Unfixable oversized field/base address",

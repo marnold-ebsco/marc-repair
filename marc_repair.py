@@ -126,12 +126,17 @@ default:
     (the leader declares length "99999" instead of the real value; any
     reader that finds the record's real end from its terminator -- as this
     tool's own Mode 1 always does -- reads it back correctly regardless).
-    Logged as fixed; nothing is lost. What's genuinely unfixable is a
-    single field over 9,999 bytes or a base address over 99,999 (the
-    directory's own length/position fields have no such sentinel, and a
-    reader needs the real base address to find field data at all) --
-    those, like any record neither mode can parse at all, are UNFIXABLE
-    (see below).
+    Logged as fixed; nothing is lost -- UNLESS --guarantee-importable is
+    given, in which case this record is instead diverted to the _error file
+    and logged as unfixable: confirmed empirically that FOLIO Data Import
+    aborts its entire batch with no job log at all on a record like this,
+    rather than rejecting just the one record, so --guarantee-importable
+    trades "nothing lost" for "the main output is actually importable".
+    What's genuinely unfixable regardless of this flag is a single field
+    over 9,999 bytes or a base address over 99,999 (the directory's own
+    length/position fields have no such sentinel, and a reader needs the
+    real base address to find field data at all) -- those, like any record
+    neither mode can parse at all, are UNFIXABLE (see below).
 
 Every removal, warning, transcode, and added-field notice from a run goes
 into ONE combined, timestamped log file (default OUT_log_TIMESTAMP.log, see
@@ -1792,7 +1797,13 @@ def assemble_marc(parsed: ParsedRecord) -> bytes:
     # leader's own declared value is capped. Nothing is lost: any reader
     # that finds the record's real end via its terminator (as this tool's
     # own Mode 1 already does, never trusting the declared length) reads it
-    # back correctly regardless of what the leader claims.
+    # back correctly regardless of what the leader claims. In practice,
+    # though, not every real-world importer is that tolerant -- FOLIO Data
+    # Import aborts the entire batch with no job log at all on a record
+    # using this sentinel, confirmed empirically, rather than rejecting
+    # just that one record. Callers that need every record in their main
+    # output to be importable should divert a record this large elsewhere
+    # instead of calling this; see --guarantee-importable in main().
     declared_length = min(total_length, 99999)
 
     leader = parsed.leader
@@ -6115,7 +6126,10 @@ _CHECK_DESCRIPTIONS: dict[str, str] = {
     "be structurally parsed at all, or a split copy's assembled length can't be "
     "represented in ISO 2709's fixed-width leader/directory -- written "
     "unchanged to the _error file instead of the main output. These records "
-    "cannot be loaded.",
+    "cannot be loaded. With --guarantee-importable, also includes a record "
+    "whose true length exceeds 99999 bytes (see oversized_sentinel_fixed): "
+    "spec-valid MARC21, but known to abort FOLIO Data Import's entire batch "
+    "with no job log, so it's diverted here instead of the main output too.",
     "diverted_for_review": "A fix that would normally have run was disabled via its own "
     "--no-... flag, and the record it would have applied to was written unchanged to the "
     "_needs_review file instead of the main output, for a human to decide what "
@@ -6255,7 +6269,9 @@ _CHECK_DESCRIPTIONS: dict[str, str] = {
     "--remap-999-to-945.",
     "oversized_sentinel_fixed": "A record's true length exceeds ISO 2709's 5-digit field -- leader declares "
     "the documented 99999 sentinel instead (nothing lost; the real end is still "
-    "found from the record terminator).",
+    "found from the record terminator). Only happens without --guarantee-"
+    "importable -- with it, a record like this is diverted to the _error file "
+    "and logged as unfixable instead (see --guarantee-importable's own help).",
     "padded_indicators": "A data field had 0 or 1 indicator characters instead of 2 -- padded with "
     "spaces.",
     "holdings_missing_004": "Holdings record has no 004 (link to its bib record) at all.",
@@ -6853,6 +6869,7 @@ def repair_holdings_records(
     log_path: str,
     fix_missing_852c: bool = True,
     allow_single_digit_852b: bool = False,
+    guarantee_importable: bool = False,
     full_categories: set[str] | None = None,
     on_progress: Callable[[int], None] | None = None,
     on_record: Callable[[int], None] | None = None,
@@ -7059,7 +7076,14 @@ def repair_holdings_records(
     main output (see `_error_output_path`), exactly like the main bib
     pipeline treats its own unfixable records (category "unfixable",
     UNFIXABLE section, DATA LOSS: it's excluded from the main output
-    entirely). One case where output record count differs from input
+    entirely). If `guarantee_importable` is set (default False -- see
+    main()'s --guarantee-importable), a split copy over 99999 bytes is
+    diverted here too, the same way the bib pipeline's own main() loop
+    does -- confirmed empirically that FOLIO Data Import aborts its
+    entire batch with no job log on a record needing that sentinel,
+    rather than rejecting just the one record; without this flag it's
+    written to the main output as usual (category oversized_sentinel_
+    fixed). One case where output record count differs from input
     record count in the *other* direction is `split_holdings_multiple_852`
     above: one input record with multiple usable 852s becomes multiple
     output records. `split_holdings_multiple_004` is similar but writes
@@ -7272,6 +7296,28 @@ def repair_holdings_records(
                 id_records.append((i, rec_id, assembled_records[0][:5].decode("ascii")))
 
             for rec, assembled in zip(records_to_write, assembled_records):
+                if len(assembled) > 99999 and guarantee_importable:
+                    # Same reasoning as the bib pipeline's own
+                    # --guarantee-importable branch: spec-valid MARC21,
+                    # but known to abort FOLIO Data Import's whole batch
+                    # with no log -- diverted to the _error file instead.
+                    print(
+                        f"record {i}: {len(assembled)} bytes, requires the MARC21 "
+                        f"oversized-length sentinel -- writing to {error_path} "
+                        "instead (--guarantee-importable)",
+                        file=sys.stderr,
+                    )
+                    log(
+                        "unfixable", False, i, rec_id,
+                        f"record is {len(assembled)} bytes, requiring the leader's "
+                        "MARC21 oversized-length sentinel (99999) -- known to make "
+                        "FOLIO Data Import abort the whole job with no log -- "
+                        f"written to {error_path} unchanged instead of the main "
+                        "output (--guarantee-importable)",
+                    )
+                    error_fh.write(assembled)
+                    n_unfixable += 1
+                    continue
                 if len(assembled) > 99999:
                     log(
                         "oversized_sentinel_fixed", True, i, rec_id,
@@ -7788,6 +7834,23 @@ def main(argv: list[str] | None = None) -> int:
         "per-record list",
     )
     parser.add_argument(
+        "--guarantee-importable",
+        action="store_true",
+        default=False,
+        help="divert a record that needs MARC21's oversized-length leader "
+        "sentinel (true length > 99999 bytes -- see oversized_sentinel_fixed) "
+        "to the _error file instead of the main output. Off by default: "
+        "such a record is spec-valid MARC21 and is written to the main "
+        "output as usual. Pass this flag if your import target can't "
+        "handle the sentinel -- confirmed in practice with FOLIO Data "
+        "Import, which aborts the entire batch with no job log at all on "
+        "a record like this, rather than rejecting just that one record. "
+        "With this flag, the record is logged as unfixable (UNFIXABLE "
+        "section, DATA LOSS -- excluded from the main output entirely) "
+        "instead of oversized_sentinel_fixed, and every other record in "
+        "the main output is unaffected by it",
+    )
+    parser.add_argument(
         "--no-normalize-smart-characters",
         dest="normalize_smart_characters",
         action="store_false",
@@ -7913,6 +7976,7 @@ def main(argv: list[str] | None = None) -> int:
                 holdings_log_path,
                 fix_missing_852c=args.fix_missing_852c,
                 allow_single_digit_852b=args.allow_single_digit_852b,
+                guarantee_importable=args.guarantee_importable,
                 full_categories=set(args.log_full),
                 on_progress=holdings_progress.on_progress,
                 on_record=holdings_progress.maybe_print,
@@ -7972,6 +8036,7 @@ def main(argv: list[str] | None = None) -> int:
             log_path,
             fix_missing_852c=args.fix_missing_852c,
             allow_single_digit_852b=args.allow_single_digit_852b,
+            guarantee_importable=args.guarantee_importable,
             full_categories=set(args.log_full),
             on_progress=progress.on_progress,
             on_record=progress.maybe_print,
@@ -8429,32 +8494,65 @@ def main(argv: list[str] | None = None) -> int:
                     if rec_id:
                         id_records.append((i, rec_id, rec_text[:5]))
                 else:
-                    if len(assembled) > 99999:
+                    if len(assembled) > 99999 and args.guarantee_importable:
+                        # --guarantee-importable: this record is spec-valid
+                        # MARC21, but empirically makes FOLIO Data Import
+                        # abort the whole job with no log at all -- same
+                        # practical effect on the batch as a genuinely
+                        # UNFIXABLE record, so it's diverted to the same
+                        # _error file instead of leaving the main output
+                        # with a record other importers might choke on.
                         rec_id = record_identifier(parsed)
-                        log(
-                            "oversized_sentinel_fixed", True, i, rec_id,
-                            f"record is {len(assembled)} bytes; leader declares the "
-                            "MARC21 sentinel 99999 instead (real end is still found "
-                            "from the record terminator, nothing lost)",
+                        print(
+                            f"record {i}: {len(assembled)} bytes, requires the MARC21 "
+                            f"oversized-length sentinel -- writing to {error_path} "
+                            "instead (--guarantee-importable)",
+                            file=sys.stderr,
                         )
-                    offset = out_fh.tell()
-                    out_fh.write(assembled)
-                    if mrk_fh:
-                        mrk_fh.write(to_mrk(parsed))
-                        mrk_fh.write("\n")
-                    rec_id = record_identifier(parsed)
-                    if rec_id:
-                        id_records.append((i, rec_id, assembled[:5].decode("ascii")))
-                    if args.fix_invalid_tags:
-                        has_invalid_tag = False
-                        for f in parsed.fields:
-                            if f.tag.isdigit():
-                                used_tags.add(f.tag)
-                            else:
-                                has_invalid_tag = True
-                        if has_invalid_tag:
-                            rec_encoding = "utf-8" if parsed.leader[9:10] == "a" else "latin-1"
-                            pending_tag_fixes.append((i, offset, len(assembled), rec_encoding))
+                        log(
+                            "unfixable", False, i, rec_id,
+                            f"record is {len(assembled)} bytes, requiring the leader's "
+                            "MARC21 oversized-length sentinel (99999) -- known to make "
+                            "FOLIO Data Import abort the whole job with no log -- "
+                            f"written to {error_path} unchanged instead of the main "
+                            "output (--guarantee-importable)",
+                        )
+                        error_fh.write(assembled)
+                        if mrk_fh:
+                            mrk_fh.write(
+                                f"=UNFIXABLE  (written to {os.path.basename(error_path)} "
+                                "instead, --guarantee-importable)\n\n"
+                            )
+                        n_unfixable += 1
+                        if rec_id:
+                            id_records.append((i, rec_id, assembled[:5].decode("ascii")))
+                    else:
+                        if len(assembled) > 99999:
+                            rec_id = record_identifier(parsed)
+                            log(
+                                "oversized_sentinel_fixed", True, i, rec_id,
+                                f"record is {len(assembled)} bytes; leader declares the "
+                                "MARC21 sentinel 99999 instead (real end is still found "
+                                "from the record terminator, nothing lost)",
+                            )
+                        offset = out_fh.tell()
+                        out_fh.write(assembled)
+                        if mrk_fh:
+                            mrk_fh.write(to_mrk(parsed))
+                            mrk_fh.write("\n")
+                        rec_id = record_identifier(parsed)
+                        if rec_id:
+                            id_records.append((i, rec_id, assembled[:5].decode("ascii")))
+                        if args.fix_invalid_tags:
+                            has_invalid_tag = False
+                            for f in parsed.fields:
+                                if f.tag.isdigit():
+                                    used_tags.add(f.tag)
+                                else:
+                                    has_invalid_tag = True
+                            if has_invalid_tag:
+                                rec_encoding = "utf-8" if parsed.leader[9:10] == "a" else "latin-1"
+                                pending_tag_fixes.append((i, offset, len(assembled), rec_encoding))
 
             # --sample-problems: this record counts as a "problem" if
             # anything logged for it above was NOT auto-fixed -- the same
