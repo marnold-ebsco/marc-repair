@@ -967,6 +967,35 @@ class TestGuaranteeImportable:
         assert count_match is not None
         assert count_match.group(1) == "0"
 
+    @pytest.mark.parametrize("record_id", ["ks-clean-book", "ks-clean-ejournal"])
+    def test_pristine_record_produces_zero_log_entries(self, tmp_path, capsys, record_id):
+        # kitchen_sink_bib.mrc's two "ks-clean-*" records exist
+        # specifically to prove at least some records come out the other
+        # end completely untouched -- every OTHER record in the fixture
+        # exists to exercise one defect category, and the real padding
+        # records were pulled from a source file chosen BECAUSE it has
+        # missing-$a defects (see build_kitchen_sink.py). Isolate the
+        # record (full-file conditions, like duplicate_identifier, can't
+        # apply to a single unique id) and check the one summary count
+        # that's authoritative regardless of which categories are
+        # listed in full -- the only way to prove zero across every
+        # category at once, not just the ones that print per-record
+        # detail.
+        with open(_fixture("kitchen_sink_bib.mrc"), "rb") as f:
+            data = f.read()
+        parts = [p + b"\x1d" for p in data.split(b"\x1d") if p]
+        matching = [r for r in parts if record_id.encode() in r]
+        assert len(matching) == 1
+        src = tmp_path / "single.mrc"
+        src.write_bytes(matching[0])
+        out = tmp_path / "out.mrc"
+        m.main([str(src), "-o", str(out)])
+        assert record_id.encode() in out.read_bytes()
+        err = capsys.readouterr().err
+        count_match = re.search(r"\((\d+) record-level finding\(s\)", err)
+        assert count_match is not None
+        assert count_match.group(1) == "0"
+
 
 class TestMissingSubfieldAPatchedInPlace:
     def test_245_missing_a_is_patched_in_place_not_stripped_and_replaced(self, tmp_path):

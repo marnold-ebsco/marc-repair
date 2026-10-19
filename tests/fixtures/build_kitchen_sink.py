@@ -715,6 +715,44 @@ def build_bib_records() -> list[bytes]:
     ).encode("utf-8") + b"\x1d"
     records.append(orphan_home + orphan_chunk)
 
+    # Two deliberately pristine records -- no defect of any kind, in any
+    # category (not even an INFORMATIONAL or opt-in-flag-only one). Every
+    # other record in this function exists specifically to exercise one
+    # defect category, and BIB_PADDING_SOURCE (bad_bib_mandatoryfields...)
+    # was itself chosen BECAUSE it already has missing-$a defects (see its
+    # own comment above) -- so without these two, nothing in
+    # kitchen_sink_bib.mrc would demonstrate what an ordinary,
+    # already-clean record looks like coming out the other end: present
+    # in the main output with ZERO log entries against it, fixed or not,
+    # from a run with every single check and flag turned on (verified via
+    # tests/fixtures/build_kitchen_sink.py's own regeneration -- see
+    # test_two_pristine_records_produce_no_log_entries_at_all).
+    records.append(_record(_BIB_LEADER, [
+        m.Field_("001", None, None, content="ks-clean-book"),
+        m.Field_("008", None, None, content="780615s2015    nyua          000 0 eng d"[:40]),
+        m.Field_("100", "1 ", [("a", "Example, Anne.")]),
+        m.Field_("245", "10", [
+            ("a", "A perfectly ordinary title :"),
+            ("b", "no defects whatsoever /"),
+            ("c", "Anne Example."),
+        ]),
+        m.Field_("300", "  ", [("a", "212 pages ;"), ("c", "24 cm")]),
+        m.Field_("650", " 0", [("a", "Ordinary subjects.")]),
+    ]))
+    records.append(_record(_BIB_LEADER, [
+        m.Field_("001", None, None, content="ks-clean-ejournal"),
+        m.Field_("008", None, None, content="780615s2015    xxu           000 0 eng d"[:40]),
+        m.Field_("245", "00", [
+            ("a", "Another perfectly ordinary record :"),
+            ("b", "this time an electronic resource /"),
+        ]),
+        m.Field_("020", "  ", [("a", "0596520689")]),  # valid ISBN-10 checksum
+        m.Field_("856", "40", [
+            ("u", "https://example.edu/resource/12345"),
+            ("z", "Available online"),
+        ]),
+    ]))
+
     return records
 
 
