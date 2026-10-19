@@ -351,31 +351,30 @@ This creates `marc_repair` in whatever directory you ran the command
 from. Pass `--dir PATH` to install somewhere else instead (e.g. `--dir
 ~/marc_repair`).
 
-Re-run the same command later to update in place (the venv is reused
-unless the interpreter choice changes), or check without changing
-anything:
+#### Updating an existing install (no `install.sh`, no `.git`)
+
+`install.sh` is not one of the files it installs, so an installed copy
+(e.g. on an EC2 box) has no local `install.sh` and no `.git` directory —
+`git pull` doesn't apply. To update, pipe a fresh `install.sh` in from
+GitHub via `curl`, every time, and point it at the directory the tool was
+originally installed into (the one containing `marc_repair.py`, the venv,
+and `.marc_repair_install_version`) with `--dir`:
 
 ```bash
-./marc_repair/install.sh --check
+# See whether an update is available; changes nothing
+curl -fsSL https://raw.githubusercontent.com/marnold-ebsco/marc-repair/main/install.sh   | bash -s -- --dir /path/to/install --check
+
+# Update in place (re-pulls the files at the latest commit on main; the
+# existing venv is reused unless the interpreter choice changes)
+curl -fsSL https://raw.githubusercontent.com/marnold-ebsco/marc-repair/main/install.sh   | bash -s -- --dir /path/to/install
 ```
 
-If the tool was installed somewhere other than the default `./marc_repair`
-(e.g. on an EC2 box set up as part of a larger migration checkout, with
-no `.git` directory to `git pull` — `install.sh` is how that install gets
-updated at all), pass that path as `--dir` so `install.sh` updates the
-existing install in place instead of creating a new one next to it:
+Without `--dir`, `install.sh` installs to `./marc_repair` relative to the
+current directory, creating a second copy instead of updating yours. Add
+`--ref TAG_OR_BRANCH` to install from something other than `main`.
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/marnold-ebsco/marc-repair/main/install.sh \
-  | bash -s -- --dir /working/migration/scripts/marc-repair --check   # report only
-curl -fsSL https://raw.githubusercontent.com/marnold-ebsco/marc-repair/main/install.sh \
-  | bash -s -- --dir /working/migration/scripts/marc-repair           # actually update
-```
-
-`install.sh` isn't one of the files the install fetches into `--dir`
-(it can't safely rewrite itself mid-run), so there's no local copy at
-that path to run directly unless it was put there separately — pipe it
-in fresh via `curl` as above, every time, pointed at that same `--dir`.
+If you do have a local `install.sh` (e.g. you cloned the repo), `./install.sh
+--dir /path/to/install [--check]` works the same way.
 
 Run `install.sh --help` for all options.
 
