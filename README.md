@@ -373,6 +373,24 @@ Without `--dir`, `install.sh` installs to `./marc_repair` relative to the
 current directory, creating a second copy instead of updating yours. Add
 `--ref TAG_OR_BRANCH` to install from something other than `main`.
 
+If `--check` says "No existing install found at ..." for a directory you
+know already has the tool, that directory has no `.marc_repair_install_version`
+file (it was copied or set up by hand, not by `install.sh`). `--check`
+changes nothing, so it can only report this. Run the update once without
+`--check`: it overwrites the installed files (`marc_repair.py`,
+`pyproject.toml`, `requirements.txt`, the tag files, `README.md`, `docs/`)
+with the latest versions — back up any local edits first — and writes the
+version file, so later `--check` runs work normally.
+
+If `--check` says "No existing install found at ..." for a directory you
+know already has the tool, that directory has no `.marc_repair_install_version`
+file (it was copied or set up by hand, not by `install.sh`). `--check`
+changes nothing, so it can only report this. Run the update once without
+`--check`: it overwrites the installed files (`marc_repair.py`,
+`pyproject.toml`, `requirements.txt`, the tag files, `README.md`, `docs/`)
+with the latest versions — back up any local edits first — and writes the
+version file, so later `--check` runs work normally.
+
 If you do have a local `install.sh` (e.g. you cloned the repo), `./install.sh
 --dir /path/to/install [--check]` works the same way.
 
