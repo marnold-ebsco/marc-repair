@@ -8,48 +8,82 @@ current state and open items.
 
 ## Current state
 
-### OPEN -- `--guarantee-importable` flag, branch `guarantee-importable` (2026-10-19)
+### OPEN -- import-safety defaults + `--guarantee-importable`, branch `guarantee-importable` (2026-10-19)
 
-**Status: implemented and tested on branch `guarantee-importable` (pushed to
-origin), not yet merged to `main`. Picking this back up later.**
+**Status: implemented, tested, and empirically verified end-to-end against
+live FOLIO Data Import. Pushed to origin as branch `guarantee-importable`,
+NOT yet merged to `main`. The only remaining open item is the merge
+decision itself -- see bottom.**
 
-**Background:** while testing a FOLIO Data Import run of
+**Background:** testing a FOLIO Data Import run of
 `tests/fixtures/kitchen_sink_bib.mrc` through the UI (bisecting record-by-
-record after the full file died with no job log at all), found that the
-culprit was `ks-oversized-ok` -- a record over 99999 bytes, spec-valid
-MARC21 using the leader's documented oversized-length sentinel
-(`oversized_sentinel_fixed` category). FOLIO Data Import aborts the
-**entire batch** with no job log on a record like this, rather than
-rejecting just that one record. (Everything else bisected out fine --
-ordinary per-record validation errors/warnings, which is the normal,
-expected behavior being tested for.)
+record after the full file died with no job log at all) found the
+culprit: `ks-oversized-ok`, a record over 99999 bytes using MARC21's
+documented oversized-length leader sentinel (category
+`oversized_sentinel_fixed`) -- spec-valid MARC21, but FOLIO Data Import
+aborts the **entire batch** with no job log at all on a record like this,
+rather than rejecting just that one record.
 
-**What was done:** added `--guarantee-importable` (off by default) to
-`marc_repair.py`. When set, a record needing the oversized-length sentinel
-is diverted to the `_error.mrc` file and logged as `unfixable` (same
-section/category as a genuinely unfixable record) instead of landing in
-the main output -- so everything left in the main output is guaranteed
-importable. Threaded through both the bib pipeline (`main()`) and the
-holdings pipeline (`repair_holdings_records()`, new `guarantee_importable`
-param). Updated `docs/REPAIR_CATEGORIES.md` (via
-`tools/generate_repair_categories_doc.py`) and added
-`TestGuaranteeImportable` in `tests/test_marc_repair_core.py` -- run
-against the real `tests/fixtures/kitchen_sink_bib.mrc`, with an
-extensible `_GUARANTEE_IMPORTABLE_CASES` table (record id -> expected
-output file) for adding future findings. Full suite (487 tests) and
-flake8 (`--max-line-length=100`) both clean.
+**What shipped (3 commits on this branch, in order):**
+1. **`--guarantee-importable`** (initially opt-in): diverts the
+   oversized-sentinel record to `_error.mrc` (logged as `unfixable`)
+   instead of the main output. Also implies `--no-add-default-245`:
+   diverts a missing-245 record to `_needs_review.mrc` (category
+   `diverted_for_review`) instead of guessing a placeholder title.
+   Threaded through both the bib pipeline (`main()`) and holdings
+   (`repair_holdings_records()`). Along the way, fixed a real bug this
+   exposed: a record that was BOTH missing 245 AND genuinely unfixable
+   (e.g. a field over 9999 bytes -- `ks-oversized-bad`) was being
+   misclassified into `_needs_review` instead of `_error`, because the
+   missing-245 diversion ran before the real UNFIXABLE check and
+   short-circuited past it. Fixed by trying `assemble_marc` before
+   diverting for review, falling through to UNFIXABLE when it raises.
+2. **Made the oversized-sentinel diversion the unconditional default**,
+   no flag required. Root cause: a *plain default run* (no flags at all)
+   of `kitchen_sink_bib_repaired.mrc` was imported into FOLIO and failed
+   with no job log -- the exact same silent batch-kill as the original
+   raw-file test, just from the "repaired" output this time. A file named
+   `_repaired.mrc` has no business containing something that kills the
+   whole import. Added `--allow-oversized-sentinel` (off by default) to
+   opt back into the old behavior for an import target confirmed to
+   handle the sentinel correctly. `--guarantee-importable`'s only
+   remaining job is the missing-245 implication.
+3. **Documented exactly what `--guarantee-importable` diverts**, in a new
+   "Import-safety" section at the top of `docs/REPAIR_CATEGORIES.md`
+   (generated from `tools/generate_repair_categories_doc.py`, not
+   hand-edited).
+
+**Empirically confirmed against live FOLIO** (bugfest, correct bib job
+profile -- "Default - Create instance and SRS MARC Bib"), not inferred
+from this tool's own "data loss" labels:
+- The default-settings repaired output of `kitchen_sink_bib.mrc` (48
+  records, oversized record already diverted) imported **100% cleanly --
+  48/48 created, 0 errors, 0 no-action.**
+- This includes every 010 (LCCN dedup/whitespace-strip) and 6xx/7xx
+  (missing-`$a` field removal) record -- confirmed these do NOT need
+  diverting once repaired; an earlier worry that they might was
+  unfounded. `diverted_for_review` (missing 245) remains the only
+  category `--guarantee-importable` diverts to `_needs_review.mrc`.
+- Earlier raw-file (pre-repair) testing separately confirmed FOLIO also
+  rejects (without killing the batch) a record missing 008, or carrying
+  a non-numeric tag -- both already fixed unconditionally by
+  marc_repair's own defaults (`added_default_008`, `fix_invalid_tags`),
+  so neither needed any new handling.
+
+Full suite (492 tests) and flake8 (`--max-line-length=100`) both clean
+as of the last commit on this branch.
 
 **Where to pick this up:**
-1. Re-run the full `kitchen_sink_bib.mrc` (with `--guarantee-importable`)
-   through FOLIO Data Import end-to-end to confirm the main output now
-   imports cleanly with per-record errors only, no batch-level death.
-2. Decide whether any other category belongs in this same "known to break
-   a real import target" bucket -- so far `oversized_sentinel_fixed` is
-   the only empirically-confirmed one; the registry/test table is
-   designed so adding another is a one-line change (see
-   `_GUARANTEE_IMPORTABLE_CASES`'s own docstring).
-3. Decide whether to merge `guarantee-importable` into `main`, or keep
-   iterating on it first.
+1. Decide whether to merge `guarantee-importable` into `main`. Nothing
+   else is blocking it -- this is now just a judgment call on timing/
+   review, not unfinished work.
+2. If a future FOLIO test ever turns up another category that genuinely
+   needs diverting (same rigor as above: verify against a real job log,
+   not by reading this tool's own DATA LOSS labels), add it where
+   `diverted_for_review` is raised in `marc_repair.py`, extend
+   `TestGuaranteeImportable._GUARANTEE_IMPORTABLE_CASES` in
+   `tests/test_marc_repair_core.py` (one line), and update the
+   "Import-safety" section in `tools/generate_repair_categories_doc.py`.
 
 ### OPEN -- API-driven FOLIO Data Import never completes a job (script unproven, don't move it to `tools/` yet) (2026-10-16)
 
