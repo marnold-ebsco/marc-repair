@@ -121,35 +121,33 @@ default:
     invalid-tags; --no-add-default-245, which instead diverts a 245-less
     record, byte-for-byte unchanged, to its own _needs_review file -- see
     below).
-  * --guarantee-importable changes two of the defaults above at once,
-    rather than leaving anything in the main output whose fate is
-    uncertain without a human looking at it first:
-      - A record over 99,999 bytes total is normally still written out
-        correctly, using the sentinel MARC21's own leader spec documents
-        for exactly this case (the leader declares length "99999" instead
-        of the real value; any reader that finds the record's real end
-        from its terminator -- as this tool's own Mode 1 always does --
-        reads it back correctly regardless). Logged as fixed; nothing is
-        lost -- UNLESS --guarantee-importable is given, in which case this
-        record is instead diverted to the _error file and logged as
-        unfixable: confirmed empirically that FOLIO Data Import aborts its
-        entire batch with no job log at all on a record like this, rather
-        than rejecting just the one record, so --guarantee-importable
-        trades "nothing lost" for "the main output is actually
-        importable".
-      - --guarantee-importable also implies --no-add-default-245: a
-        missing 245 is diverted to _needs_review instead of getting a
-        guessed placeholder title, for the same "don't leave an uncertain
-        guess in the main output" reasoning.
-    With --guarantee-importable, the main output, _error file, and
-    _needs_review file end up meaning, respectively: safe to import as
-    written; known to break an import target entirely; and needs a human
-    decision before it's safe either way.
-    What's genuinely unfixable regardless of this flag is a single field
-    over 9,999 bytes or a base address over 99,999 (the directory's own
-    length/position fields have no such sentinel, and a reader needs the
-    real base address to find field data at all) -- those, like any record
-    neither mode can parse at all, are UNFIXABLE (see below).
+  * A record over 99,999 bytes total has a documented MARC21 sentinel for
+    exactly this case (the leader declares length "99999" instead of the
+    real value; any reader that finds the record's real end from its
+    terminator -- as this tool's own Mode 1 always does -- reads it back
+    correctly regardless) -- but by default, this record is instead
+    diverted to the _error file and logged as unfixable, the same as a
+    record neither parsing mode can resolve at all: confirmed empirically
+    that FOLIO Data Import aborts its entire batch with no job log at all
+    on a record needing this sentinel, rather than rejecting just the one
+    record, so the main/repaired output is importable by default, not
+    something you have to opt into. Pass --allow-oversized-sentinel only
+    if your import target is confirmed to handle the sentinel correctly;
+    the record is then written to the main output as usual, logged as
+    fixed (category oversized_sentinel_fixed), nothing lost.
+  * --guarantee-importable additionally implies --no-add-default-245: a
+    missing 245 is diverted to _needs_review instead of getting a
+    guessed placeholder title, for the same "don't leave an uncertain
+    guess in the main output" reasoning. With this flag, the main
+    output, _error file, and _needs_review file end up meaning,
+    respectively: safe to import as written; known to break an import
+    target entirely; and needs a human decision before it's safe either
+    way.
+    What's genuinely unfixable regardless of either flag is a single
+    field over 9,999 bytes or a base address over 99,999 (the directory's
+    own length/position fields have no such sentinel, and a reader needs
+    the real base address to find field data at all) -- those, like any
+    record neither mode can parse at all, are UNFIXABLE (see below).
 
 Every removal, warning, transcode, and added-field notice from a run goes
 into ONE combined, timestamped log file (default OUT_log_TIMESTAMP.log, see
@@ -6139,10 +6137,11 @@ _CHECK_DESCRIPTIONS: dict[str, str] = {
     "be structurally parsed at all, or a split copy's assembled length can't be "
     "represented in ISO 2709's fixed-width leader/directory -- written "
     "unchanged to the _error file instead of the main output. These records "
-    "cannot be loaded. With --guarantee-importable, also includes a record "
-    "whose true length exceeds 99999 bytes (see oversized_sentinel_fixed): "
-    "spec-valid MARC21, but known to abort FOLIO Data Import's entire batch "
-    "with no job log, so it's diverted here instead of the main output too.",
+    "cannot be loaded. By default, also includes a record whose true length "
+    "exceeds 99999 bytes (see oversized_sentinel_fixed): spec-valid MARC21, "
+    "but known to abort FOLIO Data Import's entire batch with no job log, so "
+    "it's diverted here instead of the main output too, unless --allow-"
+    "oversized-sentinel is given.",
     "diverted_for_review": "A fix that would normally have run was disabled via its own "
     "--no-... flag, and the record it would have applied to was written unchanged to the "
     "_needs_review file instead of the main output, for a human to decide what "
@@ -6282,9 +6281,9 @@ _CHECK_DESCRIPTIONS: dict[str, str] = {
     "--remap-999-to-945.",
     "oversized_sentinel_fixed": "A record's true length exceeds ISO 2709's 5-digit field -- leader declares "
     "the documented 99999 sentinel instead (nothing lost; the real end is still "
-    "found from the record terminator). Only happens without --guarantee-"
-    "importable -- with it, a record like this is diverted to the _error file "
-    "and logged as unfixable instead (see --guarantee-importable's own help).",
+    "found from the record terminator). Only happens with --allow-oversized-"
+    "sentinel -- by default, a record like this is diverted to the _error file "
+    "and logged as unfixable instead (see --allow-oversized-sentinel's own help).",
     "padded_indicators": "A data field had 0 or 1 indicator characters instead of 2 -- padded with "
     "spaces.",
     "holdings_missing_004": "Holdings record has no 004 (link to its bib record) at all.",
@@ -6882,7 +6881,7 @@ def repair_holdings_records(
     log_path: str,
     fix_missing_852c: bool = True,
     allow_single_digit_852b: bool = False,
-    guarantee_importable: bool = False,
+    allow_oversized_sentinel: bool = False,
     full_categories: set[str] | None = None,
     on_progress: Callable[[int], None] | None = None,
     on_record: Callable[[int], None] | None = None,
@@ -7089,14 +7088,15 @@ def repair_holdings_records(
     main output (see `_error_output_path`), exactly like the main bib
     pipeline treats its own unfixable records (category "unfixable",
     UNFIXABLE section, DATA LOSS: it's excluded from the main output
-    entirely). If `guarantee_importable` is set (default False -- see
-    main()'s --guarantee-importable), a split copy over 99999 bytes is
-    diverted here too, the same way the bib pipeline's own main() loop
-    does -- confirmed empirically that FOLIO Data Import aborts its
-    entire batch with no job log on a record needing that sentinel,
-    rather than rejecting just the one record; without this flag it's
-    written to the main output as usual (category oversized_sentinel_
-    fixed). One case where output record count differs from input
+    entirely). By default, a split copy over 99999 bytes is diverted
+    here too, the same way the bib pipeline's own main() loop does --
+    confirmed empirically that FOLIO Data Import aborts its entire batch
+    with no job log on a record needing that sentinel, rather than
+    rejecting just the one record. Pass `allow_oversized_sentinel=True`
+    (default False -- see main()'s --allow-oversized-sentinel) only if
+    your import target is confirmed to handle the sentinel correctly;
+    it's then written to the main output as usual (category
+    oversized_sentinel_fixed). One case where output record count differs from input
     record count in the *other* direction is `split_holdings_multiple_852`
     above: one input record with multiple usable 852s becomes multiple
     output records. `split_holdings_multiple_004` is similar but writes
@@ -7309,15 +7309,15 @@ def repair_holdings_records(
                 id_records.append((i, rec_id, assembled_records[0][:5].decode("ascii")))
 
             for rec, assembled in zip(records_to_write, assembled_records):
-                if len(assembled) > 99999 and guarantee_importable:
-                    # Same reasoning as the bib pipeline's own
-                    # --guarantee-importable branch: spec-valid MARC21,
-                    # but known to abort FOLIO Data Import's whole batch
-                    # with no log -- diverted to the _error file instead.
+                if len(assembled) > 99999 and not allow_oversized_sentinel:
+                    # Same reasoning as the bib pipeline's own default
+                    # behavior: spec-valid MARC21, but known to abort
+                    # FOLIO Data Import's whole batch with no log --
+                    # diverted to the _error file instead.
                     print(
                         f"record {i}: {len(assembled)} bytes, requires the MARC21 "
                         f"oversized-length sentinel -- writing to {error_path} "
-                        "instead (--guarantee-importable)",
+                        "instead",
                         file=sys.stderr,
                     )
                     log(
@@ -7326,7 +7326,7 @@ def repair_holdings_records(
                         "MARC21 oversized-length sentinel (99999) -- known to make "
                         "FOLIO Data Import abort the whole job with no log -- "
                         f"written to {error_path} unchanged instead of the main "
-                        "output (--guarantee-importable)",
+                        "output",
                     )
                     error_fh.write(assembled)
                     n_unfixable += 1
@@ -7336,7 +7336,8 @@ def repair_holdings_records(
                         "oversized_sentinel_fixed", True, i, rec_id,
                         f"record is {len(assembled)} bytes; leader declares the "
                         "MARC21 sentinel 99999 instead (real end is still found "
-                        "from the record terminator, nothing lost)",
+                        "from the record terminator, nothing lost) -- kept in the "
+                        "main output only because allow_oversized_sentinel is set",
                     )
 
                 offset = out_fh.tell()
@@ -7849,28 +7850,39 @@ def main(argv: list[str] | None = None) -> int:
         "per-record list",
     )
     parser.add_argument(
+        "--allow-oversized-sentinel",
+        action="store_true",
+        default=False,
+        help="allow a record that needs MARC21's oversized-length leader "
+        "sentinel (true length > 99999 bytes) to stay in the main output, "
+        "logged as oversized_sentinel_fixed (spec-valid MARC21; the real "
+        "end is still found from the record terminator, nothing lost). "
+        "Off by default: such a record is instead diverted to the _error "
+        "file and logged as unfixable, because FOLIO Data Import "
+        "(confirmed in practice) aborts the entire batch with no job log "
+        "at all on a record like this, rather than rejecting just that "
+        "one record -- so the main/repaired output is importable by "
+        "default, not something you have to opt into. Pass this flag "
+        "only if you know your import target handles the sentinel "
+        "correctly and specifically want the record kept instead",
+    )
+    parser.add_argument(
         "--guarantee-importable",
         action="store_true",
         default=False,
-        help="divert a record that needs MARC21's oversized-length leader "
-        "sentinel (true length > 99999 bytes -- see oversized_sentinel_fixed) "
-        "to the _error file instead of the main output. Off by default: "
-        "such a record is spec-valid MARC21 and is written to the main "
-        "output as usual. Pass this flag if your import target can't "
-        "handle the sentinel -- confirmed in practice with FOLIO Data "
-        "Import, which aborts the entire batch with no job log at all on "
-        "a record like this, rather than rejecting just that one record. "
-        "With this flag, the record is logged as unfixable (UNFIXABLE "
-        "section, DATA LOSS -- excluded from the main output entirely) "
-        "instead of oversized_sentinel_fixed, and every other record in "
-        "the main output is unaffected by it. Also implies --no-add-"
-        "default-245: a record with no 245 is diverted to the "
-        "_needs_review file instead of getting a guessed placeholder "
-        "title, for the same reason -- so the main output ends up split "
-        "three ways -- records that break an import target entirely "
-        "(_error), records a human should look at before deciding what "
-        "to do with them (_needs_review), and records safe to import as "
-        "they are (the main output)",
+        help="also divert a record with no 245 to the _needs_review file "
+        "instead of getting a guessed placeholder title (implies --no-"
+        "add-default-245), for the same \"don't leave a guess in the main "
+        "output\" reasoning --allow-oversized-sentinel's absence already "
+        "applies by default. Off by default: a missing 245 still gets a "
+        "real title (backfilled from 130/240/246/242/222/880, or a "
+        "placeholder) so the record imports normally. With this flag, "
+        "the main output ends up split three ways -- records that break "
+        "an import target entirely (_error, always the case for an "
+        "oversized record unless --allow-oversized-sentinel is given), "
+        "records a human should look at before deciding what to do with "
+        "them (_needs_review), and records safe to import as they are "
+        "(the main output)",
     )
     parser.add_argument(
         "--no-normalize-smart-characters",
@@ -7998,7 +8010,7 @@ def main(argv: list[str] | None = None) -> int:
                 holdings_log_path,
                 fix_missing_852c=args.fix_missing_852c,
                 allow_single_digit_852b=args.allow_single_digit_852b,
-                guarantee_importable=args.guarantee_importable,
+                allow_oversized_sentinel=args.allow_oversized_sentinel,
                 full_categories=set(args.log_full),
                 on_progress=holdings_progress.on_progress,
                 on_record=holdings_progress.maybe_print,
@@ -8058,7 +8070,7 @@ def main(argv: list[str] | None = None) -> int:
             log_path,
             fix_missing_852c=args.fix_missing_852c,
             allow_single_digit_852b=args.allow_single_digit_852b,
-            guarantee_importable=args.guarantee_importable,
+            allow_oversized_sentinel=args.allow_oversized_sentinel,
             full_categories=set(args.log_full),
             on_progress=progress.on_progress,
             on_record=progress.maybe_print,
@@ -8565,19 +8577,22 @@ def main(argv: list[str] | None = None) -> int:
                     if rec_id:
                         id_records.append((i, rec_id, rec_text[:5]))
                 else:
-                    if len(assembled) > 99999 and args.guarantee_importable:
-                        # --guarantee-importable: this record is spec-valid
+                    if len(assembled) > 99999 and not args.allow_oversized_sentinel:
+                        # Default behavior: this record is spec-valid
                         # MARC21, but empirically makes FOLIO Data Import
                         # abort the whole job with no log at all -- same
                         # practical effect on the batch as a genuinely
                         # UNFIXABLE record, so it's diverted to the same
                         # _error file instead of leaving the main output
                         # with a record other importers might choke on.
+                        # --allow-oversized-sentinel opts back into the
+                        # old behavior for an import target confirmed to
+                        # handle the sentinel correctly.
                         rec_id = record_identifier(parsed)
                         print(
                             f"record {i}: {len(assembled)} bytes, requires the MARC21 "
                             f"oversized-length sentinel -- writing to {error_path} "
-                            "instead (--guarantee-importable)",
+                            "instead",
                             file=sys.stderr,
                         )
                         log(
@@ -8586,13 +8601,13 @@ def main(argv: list[str] | None = None) -> int:
                             "MARC21 oversized-length sentinel (99999) -- known to make "
                             "FOLIO Data Import abort the whole job with no log -- "
                             f"written to {error_path} unchanged instead of the main "
-                            "output (--guarantee-importable)",
+                            "output",
                         )
                         error_fh.write(assembled)
                         if mrk_fh:
                             mrk_fh.write(
                                 f"=UNFIXABLE  (written to {os.path.basename(error_path)} "
-                                "instead, --guarantee-importable)\n\n"
+                                "instead)\n\n"
                             )
                         n_unfixable += 1
                         if rec_id:
@@ -8604,7 +8619,8 @@ def main(argv: list[str] | None = None) -> int:
                                 "oversized_sentinel_fixed", True, i, rec_id,
                                 f"record is {len(assembled)} bytes; leader declares the "
                                 "MARC21 sentinel 99999 instead (real end is still found "
-                                "from the record terminator, nothing lost)",
+                                "from the record terminator, nothing lost) -- kept in the "
+                                "main output only because --allow-oversized-sentinel is set",
                             )
                         offset = out_fh.tell()
                         out_fh.write(assembled)

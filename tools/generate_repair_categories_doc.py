@@ -327,20 +327,23 @@ BIB_ROWS = [
         '--',
     ),
     CategoryRow(
-        "Oversized record (>99999 bytes) sentinel", "Wrote sentinel length",
-        "n/a (only without `--guarantee-importable`)", "`oversized_sentinel_fixed`",
-        "INFORMATIONAL", "No -- INFORMATIONAL categories are never listed in full, "
-        "not even via --log-full",
-        '`--guarantee-importable` (diverts the record instead -- see next row)',
+        "Oversized record (>99999 bytes), diverted (the default)",
+        "Diverted to `<output>_error.mrc`, unchanged",
+        "Yes, always unless `--allow-oversized-sentinel`", "`unfixable`", "UNFIXABLE",
+        "**Yes**",
+        "`--allow-oversized-sentinel` (keeps the record in the main output instead -- "
+        "see next row); confirmed empirically that FOLIO Data Import aborts its "
+        "entire batch with no job log on a record needing this sentinel, rather than "
+        "rejecting just that one record, so this is diverted by default, not opt-in",
     ),
     CategoryRow(
-        "Oversized record (>99999 bytes) sentinel, with `--guarantee-importable` set",
-        "Diverted to `<output>_error.mrc`, unchanged",
-        "n/a (only with `--guarantee-importable`)", "`unfixable`", "UNFIXABLE",
-        "**Yes**",
-        "`--guarantee-importable` (the only way this fires -- confirmed empirically "
-        "that FOLIO Data Import aborts its entire batch with no job log on a record "
-        "needing this sentinel, rather than rejecting just that one record)",
+        "Oversized record (>99999 bytes) sentinel, with `--allow-oversized-sentinel` set",
+        "Wrote sentinel length",
+        "n/a (only with `--allow-oversized-sentinel`)", "`oversized_sentinel_fixed`",
+        "INFORMATIONAL", "No -- INFORMATIONAL categories are never listed in full, "
+        "not even via --log-full",
+        '`--allow-oversized-sentinel` (the only way this fires -- use only if your '
+        'import target is confirmed to handle the sentinel correctly)',
     ),
     CategoryRow(
         "Unfixable oversized field/base address",

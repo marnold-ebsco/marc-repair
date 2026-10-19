@@ -874,20 +874,21 @@ class TestCLIHelpers:
 
 
 class TestGuaranteeImportable:
-    """--guarantee-importable splits the output three ways instead of
-    one: records known to break a real-world import target entirely go
-    to the _error file (same destination as a genuinely UNFIXABLE
-    record); records that wouldn't break the whole import but need a
-    human decision first go to _needs_review (this flag implies
-    --no-add-default-245, for the same "don't leave a guess in the main
-    output" reasoning as the oversized case); everything else stays in
-    the main output, guaranteed importable.
+    """A record over 99999 bytes is diverted to the _error file by
+    default (same destination as a genuinely UNFIXABLE record), not
+    something you opt into -- confirmed empirically that it makes FOLIO
+    Data Import abort its entire batch with no job log at all, rather
+    than rejecting just that one record. --allow-oversized-sentinel
+    opts back into the old behavior (kept in the main output, logged as
+    oversized_sentinel_fixed) for an import target confirmed to handle
+    the sentinel correctly.
 
-    Currently confirmed "breaks the whole import" finding: a record over
-    99999 bytes (empirically confirmed to make FOLIO Data Import abort
-    its entire batch with no job log at all, rather than rejecting just
-    that one record -- see oversized_sentinel_fixed / --guarantee-
-    importable's own help text in marc_repair.py).
+    --guarantee-importable additionally splits the output three ways:
+    records that wouldn't break the whole import but need a human
+    decision first go to _needs_review (this flag implies --no-add-
+    default-245, for the same "don't leave a guess in the main output"
+    reasoning the oversized case already uses by default); everything
+    else stays in the main output, guaranteed importable.
 
     Run against the real, checked-in kitchen_sink_bib.mrc (not an
     isolated single-record fixture) so these assertions exercise the
@@ -943,13 +944,25 @@ class TestGuaranteeImportable:
                 f"found in {file_label!r}={found}"
             )
 
-    def test_oversized_record_stays_in_main_output_without_the_flag(self, tmp_path):
-        # Backward compatibility: default behavior (no --guarantee-importable)
-        # is unchanged -- the oversized record stays in the main output.
+    def test_oversized_record_diverted_by_default_no_flags_needed(self, tmp_path):
+        # The oversized record is diverted to _error even with NO flags
+        # at all -- this is the default, not something --guarantee-
+        # importable (or anything else) has to be passed to get.
         src = tmp_path / "kitchen_sink_bib.mrc"
         src.write_bytes(_read("kitchen_sink_bib.mrc").encode("utf-8"))
         out = tmp_path / "out.mrc"
         m.main([str(src), "-o", str(out)])
+        assert b"ks-oversized-ok" not in out.read_bytes()
+        assert b"ks-oversized-ok" in (tmp_path / "out_error.mrc").read_bytes()
+
+    def test_allow_oversized_sentinel_restores_old_behavior(self, tmp_path):
+        # --allow-oversized-sentinel opts back into keeping the record
+        # in the main output, for an import target confirmed to handle
+        # the sentinel correctly.
+        src = tmp_path / "kitchen_sink_bib.mrc"
+        src.write_bytes(_read("kitchen_sink_bib.mrc").encode("utf-8"))
+        out = tmp_path / "out.mrc"
+        m.main([str(src), "-o", str(out), "--allow-oversized-sentinel"])
         assert b"ks-oversized-ok" in out.read_bytes()
         error_path = tmp_path / "out_error.mrc"
         if error_path.exists():
