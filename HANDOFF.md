@@ -8,6 +8,49 @@ current state and open items.
 
 ## Current state
 
+### OPEN -- `--guarantee-importable` flag, branch `guarantee-importable` (2026-10-19)
+
+**Status: implemented and tested on branch `guarantee-importable` (pushed to
+origin), not yet merged to `main`. Picking this back up later.**
+
+**Background:** while testing a FOLIO Data Import run of
+`tests/fixtures/kitchen_sink_bib.mrc` through the UI (bisecting record-by-
+record after the full file died with no job log at all), found that the
+culprit was `ks-oversized-ok` -- a record over 99999 bytes, spec-valid
+MARC21 using the leader's documented oversized-length sentinel
+(`oversized_sentinel_fixed` category). FOLIO Data Import aborts the
+**entire batch** with no job log on a record like this, rather than
+rejecting just that one record. (Everything else bisected out fine --
+ordinary per-record validation errors/warnings, which is the normal,
+expected behavior being tested for.)
+
+**What was done:** added `--guarantee-importable` (off by default) to
+`marc_repair.py`. When set, a record needing the oversized-length sentinel
+is diverted to the `_error.mrc` file and logged as `unfixable` (same
+section/category as a genuinely unfixable record) instead of landing in
+the main output -- so everything left in the main output is guaranteed
+importable. Threaded through both the bib pipeline (`main()`) and the
+holdings pipeline (`repair_holdings_records()`, new `guarantee_importable`
+param). Updated `docs/REPAIR_CATEGORIES.md` (via
+`tools/generate_repair_categories_doc.py`) and added
+`TestGuaranteeImportable` in `tests/test_marc_repair_core.py` -- run
+against the real `tests/fixtures/kitchen_sink_bib.mrc`, with an
+extensible `_GUARANTEE_IMPORTABLE_CASES` table (record id -> expected
+output file) for adding future findings. Full suite (487 tests) and
+flake8 (`--max-line-length=100`) both clean.
+
+**Where to pick this up:**
+1. Re-run the full `kitchen_sink_bib.mrc` (with `--guarantee-importable`)
+   through FOLIO Data Import end-to-end to confirm the main output now
+   imports cleanly with per-record errors only, no batch-level death.
+2. Decide whether any other category belongs in this same "known to break
+   a real import target" bucket -- so far `oversized_sentinel_fixed` is
+   the only empirically-confirmed one; the registry/test table is
+   designed so adding another is a one-line change (see
+   `_GUARANTEE_IMPORTABLE_CASES`'s own docstring).
+3. Decide whether to merge `guarantee-importable` into `main`, or keep
+   iterating on it first.
+
 ### OPEN -- API-driven FOLIO Data Import never completes a job (script unproven, don't move it to `tools/` yet) (2026-10-16)
 
 **Status: unresolved, separate from the 010 fix recorded in docs/HANDOFF_HISTORY.md. Scripts live in
