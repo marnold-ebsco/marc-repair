@@ -6148,7 +6148,8 @@ _CHECK_DESCRIPTIONS: dict[str, str] = {
     "to do with it (currently: a record with no 245, with --no-add-default-245 "
     "set).",
     "duplicate_identifier": "The same identifier (usually 001, or 907 $a for Sierra records) is used by "
-    "more than one distinct record in this file.",
+    "more than one distinct record in this file. (Duplicate 001's may be normal "
+    "with records from Voyager.)",
     "removed_non_repeatable_duplicate": "A non-repeatable field (e.g. 001/005/008) appeared more than once on one "
     "record -- all but one copy removed.",
     "field_removed_because_missing_a": "A heading/added-entry field (or a holdings caption field) lacked a "
