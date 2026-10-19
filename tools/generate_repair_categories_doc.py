@@ -264,20 +264,22 @@ BIB_ROWS = [
     CategoryRow(
         "Missing 245 backfilled from 130/240/246/242/222/880, or "
         "placeholder 245 added", "Added default field",
-        "Yes (`--no-add-default-245`)", "`added_default_245`",
+        "Yes (`--no-add-default-245`, `--guarantee-importable`)", "`added_default_245`",
         "FIXED/REQUIRES ATTENTION", "**Yes**",
-        "`--no-add-default-245`; `--ensure-field` (takes priority per-record)",
+        "`--no-add-default-245`; `--guarantee-importable` (implies "
+        "`--no-add-default-245`); `--ensure-field` (takes priority per-record)",
     ),
     CategoryRow(
-        "Missing 245, with `--no-add-default-245` set (so no placeholder/"
-        "fallback title is invented)",
+        "Missing 245, with `--no-add-default-245` (or `--guarantee-importable`, "
+        "which implies it) set, so no placeholder/fallback title is invented",
         "Diverted to `<output>_needs_review.mrc`, unchanged",
-        "n/a (only with `--no-add-default-245`)", "`diverted_for_review`",
+        "n/a (only with `--no-add-default-245` or `--guarantee-importable`)",
+        "`diverted_for_review`",
         "NOT FIXED", "**Yes**",
-        "`--no-add-default-245` (the only way this fires); `--ensure-field` "
-        "(takes priority per-record, same as for `added_default_245`); shared "
-        "with any future \"--no-fix-X diverts instead of leaving it half-"
-        "fixed\" check, each with its own reason text",
+        "`--no-add-default-245` or `--guarantee-importable` (either is enough to "
+        "fire this); `--ensure-field` (takes priority per-record, same as for "
+        "`added_default_245`); shared with any future \"--no-fix-X diverts "
+        "instead of leaving it half-fixed\" check, each with its own reason text",
     ),
     CategoryRow(
         "Placeholder 008 added", "Added default field",

@@ -121,17 +121,30 @@ default:
     invalid-tags; --no-add-default-245, which instead diverts a 245-less
     record, byte-for-byte unchanged, to its own _needs_review file -- see
     below).
-  * A record over 99,999 bytes total is still written out correctly, using
-    the sentinel MARC21's own leader spec documents for exactly this case
-    (the leader declares length "99999" instead of the real value; any
-    reader that finds the record's real end from its terminator -- as this
-    tool's own Mode 1 always does -- reads it back correctly regardless).
-    Logged as fixed; nothing is lost -- UNLESS --guarantee-importable is
-    given, in which case this record is instead diverted to the _error file
-    and logged as unfixable: confirmed empirically that FOLIO Data Import
-    aborts its entire batch with no job log at all on a record like this,
-    rather than rejecting just the one record, so --guarantee-importable
-    trades "nothing lost" for "the main output is actually importable".
+  * --guarantee-importable changes two of the defaults above at once,
+    rather than leaving anything in the main output whose fate is
+    uncertain without a human looking at it first:
+      - A record over 99,999 bytes total is normally still written out
+        correctly, using the sentinel MARC21's own leader spec documents
+        for exactly this case (the leader declares length "99999" instead
+        of the real value; any reader that finds the record's real end
+        from its terminator -- as this tool's own Mode 1 always does --
+        reads it back correctly regardless). Logged as fixed; nothing is
+        lost -- UNLESS --guarantee-importable is given, in which case this
+        record is instead diverted to the _error file and logged as
+        unfixable: confirmed empirically that FOLIO Data Import aborts its
+        entire batch with no job log at all on a record like this, rather
+        than rejecting just the one record, so --guarantee-importable
+        trades "nothing lost" for "the main output is actually
+        importable".
+      - --guarantee-importable also implies --no-add-default-245: a
+        missing 245 is diverted to _needs_review instead of getting a
+        guessed placeholder title, for the same "don't leave an uncertain
+        guess in the main output" reasoning.
+    With --guarantee-importable, the main output, _error file, and
+    _needs_review file end up meaning, respectively: safe to import as
+    written; known to break an import target entirely; and needs a human
+    decision before it's safe either way.
     What's genuinely unfixable regardless of this flag is a single field
     over 9,999 bytes or a base address over 99,999 (the directory's own
     length/position fields have no such sentinel, and a reader needs the
@@ -7768,7 +7781,9 @@ def main(argv: list[str] | None = None) -> int:
         "such records, byte-for-byte unchanged, to a _needs_review file "
         "alongside the main output (logged under NOT FIXED, category "
         "diverted_for_review) rather than inserting a placeholder or "
-        "leaving them without a title in the main output",
+        "leaving them without a title in the main output. --guarantee-"
+        "importable implies this flag too, for the same reason it diverts "
+        "an oversized record instead of leaving it in the main output",
     )
     parser.add_argument(
         "--no-fix-invalid-tags",
@@ -7848,7 +7863,14 @@ def main(argv: list[str] | None = None) -> int:
         "With this flag, the record is logged as unfixable (UNFIXABLE "
         "section, DATA LOSS -- excluded from the main output entirely) "
         "instead of oversized_sentinel_fixed, and every other record in "
-        "the main output is unaffected by it",
+        "the main output is unaffected by it. Also implies --no-add-"
+        "default-245: a record with no 245 is diverted to the "
+        "_needs_review file instead of getting a guessed placeholder "
+        "title, for the same reason -- so the main output ends up split "
+        "three ways -- records that break an import target entirely "
+        "(_error), records a human should look at before deciding what "
+        "to do with them (_needs_review), and records safe to import as "
+        "they are (the main output)",
     )
     parser.add_argument(
         "--no-normalize-smart-characters",
@@ -8147,6 +8169,16 @@ def main(argv: list[str] | None = None) -> int:
     run_started = datetime.now(timezone.utc)
 
     out_path = args.out or _default_output_path(args.input)
+    # --guarantee-importable implies the same treatment --no-add-default-245
+    # gives a missing 245 (divert to _needs_review, same as the
+    # oversized-sentinel case diverts to _error) rather than inventing a
+    # placeholder title -- the whole point of --guarantee-importable is
+    # that nothing in the main output has an uncertain fate FOLIO might
+    # reject without a human looking at it first, and a guessed "No
+    # title" is exactly that kind of guess. An explicit --no-add-
+    # default-245 has the same effect either way, so this is a no-op if
+    # both are given together.
+    add_default_245_effective = args.add_default_245 and not args.guarantee_importable
     run_ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     required_a_tags = (
         load_tag_list(args.required_a_tags_file)
@@ -8402,12 +8434,46 @@ def main(argv: list[str] | None = None) -> int:
                     if ensure_field(parsed, tag, indicators, subfields):
                         rec_id = record_identifier(parsed)
                         log("added_field", True, i, rec_id, f"added missing {tag} field")
-                if args.add_default_245:
+                if add_default_245_effective:
                     rec_id = record_identifier(parsed)
                     for detail in add_default_245(parsed):
                         log("added_default_245", True, i, rec_id, detail)
                 elif record_missing_245(parsed):
-                    # --no-add-default-245: rather than leave this record
+                    rec_id = record_identifier(parsed)
+                    try:
+                        assemble_marc(parsed)
+                    except RepairError as exc:
+                        # A genuinely unfixable record (e.g. a field over
+                        # 9999 bytes -- see ks-oversized-bad in the
+                        # kitchen-sink fixture, which has neither a 245
+                        # nor a field ISO 2709 can represent) takes
+                        # priority over missing-245 diversion -- both can
+                        # coexist on the same record, and without this
+                        # check the `continue` below would short-circuit
+                        # before the record ever reached the real
+                        # UNFIXABLE check further down, silently
+                        # misclassifying "can't be safely included in a
+                        # bulk import at all" as merely "needs review".
+                        print(
+                            f"record {i}: {exc} -- writing to {error_path} instead",
+                            file=sys.stderr,
+                        )
+                        log(
+                            "unfixable", False, i, rec_id,
+                            f"written to {error_path} unchanged: {exc}",
+                        )
+                        error_fh.write(rec_text.encode(encoding_used, errors="surrogateescape"))
+                        if mrk_fh:
+                            mrk_fh.write(
+                                f"=UNFIXABLE  (written to {os.path.basename(error_path)} "
+                                "instead)\n\n"
+                            )
+                        n_unfixable += 1
+                        if rec_id:
+                            id_records.append((i, rec_id, rec_text[:5]))
+                        continue
+                    # --no-add-default-245 (or --guarantee-importable,
+                    # which implies it): rather than leave this record
                     # with no 245 at all, pull it out of the main output
                     # entirely and divert it, byte-for-byte unchanged, to
                     # the review file instead (see `_divert_to_review`) --
@@ -8415,11 +8481,16 @@ def main(argv: list[str] | None = None) -> int:
                     # the final assemble/write for this record, same as
                     # the UNFIXABLE branch above skips them by being in
                     # the other half of this if/else.
-                    rec_id = record_identifier(parsed)
+                    reason = (
+                        "record has no 245 (title statement) and "
+                        + (
+                            "--guarantee-importable is set (implies --no-add-default-245)"
+                            if args.guarantee_importable
+                            else "--no-add-default-245 is set"
+                        )
+                    )
                     _divert_to_review(
-                        log, review_fh, review_path, rec_text, encoding_used, i, rec_id,
-                        "record has no 245 (title statement) and --no-add-default-245 "
-                        "is set",
+                        log, review_fh, review_path, rec_text, encoding_used, i, rec_id, reason,
                     )
                     if mrk_fh:
                         mrk_fh.write(
@@ -8655,7 +8726,7 @@ def main(argv: list[str] | None = None) -> int:
         active_categories.add("removed_non_repeatable_duplicate")
     if ensure_specs:
         active_categories.add("added_field")
-    if args.add_default_245:
+    if add_default_245_effective:
         active_categories.add("added_default_245")
     else:
         active_categories.add("diverted_for_review")

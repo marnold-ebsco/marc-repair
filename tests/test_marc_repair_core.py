@@ -874,15 +874,20 @@ class TestCLIHelpers:
 
 
 class TestGuaranteeImportable:
-    """--guarantee-importable: a record whose fully-repaired form is known
-    to break a real-world import target gets diverted out of the main
-    output instead of being written to it, same destination file as a
-    genuinely UNFIXABLE record -- so everything left in the main output
-    is guaranteed importable. Currently the only such finding is a
-    record over 99999 bytes (empirically confirmed to make FOLIO Data
-    Import abort its entire batch with no job log at all, rather than
-    rejecting just that one record -- see oversized_sentinel_fixed /
-    --guarantee-importable's own help text in marc_repair.py).
+    """--guarantee-importable splits the output three ways instead of
+    one: records known to break a real-world import target entirely go
+    to the _error file (same destination as a genuinely UNFIXABLE
+    record); records that wouldn't break the whole import but need a
+    human decision first go to _needs_review (this flag implies
+    --no-add-default-245, for the same "don't leave a guess in the main
+    output" reasoning as the oversized case); everything else stays in
+    the main output, guaranteed importable.
+
+    Currently confirmed "breaks the whole import" finding: a record over
+    99999 bytes (empirically confirmed to make FOLIO Data Import abort
+    its entire batch with no job log at all, rather than rejecting just
+    that one record -- see oversized_sentinel_fixed / --guarantee-
+    importable's own help text in marc_repair.py).
 
     Run against the real, checked-in kitchen_sink_bib.mrc (not an
     isolated single-record fixture) so these assertions exercise the
@@ -899,6 +904,11 @@ class TestGuaranteeImportable:
     #: (record identifier in kitchen_sink_bib.mrc, expected output file)
     _GUARANTEE_IMPORTABLE_CASES = [
         ("ks-oversized-ok", "error"),  # >99999 bytes -- confirmed kills FOLIO's whole batch
+        ("ks-oversized-bad", "error"),  # genuinely unfixable (field >9999) -- also has no
+        # 245, so this doubles as a regression test that UNFIXABLE takes priority over
+        # missing-245 diversion when a record hits both
+        ("ks-no245", "needs_review"),  # missing 245 -- guarantee-importable implies
+        # --no-add-default-245, so this is diverted rather than getting a placeholder
         ("ks-smartchar", "repaired"),  # ordinary repaired record -- unaffected by this flag
         ("ks-dupe-id", "repaired"),  # flagged (duplicate_identifier) but still importable
     ]
