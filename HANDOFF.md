@@ -8,6 +8,95 @@ current state and open items.
 
 ## Current state
 
+### OPEN -- non-standard MARC field check: stage 1 DONE (commit 6263d4b), stage 2 PLANNED, awaiting answers (2026-10-22)
+
+**Do not start stage 2 until the user answers the questions below and says go.**
+
+**Stage 1 (done, committed on `guarantee-importable`):**
+`standard_marc_fields.txt` (repo root, hand-editable; `[standard]` 254 tags,
+`[obsolete]` 38 tags; one `TAG | TITLE` per line; anything unlisted is
+non-standard). Drawn from https://www.loc.gov/marc/bibliographic/ecbdlist.html
+(leader/subfield detail ignored). 590 and 690 accepted as local fields (590 is
+obsolete on the LOC page; the user's rule wins); every other 59X/69X is
+non-standard; 009 is obsolete, 008 is standard. Regenerate with
+`tools/build_standard_marc_fields.py [saved_page.html]` (the page is ~256k
+chars -- WebFetch truncates it, so download the HTML). Tests:
+`tests/test_standard_marc_fields.py`. Not yet wired into `marc_repair.py`.
+
+**Stage 2 requirements (from the user):** check every record and log each
+non-standard field. Information only (record never modified). Detailed entries:
+position in file, record number, the field, and the first ~20 characters of its
+data, human-readable: subfield delimiter removed, subfield code written `$a`,
+one space after the code, then the content; end-of-field marker removed.
+Category along the lines of "Non-Standard MARC fields". Obsolete-listed tags
+reported but marked obsolete. 9XX never reported; "normal" fields such as 880
+and 886 are on the LOC list so are standard. If a tag has more than 10
+occurrences show only the first 10 in detail, then "and N more".
+
+**Mockup shown to the user** (real GTU examples; `GTU_bibs.mrc`, 404,956 recs):
+
+```
+=== INFORMATION ONLY: non_standard_marc_fields ===
+=== Record contains a data/control field whose tag is not in
+===   standard_marc_fields.txt (LC's MARC 21 bibliographic field list, plus
+===   local 590/690) or is listed there as obsolete. 9XX fields are never
+===   reported. Nothing is changed or removed; this is a report only.
+=== NO DATA LOSS ===
+=== <N> instance(s) in <M> record(s); 10 per tag listed in detail ===
+	record 175057 (.b12178172)	offset 211038181	605 _0 $a Underground Railr...
+	record 354610 (.b14353234)	offset 426106395	605 0_ $a Methodism $x Histo...
+	record 281262 (.b13422443)	offset 329652152	606 0_ $a v. 1. Advent to Wh...
+	record 250061 (.b1304493x)	offset 296414379	612 _0 $a American Baptist G...
+	record 225467 (.b1277540x)	offset 269023709	620 10 $a Society of Friends
+	record 265877 (.b13255629)	offset 313278993	646 30 $a One thousand city...
+	record 139075 (.b11576376)	offset 163068702	659 _0 $a Ceremonial exchan...
+	record 315592 (.b13873003)	offset 372949992	660 10 $a Confederate State...
+	record 124982 (.b11411119)	offset 147215821	670 1_ $a Miller, Lewis, $d...
+	record 1 (.b10000057)	offset 0	090 __ $a B734 $b .D5  [OBSOLETE]
+	... (9 more 090 entries) ...
+	and 332,537 more 090 [OBSOLETE]
+```
+
+GTU findings: 679 and 684 do not occur in GTU. High-volume non-standard tags:
+049 (206,634), 799 (11,620), 440 (1,222, obsolete); 090 (obsolete) 332,547.
+444 has 11. 002 (2) and 004 (39) occur with odd content.
+
+**Stage 2 implementation plan (est. 50-70k tokens):**
+1. Loader: read `standard_marc_fields.txt` from next to `marc_repair.py` (same
+   way `required_a_tags.txt` is located). Returns standard + obsolete sets.
+2. Check (bib records only): each tag not in `[standard]` and not 9XX -> one
+   finding (record number, byte offset, `record_identifier(parsed)` id, tag,
+   indicators, preview). Never modifies the record. Preview: strip 0x1F and
+   end-of-field mark, `$<code> ` per subfield, cut at ~20 chars of data with
+   "..." if truncated.
+3. Per-tag cap: count all occurrences for totals, keep only first 10 per tag as
+   entries; `write_log` (marc_repair.py ~line 6591) emits "and N more <tag>"
+   lines. Needs a small `write_log` extension.
+4. New log section (INFORMATIONAL categories are header+count only, never
+   listed in full, so this needs a dedicated section -- see `_section_for`,
+   `_DEDICATED_SECTIONS`, `_CHECK_DESCRIPTIONS`, `_CHECK_DATA_LOSS`,
+   `_CATEGORY_DISPLAY_NOTE`, `LogEntry.render` ~lines 5951-6700). Make it work
+   with `--log-full`.
+5. Tests (pytest): standard / obsolete / non-standard / 590,690 / 9XX / cap and
+   "and N more" / preview formatting / section against
+   `working/GTU_bibs_sample50.mrc`.
+6. Verify on GTU; flake8; full suite.
+7. Docs: README + regenerate categories doc via
+   `tools/generate_repair_categories_doc.py`.
+
+**OPEN QUESTIONS for the user (ask/answer all in one round):**
+1. Position in file: record number + byte offset (as in mockup)? Existing logs
+   use record number only.
+2. On by default, or behind a flag? (Recommended: on by default -- info only,
+   cheap.)
+3. Is the 10-entry cap per tag (assumed) rather than 10 total?
+4. Section/category names: `INFORMATION ONLY` / `non_standard_marc_fields`, or
+   "Non-Standard MARC fields" as the user's wording?
+5. Show indicators (`_` for blank, as in mockup)?
+6. Bib records only (assumed; the list is the bibliographic one)?
+7. Add any of 049, 799, 440, 090 to the accepted list? (049/799 look like local
+   fields.) Default: leave the list unchanged.
+
 ### OPEN -- import-safety defaults + `--guarantee-importable`, branch `guarantee-importable` (2026-10-19)
 
 **Status: implemented, tested, and empirically verified end-to-end against
