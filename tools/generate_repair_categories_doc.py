@@ -464,6 +464,14 @@ BIB_ROWS = [
         '`--check-isbn-issn-checksum`',
     ),
     CategoryRow(
+        "Non-standard MARC field (tag not in standard_marc_fields.txt)",
+        "Flagged only, no change", "**Yes**",
+        "`non_standard_marc_fields`", "INFORMATION ONLY",
+        "**Yes** -- first 5 of each tag in detail, then \"and N more\"",
+        "`--no-check-non-standard-fields` (list: "
+        "`--standard-marc-fields-file`)",
+    ),
+    CategoryRow(
         "Duplicate identifier across records", "Flagged only, no change",
         "detect-only", "`duplicate_identifier`", "DUPLICATE RECORDS",
         "**Yes**", "-- (detect-only, no switch)",

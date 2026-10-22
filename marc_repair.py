@@ -4791,6 +4791,90 @@ DEFAULT_HOLDINGS_REQUIRED_A_TAGS_FILE = os.path.join(
 HOLDINGS_CAPTION_PATTERN_TAGS = {"853", "854", "855"}
 HOLDINGS_CAPTION_PATTERN_VALID_CODES = frozenset({"a", "g", "i"})
 
+DEFAULT_STANDARD_MARC_FIELDS_FILE = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "standard_marc_fields.txt"
+)
+
+#: Category for `NonStandardFieldTally`'s findings, and how many of each
+#: tag's occurrences get a detailed log entry (the rest are only counted).
+NON_STANDARD_FIELD_CATEGORY = "non_standard_marc_fields"
+NON_STANDARD_FIELD_DETAIL_LIMIT = 5
+_NON_STANDARD_PREVIEW_CHARS = 20
+
+
+def load_standard_marc_fields(path: str) -> tuple[set[str], set[str]]:
+    """Load standard_marc_fields.txt: returns (standard, obsolete) tag
+    sets. One `TAG | TITLE` per line under a `[standard]` or `[obsolete]`
+    heading; blank lines and lines starting with # are ignored. A tag in
+    neither section is non-standard."""
+    sections: dict[str, set[str]] = {"standard": set(), "obsolete": set()}
+    current = None
+    with open(path, encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if line in ("[standard]", "[obsolete]"):
+                current = line[1:-1]
+                continue
+            if current is None:
+                raise ValueError(f"{path}: tag {line!r} appears before a [section] heading")
+            sections[current].add(line.split("|", 1)[0].strip())
+    return sections["standard"], sections["obsolete"]
+
+
+def field_preview(f: Field_, max_chars: int = _NON_STANDARD_PREVIEW_CHARS) -> str:
+    """Human-readable start of a field's data: no delimiters or
+    end-of-field marker, each subfield as "$<code> <data>", cut to
+    `max_chars` characters (plus "..." if cut). Indicators are not
+    shown."""
+    if f.is_control():
+        text = f.content or ""
+    else:
+        text = " ".join(f"${code} {data}" for code, data in f.subfields)
+    text = text.replace(FIELDTERM, "").replace(SUBFIELD, "$")
+    return text[:max_chars] + "..." if len(text) > max_chars else text
+
+
+class NonStandardFieldTally:
+    """Detect-only check for fields whose tag isn't in
+    standard_marc_fields.txt (or is listed there as obsolete); 9XX tags
+    and non-numeric tags are never reported. Counts every occurrence per
+    tag but only hands back detail lines for the first
+    `NON_STANDARD_FIELD_DETAIL_LIMIT` of each tag -- `write_log` uses the
+    counts for each tag's heading and its "and N more" line."""
+
+    def __init__(self, standard: set[str], obsolete: set[str],
+                 limit: int = NON_STANDARD_FIELD_DETAIL_LIMIT):
+        self.standard = standard
+        self.obsolete = obsolete - standard
+        self.limit = limit
+        self.instances: dict[str, int] = {}
+        self.records: dict[str, int] = {}
+        self.listed: dict[str, int] = {}
+        self.records_with_any = 0
+
+    def check(self, parsed: ParsedRecord) -> list[str]:
+        """Count this record's non-standard fields; returns the detail
+        text ("<tag> <preview>") for those still under the per-tag
+        limit. Never modifies the record."""
+        details = []
+        tags_seen: set[str] = set()
+        for f in parsed.fields:
+            tag = f.tag
+            if len(tag) != 3 or not tag.isdigit() or tag[0] == "9" or tag in self.standard:
+                continue
+            self.instances[tag] = self.instances.get(tag, 0) + 1
+            if tag not in tags_seen:
+                tags_seen.add(tag)
+                self.records[tag] = self.records.get(tag, 0) + 1
+            if self.listed.get(tag, 0) < self.limit:
+                self.listed[tag] = self.listed.get(tag, 0) + 1
+                details.append(f"{tag} {field_preview(f)}")
+        if tags_seen:
+            self.records_with_any += 1
+        return details
+
 
 def find_853_missing_8(parsed: ParsedRecord) -> list[str]:
     """Detect (never fix) an 853 (Captions and Pattern -- Basic) field
@@ -6081,6 +6165,9 @@ _NEEDS_REVIEW = {
 _DEDICATED_SECTIONS: dict[str, tuple[int, str]] = {
     "unfixable": (-1, "UNFIXABLE"),
     "duplicate_identifier": (3, "DUPLICATE RECORDS"),
+    # Below even INFORMATIONAL: report-only, but unlike INFORMATIONAL its
+    # entries ARE listed (first few per tag -- see NonStandardFieldTally).
+    "non_standard_marc_fields": (5, "INFORMATION ONLY"),
 }
 for _cat in _FIXED_REQUIRES_ATTENTION:
     _DEDICATED_SECTIONS[_cat] = (1, "FIXED/REQUIRES ATTENTION")
@@ -6183,6 +6270,11 @@ _CHECK_DESCRIPTIONS: dict[str, str] = {
     "doubled_proxy_url": "A URL subfield (e.g. 856 $u) has a literally duplicated proxy prefix (e.g. "
     "an ezproxy wrapper repeated twice) -- a pre-existing error in the source "
     "record, not something this migration introduced.",
+    "non_standard_marc_fields": "A field whose tag isn't in standard_marc_fields.txt (LC's MARC 21 "
+    "bibliographic field list plus accepted local fields -- edit that file to add or remove tags) "
+    "or is listed there as obsolete ([OBSOLETE]). 9XX fields are never reported. Report only -- "
+    "nothing is changed or removed. Each tag is listed separately: its first 5 occurrences in "
+    "detail, then \"and N more\".",
     "suspect_marc8_escape": "A MARC-8 script-switching escape (Hebrew/Arabic/Cyrillic/Greek/CJK) "
     "produces only a single character, welded directly between two ASCII "
     "letters with no word boundary -- almost certainly a miskeyed accented "
@@ -6380,6 +6472,7 @@ _CHECK_DATA_LOSS: dict[str, str] = {
     "removed_empty_852_subfield": "NO DATA LOSS",
     "recoded_852_b_to_i": "NO DATA LOSS",
     "dropped_oversized_field": "DATA LOSS",
+    "non_standard_marc_fields": "NO DATA LOSS",
 }
 
 #: A short plain-language parenthetical appended to a category's own
@@ -6408,6 +6501,7 @@ _CATEGORY_DISPLAY_NOTE: dict[str, str] = {
 #: unlikely to ever be individually fixed (dangling_880_link,
 #: invalid_isbn_issn_checksum) -- on request.
 _ALWAYS_FULL_CATEGORIES = {
+    "non_standard_marc_fields",
     "unfixable",
     "diverted_for_review",
     "duplicate_identifier",
@@ -6588,12 +6682,30 @@ def _write_description_header(fh, description: str) -> None:
         fh.write(f"{prefix}{line}\n")
 
 
+def _write_non_standard_blocks(fh, group: list[LogEntry], tally: NonStandardFieldTally) -> None:
+    """One block per tag, in tag order: a heading with that tag's own
+    counts (and [OBSOLETE] if it is), its detail entries, then an "and N
+    more <tag>" line if the tally counted more than were listed."""
+    by_tag: dict[str, list[LogEntry]] = {}
+    for e in group:
+        by_tag.setdefault(e.detail[:3], []).append(e)
+    for tag in sorted(tally.instances):
+        n_inst, n_rec = tally.instances[tag], tally.records[tag]
+        obsolete = " [OBSOLETE]" if tag in tally.obsolete else ""
+        fh.write(f"\n--- {tag}{obsolete}: {n_inst:,} instance(s) in {n_rec:,} record(s) ---\n")
+        for e in by_tag.get(tag, []):
+            fh.write(e.render() + "\n")
+        if n_inst > tally.listed.get(tag, 0):
+            fh.write(f"\tand {n_inst - tally.listed[tag]:,} more {tag}\n")
+
+
 def write_log(
     path: str,
     entries: list[LogEntry],
     active_categories: set[str] = frozenset(),
     full_categories: set[str] | None = None,
     count_notes: dict[str, str] | None = None,
+    non_standard_tally: NonStandardFieldTally | None = None,
 ) -> None:
     """Write `entries` grouped into sections -- NOT FIXED, then FIXED/
     REQUIRES ATTENTION, then DUPLICATE RECORDS, then INFORMATIONAL at
@@ -6687,10 +6799,24 @@ def write_log(
                 count_line = f"{n_instances} record(s)"
             else:
                 count_line = f"{n_instances} instance(s) in {n_records} record(s)"
+            tally = (
+                non_standard_tally
+                if category == NON_STANDARD_FIELD_CATEGORY and non_standard_tally is not None
+                and non_standard_tally.instances
+                else None
+            )
+            if tally is not None:
+                count_line = (
+                    f"{sum(tally.instances.values()):,} instance(s) in "
+                    f"{tally.records_with_any:,} record(s), {len(tally.instances)} tag(s); "
+                    f"first {tally.limit} of each tag listed"
+                )
             if count_note:
                 count_line += f" - {count_note}"
             fh.write(f"=== {count_line} ===\n")
-            if category in full_categories and label != "INFORMATIONAL":
+            if tally is not None:
+                _write_non_standard_blocks(fh, group, tally)
+            elif category in full_categories and label != "INFORMATIONAL":
                 if category in _SUMMARIZE_NO_DATA_LOSS_ENTRIES:
                     no_loss_count = sum(1 for e in group if "NO DATA LOSS" in e.detail)
                     if no_loss_count:
@@ -7851,6 +7977,24 @@ def main(argv: list[str] | None = None) -> int:
         "per-record list",
     )
     parser.add_argument(
+        "--no-check-non-standard-fields",
+        dest="check_non_standard_fields",
+        action="store_false",
+        default=True,
+        help="do NOT report fields whose tag isn't in "
+        "--standard-marc-fields-file. By default this report-only check "
+        "runs (bib records only; 9XX never reported) and logs the first "
+        f"{NON_STANDARD_FIELD_DETAIL_LIMIT} occurrences of each such tag "
+        "under INFORMATION ONLY as non_standard_marc_fields; nothing is "
+        "changed or removed",
+    )
+    parser.add_argument(
+        "--standard-marc-fields-file",
+        default=DEFAULT_STANDARD_MARC_FIELDS_FILE,
+        help="accepted/obsolete tag list for the non-standard-field "
+        f"check, editable (default: {DEFAULT_STANDARD_MARC_FIELDS_FILE})",
+    )
+    parser.add_argument(
         "--allow-oversized-sentinel",
         action="store_true",
         default=False,
@@ -8203,6 +8347,11 @@ def main(argv: list[str] | None = None) -> int:
         if args.strip_duplicate_non_repeatable_fields
         else set()
     )
+    non_standard_tally = (
+        NonStandardFieldTally(*load_standard_marc_fields(args.standard_marc_fields_file))
+        if args.check_non_standard_fields
+        else None
+    )
     ensure_specs = [parse_ensure_field_spec(s) for s in args.ensure_field]
 
     overrides = _load_overrides(args.overrides) if args.overrides else {}
@@ -8536,6 +8685,10 @@ def main(argv: list[str] | None = None) -> int:
                 for detail in find_856_missing_u(parsed):
                     rec_id = record_identifier(parsed)
                     log("bib_856_missing_u", False, i, rec_id, detail)
+                if non_standard_tally is not None:
+                    for detail in non_standard_tally.check(parsed):
+                        rec_id = record_identifier(parsed)
+                        log(NON_STANDARD_FIELD_CATEGORY, False, i, rec_id, detail)
                 for category, detail in find_suspicious_fields(parsed):
                     # unfixed_non_numeric_tag is suppressed here when
                     # --fix-invalid-tags is on (the default): it's
@@ -8656,7 +8809,7 @@ def main(argv: list[str] | None = None) -> int:
                 sample_problems_path
                 and n_sampled < args.sample_limit
                 and any(
-                    not entry.fixed
+                    not entry.fixed and entry.category != NON_STANDARD_FIELD_CATEGORY
                     for entry in log_entries[log_entries_before_record:]
                 )
             ):
@@ -8755,6 +8908,8 @@ def main(argv: list[str] | None = None) -> int:
         active_categories.add("invalid_isbn_issn_checksum")
     if args.fix_invalid_tags:
         active_categories.add("invalid_tag")
+    if args.check_non_standard_fields:
+        active_categories.add(NON_STANDARD_FIELD_CATEGORY)
 
     resolved_full_categories = _ALWAYS_FULL_CATEGORIES | set(args.log_full)
 
@@ -8778,6 +8933,7 @@ def main(argv: list[str] | None = None) -> int:
     write_log(
         log_path, log_entries, active_categories=active_categories,
         full_categories=resolved_full_categories,
+        non_standard_tally=non_standard_tally,
     )
     n_log_lines = len(log_entries)
     # Based on which section an entry actually lands in, not the raw
@@ -8790,11 +8946,14 @@ def main(argv: list[str] | None = None) -> int:
     n_not_fixed = sum(
         1 for e in log_entries if _section_for(e)[1] in ("NOT FIXED", "UNFIXABLE")
     )
-    n_fixed = n_log_lines - n_not_fixed
+    n_info_only = sum(1 for e in log_entries if e.category == NON_STANDARD_FIELD_CATEGORY)
+    n_fixed = n_log_lines - n_not_fixed - n_info_only
     print(
         f"log (every check run, one header per category) written to {log_path} "
         f"({n_log_lines} record-level finding(s): {n_not_fixed} not fixed, "
-        f"{n_fixed} fixed)",
+        f"{n_fixed} fixed"
+        + (f", {n_info_only} information only" if n_info_only else "")
+        + ")",
         file=sys.stderr,
     )
 

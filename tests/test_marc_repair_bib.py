@@ -4601,6 +4601,89 @@ class TestBib856MissingUCli:
         assert "=== 0 record(s) ===" in content.split("bib_856_missing_u")[1]
 
 
+class TestNonStandardMarcFields:
+    """non_standard_marc_fields: report-only, on by default, bib records
+    only. Lists the first 5 occurrences of each non-standard tag (tag by
+    tag, in order), then "and N more <tag>"."""
+
+    @staticmethod
+    def _rec(extra):
+        return m.ParsedRecord(
+            leader=_SYNTHETIC_LEADER,
+            entries=[],
+            fields=[
+                m.Field_("008", None, None, content="x" * 40),
+                m.Field_("245", "00", [("a", "Title.")]),
+                *extra,
+            ],
+        )
+
+    def _run(self, tmp_path, records, *extra_args):
+        src = tmp_path / "in.mrc"
+        src.write_bytes(b"".join(m.assemble_marc(r) for r in records))
+        out = tmp_path / "out.mrc"
+        log = tmp_path / "run.log"
+        assert m.main([str(src), "-o", str(out), "--log", str(log), *extra_args]) == 0
+        return _resolve_log(log).read_text(encoding="utf-8"), out
+
+    def test_load_standard_marc_fields(self, tmp_path):
+        p = tmp_path / "f.txt"
+        p.write_text("# c\n[standard]\n245 | TITLE\n590 | LOCAL\n\n[obsolete]\n009 | OLD\n")
+        assert m.load_standard_marc_fields(str(p)) == ({"245", "590"}, {"009"})
+
+    def test_field_preview_format(self):
+        f = m.Field_("605", " 0", [("a", "Underground Railroad"), ("x", "History")])
+        assert m.field_preview(f) == "$a Underground Railr..."
+        short = m.Field_("620", "10", [("a", "Friends")])
+        assert m.field_preview(short) == "$a Friends"
+        ctl = m.Field_("004", None, None, content="y" * 30)
+        assert m.field_preview(ctl) == "y" * 20 + "..."
+
+    def test_tally_skips_standard_9xx_and_nonnumeric(self):
+        t = m.NonStandardFieldTally({"245", "008"}, {"009"})
+        rec = self._rec([
+            m.Field_("999", "  ", [("a", "x")]),
+            m.Field_("AB1", "  ", [("a", "x")]),
+            m.Field_("605", " 0", [("a", "Methodism")]),
+            m.Field_("009", None, None, content="old"),
+        ])
+        assert t.check(rec) == ["605 $a Methodism", "009 old"]
+        assert t.records_with_any == 1 and t.obsolete == {"009"}
+
+    def test_cli_per_tag_blocks_cap_and_obsolete(self, tmp_path):
+        recs = [
+            self._rec([m.Field_("241", " 0", [("a", f"Series {n}")])] +
+                      ([m.Field_("605", " 0", [("a", "Methodism")])] if n == 0 else []))
+            for n in range(8)
+        ]
+        content, out = self._run(tmp_path, recs)
+        assert "=== INFORMATION ONLY: non_standard_marc_fields ===" in content
+        assert "=== NO DATA LOSS ===" in content
+        assert "=== 9 instance(s) in 8 record(s), 2 tag(s); first 5 of each tag listed ===" in content
+        assert content.index("--- 241 [OBSOLETE]: 8 instance(s) in 8 record(s) ---") < \
+            content.index("--- 605: 1 instance(s) in 1 record(s) ---")
+        sec = content.split("--- 241")[1]
+        assert sec.count("\trecord ") == 6  # 5 x 241 + the 605 below it
+        assert "\tand 3 more 241" in content
+        assert "more 605" not in content
+        assert re.search(r"\trecord \d+\t241 \$a Series 0\n", content)
+        # report only: output still has the fields
+        data = out.read_bytes()
+        assert data.count(b"Series ") == 8 and b"Methodism" in data
+
+    def test_cli_nothing_non_standard_gets_zero_header(self, tmp_path):
+        content, _ = self._run(tmp_path, [self._rec([])])
+        sec = content.split("non_standard_marc_fields")[1]
+        assert "=== 0 record(s) ===" in sec and "--- " not in sec
+
+    def test_cli_opt_out_flag(self, tmp_path):
+        content, _ = self._run(
+            tmp_path, [self._rec([m.Field_("605", " 0", [("a", "x")])])],
+            "--no-check-non-standard-fields",
+        )
+        assert "non_standard_marc_fields" not in content
+
+
 # ---------------------------------------------------------------------------
 # CLI-default-behavior wiring, parametrized across categories that share
 # the same shape of test: build one triggering record, run `main` with a

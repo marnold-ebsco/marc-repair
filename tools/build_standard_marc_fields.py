@@ -4,8 +4,9 @@ Usage: .venv/bin/python tools/build_standard_marc_fields.py [ecbdlist.html]
 
 With no argument the page is downloaded from loc.gov. Only field tags and
 titles are used; leader, indicator and subfield detail is ignored. Fields
-marked [OBSOLETE] go in the [obsolete] section. 590 and 690 are added to
-[standard] as accepted local fields; every other 59X/69X is left out.
+marked [OBSOLETE] go in the [obsolete] section. The LOCAL_STANDARD tags
+are added to [standard] as accepted local fields (and kept out of
+[obsolete]); every other 59X/69X is left out.
 """
 import html
 import re
@@ -15,8 +16,22 @@ from pathlib import Path
 
 URL = "https://www.loc.gov/marc/bibliographic/ecbdlist.html"
 OUT = Path(__file__).resolve().parent.parent / "standard_marc_fields.txt"
-LOCAL_STANDARD = {"590": "LOCAL NOTE (local field, accepted)",
-                  "690": "LOCAL SUBJECT ADDED ENTRY (local field, accepted)"}
+LOCAL_STANDARD = {
+    "019": "LOCAL FIELD (local field, accepted)",
+    "029": "LOCAL FIELD (local field, accepted)",
+    "049": "LOCAL HOLDINGS (local field, accepted)",
+    "069": "LOCAL FIELD (local field, accepted)",
+    "265": "SOURCE FOR ACQUISITION (obsolete in MARC, accepted)",
+    "440": "SERIES STATEMENT (obsolete in MARC, accepted)",
+    "599": "LOCAL NOTE (local field, accepted)",
+    "090": "LOCAL CALL NUMBER (local field, accepted)",
+    "092": "LOCAL FIELD (local field, accepted)",
+    "096": "LOCAL FIELD (local field, accepted)",
+    "099": "LOCAL CALL NUMBER (local field, accepted)",
+    "590": "LOCAL NOTE (local field, accepted)",
+    "690": "LOCAL SUBJECT ADDED ENTRY (local field, accepted)",
+    "799": "LOCAL ADDED ENTRY (local field, accepted)",
+}
 FIELD_RE = re.compile(r"^(\d{3}) - (.+?)\s*$")
 # trailing (R)/(NR), format codes like (BK AM CF), [OBSOLETE]/[LOCAL], "-"
 TRAIL_RE = re.compile(
@@ -34,7 +49,9 @@ HEADER = """\
 # are non-standard and reported as obsolete. 9XX tags are never reported
 # (handled by the checker, not this file).
 #
-# 590 and 690 are accepted local fields; other 59X/69X are non-standard.
+# 019, 029, 049, 069, 090, 092, 096, 099, 590, 599, 690 and 799 are accepted
+# local fields, and 265 and 440 are obsolete in MARC but accepted anyway
+# (none are reported as obsolete); other 59X/69X are non-standard.
 """
 
 

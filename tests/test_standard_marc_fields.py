@@ -35,15 +35,21 @@ def test_known_standard_fields():
 
 def test_unlisted_and_other_local_fields_not_standard():
     std, obs = load()
-    for tag in ("002", "004", "591", "599", "691", "900"):
+    for tag in ("002", "004", "591", "598", "691", "900"):
         assert tag not in std and tag not in obs, tag
 
 
 def test_obsolete_fields():
     std, obs = load()
-    for tag in ("009", "011", "090", "241", "301"):
+    for tag in ("009", "011", "241", "301"):
         assert tag in obs and tag not in std, tag
-    assert "590" not in obs
+
+
+def test_local_fields_standard_not_obsolete():
+    std, obs = load()
+    for tag in ("019", "029", "049", "069", "090", "092", "096", "099",
+                "265", "440", "590", "599", "690", "799"):
+        assert tag in std and tag not in obs, tag
 
 
 def test_no_leftover_markers_in_titles():

@@ -110,6 +110,7 @@ infer it from a category's DATA LOSS/POSSIBLE DATA LOSS label alone.
 | Invalid bibliographic level (leader byte 07) | Defaulted to 'm' (Monograph/Item) | Yes, always | `invalid_bibliographic_level` | FIXED/REQUIRES ATTENTION | **Yes** | -- (no switch -- always runs and always logged) |
 | Dangling 880 $6 link | Flagged only, no change | **No** (`--check-dangling-880-links` to enable) | `dangling_880_link` | INFORMATIONAL | No -- INFORMATIONAL categories are never listed in full, not even via --log-full | `--check-dangling-880-links` |
 | Invalid ISBN/ISSN checksum | Flagged only, no change | **No** (`--check-isbn-issn-checksum` to enable) | `invalid_isbn_issn_checksum` | INFORMATIONAL | No -- INFORMATIONAL categories are never listed in full, not even via --log-full | `--check-isbn-issn-checksum` |
+| Non-standard MARC field (tag not in standard_marc_fields.txt) | Flagged only, no change | **Yes** | `non_standard_marc_fields` | INFORMATION ONLY | **Yes** -- first 5 of each tag in detail, then "and N more" | `--no-check-non-standard-fields` (list: `--standard-marc-fields-file`) |
 | Duplicate identifier across records | Flagged only, no change | detect-only | `duplicate_identifier` | DUPLICATE RECORDS | **Yes** | -- (detect-only, no switch) |
 | 856 (Electronic Location and Access) missing $u (URI) -- same real-world FOLIO/transform validation as holdings' `holdings_856_missing_u` | Flagged only, no change | detect-only | `bib_856_missing_u` | NEEDS REVIEW | **Yes** | -- (detect-only, no switch) |
 
