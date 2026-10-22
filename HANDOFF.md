@@ -8,120 +8,46 @@ current state and open items.
 
 ## Current state
 
-### OPEN -- non-standard MARC field check: stage 1 DONE (commit 6263d4b), stage 2 PLANNED, awaiting answers (2026-10-22)
+### DONE -- non-standard MARC field check (`non_standard_marc_fields`), branch `guarantee-importable` (2026-10-22)
 
-**Do not start stage 2 until the user answers the questions below and says go.**
+**Status: built, tested (504 pass), committed (`6263d4b` list, `29c2ef7`
+check). Nothing outstanding except what's under "Possible follow-ups".**
 
-**Stage 1 (done, committed on `guarantee-importable`):**
-`standard_marc_fields.txt` (repo root, hand-editable; `[standard]` 254 tags,
-`[obsolete]` 38 tags; one `TAG | TITLE` per line; anything unlisted is
-non-standard). Drawn from https://www.loc.gov/marc/bibliographic/ecbdlist.html
-(leader/subfield detail ignored). 590 and 690 accepted as local fields (590 is
-obsolete on the LOC page; the user's rule wins); every other 59X/69X is
-non-standard; 009 is obsolete, 008 is standard. Regenerate with
-`tools/build_standard_marc_fields.py [saved_page.html]` (the page is ~256k
-chars -- WebFetch truncates it, so download the HTML). Tests:
-`tests/test_standard_marc_fields.py`. Not yet wired into `marc_repair.py`.
+What it is: a report-only, on-by-default, bib-only check. Every field whose tag
+is not in `standard_marc_fields.txt` is counted; the first **5 per tag** are
+logged (`record N (.bNNN)<TAB><tag> $a first-20-chars...`, no indicators, no
+byte offset), then `and N more <tag>`. Each tag gets its own block in numeric
+order with its own counts, `[OBSOLETE]` if listed obsolete. 9XX and non-numeric
+tags are never reported. Section `INFORMATION ONLY` (sorted last), category
+`non_standard_marc_fields`.
 
-**Stage 2 requirements (from the user):** check every record and log each
-non-standard field. Information only (record never modified). Detailed entries:
-position in file, record number, the field, and the first ~20 characters of its
-data, human-readable: subfield delimiter removed, subfield code written `$a`,
-one space after the code, then the content; end-of-field marker removed.
-Category along the lines of "Non-Standard MARC fields". Obsolete-listed tags
-reported but marked obsolete. 9XX never reported; "normal" fields such as 880
-and 886 are on the LOC list so are standard. If a tag has more than 10
-occurrences show only the first 10 in detail, then "and N more".
+Where things are:
+- `standard_marc_fields.txt` (repo root, hand-editable, `[standard]` /
+  `[obsolete]`, `TAG | TITLE`; unlisted = non-standard). Generated from
+  https://www.loc.gov/marc/bibliographic/ecbdlist.html by
+  `tools/build_standard_marc_fields.py [saved.html]` (WebFetch truncates the
+  page -- download the HTML). Hand-added accepted tags live in that script's
+  `LOCAL_STANDARD`, so regenerating keeps them (editing only the .txt will be
+  overwritten on regeneration).
+- Accepted local: 019 029 049 069 090 092 096 099 590 599 690 799; accepted
+  though obsolete in MARC: 265 440. 009 is obsolete (008 is standard).
+- Code: `marc_repair.py` -- `load_standard_marc_fields`, `field_preview`,
+  `NonStandardFieldTally`, `_write_non_standard_blocks`, `write_log(...,
+  non_standard_tally=)`; CLI `--no-check-non-standard-fields`,
+  `--standard-marc-fields-file`. Excluded from `--sample-problems`.
+- Tests: `tests/test_standard_marc_fields.py`,
+  `tests/test_marc_repair_bib.py::TestNonStandardMarcFields`.
+- Docs: README file table, `docs/REPAIR_CATEGORIES.md` (regenerate with
+  `tools/generate_repair_categories_doc.py`), `install.sh` ships the list.
 
-**Mockup shown to the user** (real GTU examples; `GTU_bibs.mrc`, 404,956 recs):
+Still reported in sample data (user left them non-standard on purpose): 004,
+691/696/697, 539, 012, 079, 350*, 859, 890, 002, 092-style oddities etc.
+(`*` = obsolete). Counts before accepting 440/265/069/599: GTU 1,839
+instances/50 tags, Bucknell 5,021/4 tags, WTS 18,853/19 tags, UBahamas
+6,915/12 tags.
 
-```
-=== INFORMATION ONLY: non_standard_marc_fields ===
-=== Record contains a data/control field whose tag is not in
-===   standard_marc_fields.txt (LC's MARC 21 bibliographic field list, plus
-===   local 590/690) or is listed there as obsolete. 9XX fields are never
-===   reported. Nothing is changed or removed; this is a report only.
-=== NO DATA LOSS ===
-=== <N> instance(s) in <M> record(s); 10 per tag listed in detail ===
-	record 175057 (.b12178172)	offset 211038181	605 _0 $a Underground Railr...
-	record 354610 (.b14353234)	offset 426106395	605 0_ $a Methodism $x Histo...
-	record 281262 (.b13422443)	offset 329652152	606 0_ $a v. 1. Advent to Wh...
-	record 250061 (.b1304493x)	offset 296414379	612 _0 $a American Baptist G...
-	record 225467 (.b1277540x)	offset 269023709	620 10 $a Society of Friends
-	record 265877 (.b13255629)	offset 313278993	646 30 $a One thousand city...
-	record 139075 (.b11576376)	offset 163068702	659 _0 $a Ceremonial exchan...
-	record 315592 (.b13873003)	offset 372949992	660 10 $a Confederate State...
-	record 124982 (.b11411119)	offset 147215821	670 1_ $a Miller, Lewis, $d...
-	record 1 (.b10000057)	offset 0	090 __ $a B734 $b .D5  [OBSOLETE]
-	... (9 more 090 entries) ...
-	and 332,537 more 090 [OBSOLETE]
-```
-
-GTU findings: 679 and 684 do not occur in GTU. High-volume non-standard tags:
-049 (206,634), 799 (11,620), 440 (1,222, obsolete); 090 (obsolete) 332,547.
-444 has 11. 002 (2) and 004 (39) occur with odd content.
-
-**Stage 2 implementation plan (est. 50-70k tokens):**
-1. Loader: read `standard_marc_fields.txt` from next to `marc_repair.py` (same
-   way `required_a_tags.txt` is located). Returns standard + obsolete sets.
-2. Check (bib records only): each tag not in `[standard]` and not 9XX -> one
-   finding (record number, byte offset, `record_identifier(parsed)` id, tag,
-   indicators, preview). Never modifies the record. Preview: strip 0x1F and
-   end-of-field mark, `$<code> ` per subfield, cut at ~20 chars of data with
-   "..." if truncated.
-3. Per-tag cap: count all occurrences for totals, keep only first 10 per tag as
-   entries; `write_log` (marc_repair.py ~line 6591) emits "and N more <tag>"
-   lines. Needs a small `write_log` extension.
-4. New log section (INFORMATIONAL categories are header+count only, never
-   listed in full, so this needs a dedicated section -- see `_section_for`,
-   `_DEDICATED_SECTIONS`, `_CHECK_DESCRIPTIONS`, `_CHECK_DATA_LOSS`,
-   `_CATEGORY_DISPLAY_NOTE`, `LogEntry.render` ~lines 5951-6700). Make it work
-   with `--log-full`.
-5. Tests (pytest): standard / obsolete / non-standard / 590,690 / 9XX / cap and
-   "and N more" / preview formatting / section against
-   `working/GTU_bibs_sample50.mrc`.
-6. Verify on GTU; flake8; full suite.
-7. Docs: README + regenerate categories doc via
-   `tools/generate_repair_categories_doc.py`.
-
-**DECISIONS (user, 2026-10-22) -- these supersede the mockup/plan above where
-they differ:**
-- Position in file = record number only, formatted like every other detail log
-  (`record N (.bNNN)`), NO byte offset.
-- On by default (no flag).
-- Cap is **5 per tag** (not 10), each tag gets its own block, in numeric tag
-  order, with its own count line and its own "and N more <tag>" line;
-  `[OBSOLETE]` marked in the tag's block heading.
-- Indicators are NOT displayed. Preview = first ~20 chars of `$a ...` content.
-- Bib records only (skip holdings).
-- Section `INFORMATION ONLY`, category `non_standard_marc_fields` -- confirmed.
-- The user reviewed the revised mockup (per-tag blocks, 5 cap): "looks good".
-- Accepted local fields (done in `standard_marc_fields.txt` and the generator's
-  `LOCAL_STANDARD`; uncommitted at time of writing): 019, 029, 090 (not
-  obsolete), 092, 096, 099, 590, 690, 799.
-- 049: user said they "removed" it; it was never in the list, so it is still
-  non-standard and WOULD be reported (206k in GTU) unless the user says to
-  accept it or add an `[ignore]` section. ASK before building.
-
-Counts of remaining non-standard tags (bib only; 019/029/090/092/096/099/799
-treated as standard, 049 excluded): GTU 1,839 instances/50 tags (440* 1,222,
-069 338, 265* 48, 004 39); Bucknell00000448 (sample_files) 5,021/4 tags (after
-accepting 019/029 this drops to ~11); WTS_bibs_2026-10-01.out 18,853/19 tags
-(019/099/092 now accepted; remaining mostly 599 249, 440* 52, 265* 24);
-ub_bib_records.mrc 6,915/12 tags (440* 6,494, 265* 327). `*` = obsolete.
-
-**STATUS (2026-10-22, later): stage 2 BUILT, uncommitted.** 049 is now an
-accepted local field. `marc_repair.py`: `load_standard_marc_fields`,
-`field_preview`, `NonStandardFieldTally`, `_write_non_standard_blocks`,
-`--no-check-non-standard-fields` / `--standard-marc-fields-file`; section
-`INFORMATION ONLY` (order 5), `install.sh` ships the list, README row added,
-tests in `tests/test_marc_repair_bib.py::TestNonStandardMarcFields`. Full suite
-504 pass; verified on `sample_files/ub_bib_records.mrc`. Still to do: regenerate
-`docs/REPAIR_CATEGORIES.md` (`tools/generate_repair_categories_doc.py`), commit.
-User asked which more tags to accept to keep the report small (answer pending
-their choice -- DONE: user accepted 440, 265, 069, 599 (440/265 are obsolete in
-MARC but accepted; not reported). Remaining reported in the sample data: 004,
-691/696/697, 539 etc. REPAIR_CATEGORIES.md regenerated; all committed.)
+Possible follow-ups (none requested): a third `[ignore]`-style section for tags
+counted but never listed; holdings-record equivalent (the list is bib-only).
 
 ### OPEN -- import-safety defaults + `--guarantee-importable`, branch `guarantee-importable` (2026-10-19)
 
