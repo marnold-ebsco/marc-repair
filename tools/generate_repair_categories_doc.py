@@ -396,6 +396,14 @@ BIB_ROWS = [
         "widens which of these land here instead of being auto-repaired",
     ),
     CategoryRow(
+        "Record with no identifier for its source system (Sierra: no 907 $a, "
+        "no fallback to 001; any other system: no 001) -- can't be loaded",
+        "Diverted to `<output>_error.mrc`, unchanged",
+        "Only when `--source-system` is given (or answered at the prompt)",
+        "`unfixable`", "UNFIXABLE", "**Yes**",
+        "`--source-system sierra|other`",
+    ),
+    CategoryRow(
         "MARC-8 diacritic recovered -- either a bogus script-switching "
         "escape that swallowed only the diacritic mark itself, not the "
         "base letter (curated escape payload bytes; see "

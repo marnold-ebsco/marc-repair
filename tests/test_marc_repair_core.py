@@ -785,7 +785,7 @@ class TestPromptsForMissingInput:
         src.write_bytes(
             m.assemble_marc(m.ParsedRecord(
                 leader=_SYNTHETIC_LEADER, entries=[],
-                fields=[m.Field_("245", "00", [("a", "Title.")])],
+                fields=[m.Field_("001", None, None, content="rec6"), m.Field_("245", "00", [("a", "Title.")])],
             ))
         )
         out = tmp_path / "out.mrc"
@@ -799,7 +799,7 @@ class TestPromptsForMissingInput:
         src.write_bytes(
             m.assemble_marc(m.ParsedRecord(
                 leader=_SYNTHETIC_LEADER, entries=[],
-                fields=[m.Field_("245", "00", [("a", "Title.")])],
+                fields=[m.Field_("001", None, None, content="rec5"), m.Field_("245", "00", [("a", "Title.")])],
             ))
         )
         out = tmp_path / "out.mrc"
@@ -1127,6 +1127,7 @@ class TestSplitBibHoldings:
             leader=_SYNTHETIC_LEADER,
             entries=[],
             fields=[
+                m.Field_("001", None, None, content="rec4"),
                 m.Field_("008", None, None, content="x" * 40),
                 m.Field_("245", "00", [("a", "Title.")]),
             ],
@@ -1263,6 +1264,7 @@ class TestHoldingsMisrouteGuard:
         parsed = m.ParsedRecord(
             leader=_HOLDINGS_LEADER, entries=[],
             fields=[
+                m.Field_("001", None, None, content="hold1"),
                 m.Field_("004", None, None, content="ocm123"),
                 m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
                 m.Field_("852", "  ", [("b", "Main Library"), ("h", "ABC123")]),
@@ -1273,7 +1275,7 @@ class TestHoldingsMisrouteGuard:
     def _bib_record(self) -> bytes:
         parsed = m.ParsedRecord(
             leader=_SYNTHETIC_LEADER, entries=[],
-            fields=[m.Field_("245", "00", [("a", "Title.")])],
+            fields=[m.Field_("001", None, None, content="rec3"), m.Field_("245", "00", [("a", "Title.")])],
         )
         return m.assemble_marc(parsed)
 
@@ -1334,6 +1336,7 @@ class TestInformationalNeverFull:
             leader=_SYNTHETIC_LEADER,
             entries=[],
             fields=[
+                m.Field_("001", None, None, content="rec2"),
                 m.Field_("008", None, None, content="x" * 40),
                 m.Field_("520", "  ", [("a", "It’s great.")]),
             ],
@@ -1360,6 +1363,7 @@ class TestInformationalNeverFull:
             leader=_SYNTHETIC_LEADER,
             entries=[],
             fields=[
+                m.Field_("001", None, None, content="rec1"),
                 m.Field_("008", None, None, content="x" * 40),
                 m.Field_("520", "  ", [("a", "It’s great.")]),
             ],

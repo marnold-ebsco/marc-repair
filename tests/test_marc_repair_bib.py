@@ -14,6 +14,7 @@ extracts exhibiting the three defect classes this tool targets:
 """
 
 import glob
+import itertools
 import json
 import os
 import re
@@ -175,7 +176,10 @@ class TestEnsureField:
         parsed = m.ParsedRecord(
             leader=_SYNTHETIC_LEADER,
             entries=[],
-            fields=[m.Field_("245", "00", [("a", "A title with no 008.")])],
+            fields=[
+                m.Field_("001", None, None, content="rec10"),
+                m.Field_("245", "00", [("a", "A title with no 008.")]),
+            ],
         )
         src = tmp_path / "no008.mrc"
         src.write_bytes(m.assemble_marc(parsed))
@@ -1113,6 +1117,7 @@ class TestMarc8CorpusLookupCli:
             leader=leader,
             entries=[],
             fields=[
+                m.Field_("001", None, None, content="rec8"),
                 m.Field_("008", None, None, content="x" * 40),
                 m.Field_("880", "10", [("a", "T\x1b$1abc\x1b(Bingen")]),
             ],
@@ -1124,6 +1129,7 @@ class TestMarc8CorpusLookupCli:
             leader=leader,
             entries=[],
             fields=[
+                m.Field_("001", None, None, content="rec9"),
                 m.Field_("008", None, None, content="x" * 40),
                 m.Field_("500", "  ", [("a", "A map of T\xe8ubingen.")]),
             ],
@@ -1396,6 +1402,7 @@ class TestTranscodeMarc8:
             leader="".join(leader),
             entries=[],
             fields=[
+                m.Field_("001", None, None, content="rec7"),
                 m.Field_("008", None, None, content="x" * 40),
                 m.Field_("100", "1 ", [("a", "Bal\xe5asim, \xf2Hasan.")]),
             ],
@@ -1419,6 +1426,7 @@ class TestTranscodeMarc8:
             leader="".join(leader),
             entries=[],
             fields=[
+                m.Field_("001", None, None, content="rec6"),
                 m.Field_("008", None, None, content="x" * 40),
                 m.Field_("100", "1 ", [("a", "Bal\xe5asim, \xf2Hasan.")]),
             ],
@@ -1637,6 +1645,7 @@ class TestTranscodeMarc8:
             # a control field failing is the one case that still aborts
             # the whole record (see test_control_field_failure_above)
             fields=[
+                m.Field_("001", None, None, content="rec5"),
                 m.Field_("007", None, None, content="x\xe5" * 20),
                 m.Field_("245", "00", [("a", "Titl\xe5.")]),
             ],
@@ -1701,7 +1710,7 @@ class TestTranscodeMarc8:
         parsed = m.ParsedRecord(
             leader="".join(leader),
             entries=[],
-            fields=[m.Field_("008", None, None, content="x" * 40)],
+            fields=[m.Field_("001", None, None, content="rec4"), m.Field_("008", None, None, content="x" * 40)],
         )
         src = tmp_path / "marc8.mrc"
         src.write_bytes(m.assemble_marc(parsed))
@@ -2512,7 +2521,7 @@ class TestFixInvalidLeaderBytes:
         parsed = m.ParsedRecord(
             leader=leader,
             entries=[],
-            fields=[m.Field_("008", None, None, content="x" * 40)],
+            fields=[m.Field_("001", None, None, content="rec3"), m.Field_("008", None, None, content="x" * 40)],
         )
         src = tmp_path / "badleader.mrc"
         src.write_bytes(m.assemble_marc(parsed))
@@ -2824,7 +2833,7 @@ class TestLeaderEntryMapCorrection:
         parsed = m.ParsedRecord(
             leader=_SYNTHETIC_LEADER,
             entries=[],
-            fields=[m.Field_("008", None, None, content="x" * 40)],
+            fields=[m.Field_("001", None, None, content="rec2"), m.Field_("008", None, None, content="x" * 40)],
         )
         raw = bytearray(m.assemble_marc(parsed))
         raw[20:24] = b"45x0"
@@ -2855,7 +2864,7 @@ class TestLeaderEntryMapCorrection:
         parsed = m.ParsedRecord(
             leader=_SYNTHETIC_LEADER,
             entries=[],
-            fields=[m.Field_("008", None, None, content="x" * 40)],
+            fields=[m.Field_("001", None, None, content="rec1"), m.Field_("008", None, None, content="x" * 40)],
         )
         raw = bytearray(m.assemble_marc(parsed))
         raw[20:24] = b"45\x920"
@@ -3324,7 +3333,7 @@ class TestAddDefault245:
         parsed = m.ParsedRecord(
             leader=_SYNTHETIC_LEADER,
             entries=[],
-            fields=[m.Field_("008", None, None, content="x" * 40)],
+            fields=[m.Field_("001", None, None, content="rec18"), m.Field_("008", None, None, content="x" * 40)],
         )
         src = tmp_path / "no245.mrc"
         src.write_bytes(m.assemble_marc(parsed))
@@ -3343,7 +3352,7 @@ class TestAddDefault245:
         parsed = m.ParsedRecord(
             leader=_SYNTHETIC_LEADER,
             entries=[],
-            fields=[m.Field_("008", None, None, content="x" * 40)],
+            fields=[m.Field_("001", None, None, content="rec17"), m.Field_("008", None, None, content="x" * 40)],
         )
         src = tmp_path / "no245.mrc"
         src.write_bytes(m.assemble_marc(parsed))
@@ -3585,7 +3594,7 @@ class TestAddDefault008:
         parsed = m.ParsedRecord(
             leader=_SYNTHETIC_LEADER,
             entries=[],
-            fields=[m.Field_("245", "00", [("a", "Title.")])],
+            fields=[m.Field_("001", None, None, content="rec16"), m.Field_("245", "00", [("a", "Title.")])],
         )
         src = tmp_path / "no008.mrc"
         src.write_bytes(m.assemble_marc(parsed))
@@ -3640,6 +3649,7 @@ class TestFixInvalidTags:
             leader=_SYNTHETIC_LEADER,
             entries=[],
             fields=[
+                m.Field_("001", None, None, content="rec15"),
                 m.Field_("008", None, None, content="x" * 40),
                 m.Field_("24A", "00", [("a", "Odd tag")]),
             ],
@@ -3668,6 +3678,7 @@ class TestFixInvalidTags:
             leader=_SYNTHETIC_LEADER,
             entries=[],
             fields=[
+                m.Field_("001", None, None, content="rec14"),
                 m.Field_("008", None, None, content="x" * 40),
                 m.Field_("24A", "00", [("a", "Odd tag")]),
             ],
@@ -3697,6 +3708,7 @@ class TestFixInvalidTags:
             leader=_SYNTHETIC_LEADER,
             entries=[],
             fields=[
+                m.Field_("001", None, None, content="rec12"),
                 m.Field_("008", None, None, content="x" * 40),
                 m.Field_("245", "00", [("a", "Title.")]),
                 m.Field_("24A", "00", [("a", "Odd tag")]),
@@ -3706,6 +3718,7 @@ class TestFixInvalidTags:
             leader=_SYNTHETIC_LEADER,
             entries=[],
             fields=[
+                m.Field_("001", None, None, content="rec13"),
                 m.Field_("008", None, None, content="x" * 40),
                 m.Field_("245", "00", [("a", "Title.")]),
                 m.Field_("900", "  ", [("a", "Local data")]),
@@ -3803,6 +3816,7 @@ class TestRemap999To945:
             leader=_SYNTHETIC_LEADER,
             entries=[],
             fields=[
+                m.Field_("001", None, None, content="rec11"),
                 m.Field_("008", None, None, content="x" * 40),
                 m.Field_("999", "  ", [("i", "12345")]),
             ],
@@ -3823,6 +3837,7 @@ class TestRemap999To945:
             leader=_SYNTHETIC_LEADER,
             entries=[],
             fields=[
+                m.Field_("001", None, None, content="rec10"),
                 m.Field_("008", None, None, content="x" * 40),
                 m.Field_("999", "  ", [("i", "12345"), ("l", "MAIN")]),
             ],
@@ -3851,6 +3866,7 @@ class TestRemap999To945:
             leader=_SYNTHETIC_LEADER,
             entries=[],
             fields=[
+                m.Field_("001", None, None, content="rec9"),
                 m.Field_("008", None, None, content="x" * 40),
                 m.Field_("999", "  ", [("i", "12345"), ("l", "MAIN")]),
             ],
@@ -3910,6 +3926,7 @@ class TestNormalizeSubfield9To0:
             leader=_SYNTHETIC_LEADER,
             entries=[],
             fields=[
+                m.Field_("001", None, None, content="rec8"),
                 m.Field_("008", None, None, content="x" * 40),
                 m.Field_("650", " 0", [("a", "Subject"), ("9", "123456")]),
             ],
@@ -3935,6 +3952,7 @@ class TestNormalizeSubfield9To0:
             leader=_SYNTHETIC_LEADER,
             entries=[],
             fields=[
+                m.Field_("001", None, None, content="rec7"),
                 m.Field_("008", None, None, content="x" * 40),
                 m.Field_("650", " 0", [("a", "Subject"), ("9", "123456")]),
             ],
@@ -4003,6 +4021,7 @@ class TestNormalizeSmartCharacters:
             leader=_SYNTHETIC_LEADER,
             entries=[],
             fields=[
+                m.Field_("001", None, None, content="rec6"),
                 m.Field_("008", None, None, content="x" * 40),
                 m.Field_("520", "  ", [("a", "It’s great.")]),
             ],
@@ -4028,6 +4047,7 @@ class TestNormalizeSmartCharacters:
             leader=_SYNTHETIC_LEADER,
             entries=[],
             fields=[
+                m.Field_("001", None, None, content="rec5"),
                 m.Field_("008", None, None, content="x" * 40),
                 m.Field_("520", "  ", [("a", "It’s great.")]),
             ],
@@ -4105,6 +4125,7 @@ class TestFindAndFixMojibake:
             leader=_SYNTHETIC_LEADER,
             entries=[],
             fields=[
+                m.Field_("001", None, None, content="rec4"),
                 m.Field_("008", None, None, content="x" * 40),
                 m.Field_("500", "  ", [("a", "GroÃŸbritannien")]),
             ],
@@ -4342,6 +4363,7 @@ class TestStripDuplicateNonRepeatableFields:
             leader=_SYNTHETIC_LEADER,
             entries=[],
             fields=[
+                m.Field_("001", None, None, content="rec3"),
                 m.Field_("008", None, None, content="x" * 40),
                 m.Field_("245", "14", [("a", "Real title /")]),
                 m.Field_("245", "  ", [("a", "2nd ed.")]),
@@ -4558,6 +4580,7 @@ class TestBib856MissingUCli:
             leader=_SYNTHETIC_LEADER,
             entries=[],
             fields=[
+                m.Field_("001", None, None, content="rec2"),
                 m.Field_("008", None, None, content="x" * 40),
                 m.Field_("245", "00", [("a", "Title.")]),
                 m.Field_("856", "40", [
@@ -4585,6 +4608,7 @@ class TestBib856MissingUCli:
             leader=_SYNTHETIC_LEADER,
             entries=[],
             fields=[
+                m.Field_("001", None, None, content="rec1"),
                 m.Field_("008", None, None, content="x" * 40),
                 m.Field_("245", "00", [("a", "Title.")]),
                 m.Field_("856", "40", [("u", "https://example.org/resource")]),
@@ -4601,10 +4625,50 @@ class TestBib856MissingUCli:
         assert "=== 0 record(s) ===" in content.split("bib_856_missing_u")[1]
 
 
+class TestSourceSystemIdentifierCheck:
+    """--source-system: Sierra records need a 907 $a (no fallback to 001),
+    any other system needs a 001; a record without one is UNFIXABLE."""
+
+    @staticmethod
+    def _rec(*ids):
+        fields = [m.Field_(t, "  ", [("a", v)]) if t == "907" else m.Field_(t, None, None, content=v)
+                  for t, v in ids]
+        fields += [m.Field_("008", None, None, content="x" * 40),
+                   m.Field_("245", "00", [("a", "Title.")])]
+        return m.ParsedRecord(leader=_SYNTHETIC_LEADER, entries=[], fields=fields)
+
+    def test_reason_sierra_requires_907a_no_001_fallback(self):
+        assert m.missing_identifier_reason(self._rec(("001", "123")), "sierra")
+        assert m.missing_identifier_reason(self._rec(("907", ".b1")), "sierra") is None
+
+    def test_reason_other_requires_001(self):
+        assert m.missing_identifier_reason(self._rec(("907", ".b1")), "other")
+        assert m.missing_identifier_reason(self._rec(("001", "123")), "other") is None
+
+    def test_reason_skipped_without_source_system(self):
+        assert m.missing_identifier_reason(self._rec(), None) is None
+
+    @pytest.mark.parametrize("system, good, bad", [
+        ("sierra", ("907", ".b1"), ("001", "oclc1")),
+        ("other", ("001", "id1"), ("907", ".b2")),
+    ])
+    def test_cli_diverts_record_missing_identifier(self, tmp_path, system, good, bad):
+        src = tmp_path / "in.mrc"
+        src.write_bytes(m.assemble_marc(self._rec(good)) + m.assemble_marc(self._rec(bad)))
+        out = tmp_path / "out.mrc"
+        rc = m.main([str(src), "-o", str(out), "--source-system", system,
+                     "--log", str(tmp_path / "run.log")])
+        assert rc == 1
+        assert m.count_records(str(out)) == 1
+        assert m.count_records(str(tmp_path / "out_error.mrc")) == 1
+
+
 class TestNonStandardMarcFields:
     """non_standard_marc_fields: report-only, on by default, bib records
     only. Lists the first 5 occurrences of each non-standard tag (tag by
     tag, in order), then "and N more <tag>"."""
+
+    _ids = itertools.count(1)
 
     @staticmethod
     def _rec(extra):
@@ -4612,6 +4676,9 @@ class TestNonStandardMarcFields:
             leader=_SYNTHETIC_LEADER,
             entries=[],
             fields=[
+                # unique 001 per record: an identifier-less bib is diverted
+                # as UNFIXABLE, and a repeated one logs duplicate_identifier
+                m.Field_("001", None, None, content=f"nsf{next(TestNonStandardMarcFields._ids)}"),
                 m.Field_("008", None, None, content="x" * 40),
                 m.Field_("245", "00", [("a", "Title.")]),
                 *extra,
@@ -4640,7 +4707,7 @@ class TestNonStandardMarcFields:
         assert m.field_preview(ctl) == "y" * 20 + "..."
 
     def test_tally_skips_standard_9xx_and_nonnumeric(self):
-        t = m.NonStandardFieldTally({"245", "008"}, {"009"})
+        t = m.NonStandardFieldTally({"001", "245", "008"}, {"009"})
         rec = self._rec([
             m.Field_("999", "  ", [("a", "x")]),
             m.Field_("AB1", "  ", [("a", "x")]),
@@ -4666,7 +4733,7 @@ class TestNonStandardMarcFields:
         assert sec.count("\trecord ") == 6  # 5 x 241 + the 605 below it
         assert "\tand 3 more 241" in content
         assert "more 605" not in content
-        assert re.search(r"\trecord \d+\t241 \$a Series 0\n", content)
+        assert re.search(r"\trecord \d+ \(nsf\d+\)\t241 \$a Series 0\n", content)
         # report only: output still has the fields
         data = out.read_bytes()
         assert data.count(b"Series ") == 8 and b"Methodism" in data
@@ -4753,7 +4820,7 @@ def _build_corrupted_entry_map_record() -> bytes:
     parsed = m.ParsedRecord(
         leader=_SYNTHETIC_LEADER,
         entries=[],
-        fields=[m.Field_("008", None, None, content="x" * 40)],
+        fields=[m.Field_("001", None, None, content="case1"), m.Field_("008", None, None, content="x" * 40)],
     )
     raw = bytearray(m.assemble_marc(parsed))
     raw[20:24] = b"45x0"
@@ -4766,7 +4833,7 @@ _NOT_LOGGED_UNLESS_FLAGGED_CASES = [
         build=lambda: m.assemble_marc(m.ParsedRecord(
             leader=_VALID_LEADER[:5] + "0" + _VALID_LEADER[6:],
             entries=[],
-            fields=[m.Field_("008", None, None, content="x" * 40)],
+            fields=[m.Field_("001", None, None, content="case2"), m.Field_("008", None, None, content="x" * 40)],
         )),
         required_log_substrings=["=== INFORMATIONAL: leader_byte_defaulted ==="],
         forbidden_log_substrings=[_detail_line_marker("leader_byte_defaulted")],
@@ -4778,6 +4845,7 @@ _NOT_LOGGED_UNLESS_FLAGGED_CASES = [
             leader=_SYNTHETIC_LEADER,
             entries=[],
             fields=[
+                m.Field_("001", None, None, content="case11"),
                 m.Field_("008", None, None, content="x" * 40),
                 m.Field_("500", "  ", [("a", "GroÃŸbritannien")]),
             ],
@@ -4804,6 +4872,7 @@ _NOT_LOGGED_UNLESS_FLAGGED_CASES = [
             leader=_SYNTHETIC_LEADER[:9] + " " + _SYNTHETIC_LEADER[10:],
             entries=[],
             fields=[
+                m.Field_("001", None, None, content="case12"),
                 m.Field_("008", None, None, content="x" * 40),
                 m.Field_("100", "1 ", [("a", "Bal\xe5asim, \xf2Hasan.")]),
             ],
@@ -4818,6 +4887,7 @@ _NOT_LOGGED_UNLESS_FLAGGED_CASES = [
             leader=_SYNTHETIC_LEADER,
             entries=[],
             fields=[
+                m.Field_("001", None, None, content="case13"),
                 m.Field_("008", None, None, content="x" * 40),
                 m.Field_("650", " 0", [("a", "Subject"), ("9", "123456")]),
             ],
@@ -4834,6 +4904,7 @@ _NOT_LOGGED_UNLESS_FLAGGED_CASES = [
             leader=_SYNTHETIC_LEADER,
             entries=[],
             fields=[
+                m.Field_("001", None, None, content="case14"),
                 m.Field_("008", None, None, content="x" * 40),
                 m.Field_("520", "  ", [("a", "It’s great.")]),
             ],
@@ -4853,6 +4924,7 @@ _FIXED_REQUIRES_ATTENTION_CASES = [
             leader=_SYNTHETIC_LEADER,
             entries=[],
             fields=[
+                m.Field_("001", None, None, content="case15"),
                 m.Field_("008", None, None, content="x" * 40),
                 m.Field_("245", "14", [("a", "Real title /")]),
                 m.Field_("245", "  ", [("a", "2nd ed.")]),
@@ -4870,6 +4942,7 @@ _FIXED_REQUIRES_ATTENTION_CASES = [
             leader=_SYNTHETIC_LEADER,
             entries=[],
             fields=[
+                m.Field_("001", None, None, content="case16"),
                 m.Field_("008", None, None, content="x" * 40),
                 m.Field_("245", "14", [("a", "Real title /")]),
                 m.Field_("245", "14", [("a", "Real title /")]),
@@ -4888,6 +4961,7 @@ _FIXED_REQUIRES_ATTENTION_CASES = [
             leader=_SYNTHETIC_LEADER[:7] + "9" + _SYNTHETIC_LEADER[8:],
             entries=[],
             fields=[
+                m.Field_("001", None, None, content="case17"),
                 m.Field_("008", None, None, content="x" * 40),
                 m.Field_("245", "00", [("a", "Title.")]),
             ],
@@ -4904,6 +4978,7 @@ _FIXED_REQUIRES_ATTENTION_CASES = [
             leader=_SYNTHETIC_LEADER,
             entries=[],
             fields=[
+                m.Field_("001", None, None, content="case18"),
                 m.Field_("008", None, None, content="x" * 35),
                 m.Field_("245", "00", [("a", "Title.")]),
             ],
@@ -4918,7 +4993,7 @@ _FIXED_REQUIRES_ATTENTION_CASES = [
         build=lambda: m.assemble_marc(m.ParsedRecord(
             leader=_SYNTHETIC_LEADER,
             entries=[],
-            fields=[m.Field_("008", None, None, content="x" * 40)],
+            fields=[m.Field_("001", None, None, content="case3"), m.Field_("008", None, None, content="x" * 40)],
         )),
         required_log_substrings=[
             "=== FIXED/REQUIRES ATTENTION: added_default_245 ===",
@@ -4934,7 +5009,7 @@ _FIXED_REQUIRES_ATTENTION_CASES = [
         build=lambda: m.assemble_marc(m.ParsedRecord(
             leader=_SYNTHETIC_LEADER,
             entries=[],
-            fields=[m.Field_("245", "00", [("a", "Title.")])],
+            fields=[m.Field_("001", None, None, content="case4"), m.Field_("245", "00", [("a", "Title.")])],
         )),
         required_log_substrings=[
             "=== FIXED/REQUIRES ATTENTION: added_default_008 ===",

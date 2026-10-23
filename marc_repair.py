@@ -3808,6 +3808,30 @@ def record_identifier(parsed: ParsedRecord) -> str:
     return value_907 or ""
 
 
+SOURCE_SYSTEMS = ("sierra", "other")
+
+
+def missing_identifier_reason(parsed: ParsedRecord, source_system: str | None) -> str | None:
+    """Why `parsed` has no usable record identifier for `source_system`, or
+    None if it does (or `source_system` is None, which skips the check).
+    Sierra records must have a 907 $a -- there's no fallback to 001; records
+    from any other system must have a non-empty 001."""
+    if source_system == "sierra":
+        field_907 = next((f for f in parsed.fields if f.tag == "907"), None)
+        value = (
+            next((d for c, d in field_907.subfields if c == "a"), "")
+            if field_907 is not None
+            else ""
+        )
+        if not value.strip():
+            return "907 $a is missing, although it is required for Sierra/iii migrations"
+    elif source_system == "other":
+        field_001 = next((f for f in parsed.fields if f.tag == "001"), None)
+        if field_001 is None or not (field_001.content or "").strip():
+            return "001 is missing, although it is required for non-Sierra migrations"
+    return None
+
+
 def find_duplicate_identifiers(
     id_records: list[tuple[int, str, str]], ts: str
 ) -> list[LogEntry]:
@@ -6222,7 +6246,9 @@ _CHECK_DESCRIPTIONS: dict[str, str] = {
     "unfixable": "Record has no consistent directory in either parsing mode (or a field/base "
     "address too large for ISO 2709 to represent), or (holdings only) could not "
     "be structurally parsed at all, or a split copy's assembled length can't be "
-    "represented in ISO 2709's fixed-width leader/directory -- written "
+    "represented in ISO 2709's fixed-width leader/directory, or (bib only) the "
+    "record has no identifier for its --source-system (907 $a for Sierra, no "
+    "fallback to 001; 001 for any other system) -- written "
     "unchanged to the _error file instead of the main output. These records "
     "cannot be loaded. By default, also includes a record whose true length "
     "exceeds 99999 bytes (see oversized_sentinel_fixed): spec-valid MARC21, "
@@ -8012,6 +8038,15 @@ def main(argv: list[str] | None = None) -> int:
         "correctly and specifically want the record kept instead",
     )
     parser.add_argument(
+        "--source-system",
+        choices=SOURCE_SYSTEMS,
+        default=None,
+        help="source system of the bib records: 'sierra' requires a 907 $a on "
+        "every record (no fallback to 001), 'other' requires a 001; a record "
+        "without one is UNFIXABLE (diverted to the _error file). Asked for "
+        "interactively when not given; skipped when stdin isn't a terminal.",
+    )
+    parser.add_argument(
         "--guarantee-importable",
         action="store_true",
         default=False,
@@ -8412,6 +8447,24 @@ def main(argv: list[str] | None = None) -> int:
     n_total = 0
     n_unfixable = 0
     n_diverted_review = 0
+    source_system = args.source_system
+    if source_system is None:
+        if sys.stdin.isatty():
+            while source_system is None:
+                answer = input(
+                    "Source system of these records -- 'sierra' (907 $a required) "
+                    "or 'other' (001 required): "
+                ).strip().lower()
+                if answer in SOURCE_SYSTEMS:
+                    source_system = answer
+                else:
+                    print("please answer 'sierra' or 'other'", file=sys.stderr)
+        else:
+            print(
+                "warning: --source-system not given and stdin is not interactive -- "
+                "skipping the required-identifier check",
+                file=sys.stderr,
+            )
     error_path = _error_output_path(out_path)
     review_path = _needs_review_output_path(out_path)
     # Only accumulated until the one-time early estimate fires (see
@@ -8470,6 +8523,23 @@ def main(argv: list[str] | None = None) -> int:
 
             if parsed.unresolved:
                 reason = parsed.unresolved[0][3]
+                print(
+                    f"record {i}: UNFIXABLE ({reason}) -- writing to {error_path} instead",
+                    file=sys.stderr,
+                )
+                log("unfixable", False, i, "", f"written to {error_path} unchanged: {reason}")
+                error_fh.write(rec_text.encode(encoding_used, errors="surrogateescape"))
+                if mrk_fh:
+                    mrk_fh.write(
+                        f"=UNFIXABLE  (written to {os.path.basename(error_path)} instead)\n\n"
+                    )
+                n_unfixable += 1
+            elif (id_reason := missing_identifier_reason(parsed, source_system)):
+                # No usable identifier for this source system (907 $a for
+                # Sierra, 001 otherwise): the record can't be loaded --
+                # diverted to the _error file, unchanged, like any other
+                # UNFIXABLE record.
+                reason = f"record has no identifier: {id_reason}"
                 print(
                     f"record {i}: UNFIXABLE ({reason}) -- writing to {error_path} instead",
                     file=sys.stderr,
