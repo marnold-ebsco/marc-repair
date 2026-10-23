@@ -3190,13 +3190,13 @@ def find_suspect_marc8_escapes(
                     elif charset_name == "CJK/EACC":
                         suggestion = (
                             "likely an accented letter and the letter "
-                            "right after it (e.g. ö, é, ñ, ü); verify "
-                            "against another source"
+                            "right after it; verify against another "
+                            "source"
                         )
                     else:
                         suggestion = (
-                            "likely a miskeyed accented letter (e.g. ö, "
-                            "é, ñ, ü); verify against another source"
+                            "likely a miskeyed accented letter; verify "
+                            "against another source"
                         )
                 window_start = max(0, region_start - _CONTEXT_CHARS)
                 window_end = min(len(text), region_end + _CONTEXT_CHARS)
@@ -3242,8 +3242,8 @@ def find_suspect_marc8_escapes(
     defect_lines = []
     for window, suggestion in order:
         tags = merged[(window, suggestion)]
-        tag_word = "tags" if len(tags) > 1 else "tag"
-        defect_lines.append((f"{tag_word} {', '.join(tags)}: {window!r}", suggestion))
+        tag_label = ", ".join(f"={t}" for t in tags)
+        defect_lines.append((f"{tag_label}: {window!r}", suggestion))
 
     # Header line states whatever is common to every occurrence --
     # the shared suggestion (if all occurrences agree) and the
@@ -6307,7 +6307,7 @@ _CHECK_DESCRIPTIONS: dict[str, str] = {
     "suspect_marc8_escape": "A MARC-8 script-switching escape (Hebrew/Arabic/Cyrillic/Greek/CJK) "
     "produces only a single character, welded directly between two ASCII "
     "letters with no word boundary -- almost certainly a miskeyed accented "
-    "letter already present in the source records, not something this migration "
+    "letter (e.g. ö, é, ñ, ü) already present in the source records, not something this migration "
     "introduced, and not real embedded foreign-script text; never auto-fixed, "
     "since there's no safe way to guess the intended character.",
     "suspect_hex_encoded_marc8": 'A field (in practice, always an 880) contains one or more "{xxxxxx}" runs '

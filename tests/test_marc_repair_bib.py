@@ -1009,7 +1009,7 @@ class TestFindSuspectMarc8Escapes:
         findings = m.find_suspect_marc8_escapes(parsed)
         assert len(findings) == 1
         detail = findings[0][1]
-        assert "tags 245, 830" in detail
+        assert "=245, =830:" in detail
         assert detail.count("Schr[?]inger") == 1
 
     def test_distinct_defects_in_same_record_share_hoisted_suggestion(self):
