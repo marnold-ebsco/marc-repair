@@ -1202,7 +1202,7 @@ class TestFindSuspectHexEncodedMarc8:
         category, detail = findings[0]
         assert category == "suspect_hex_encoded_marc8"
         assert "=880 $a" in detail
-        assert "2 layer(s) deep" in detail
+        assert "2 layers" in detail
         assert "마가복음" in detail
         assert "recovered" in detail
         # Recovered (not just "possible data loss") -- original context
@@ -1223,7 +1223,7 @@ class TestFindSuspectHexEncodedMarc8:
         findings = m.find_suspect_hex_encoded_marc8(parsed)
         assert len(findings) == 1
         detail = findings[0][1]
-        assert "1 layer(s) deep" in detail
+        assert "1 layer)" in detail
         assert "Ian M. Duguid" in detail
         assert "recovered" in detail
 

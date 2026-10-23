@@ -3546,13 +3546,6 @@ def find_suspect_hex_encoded_marc8(parsed: ParsedRecord) -> list[tuple[str, str]
                 n_groups = len(_HEX_BRACE_GROUP_RE.findall(run))
                 decoded, layers, clean = _decode_hex_brace_run(run)
                 recoverable = _hex_brace_decode_looks_recoverable(decoded, clean)
-                data_loss = (
-                    "recovered -- verify against source (byte alignment "
-                    "not guaranteed)"
-                    if recoverable else
-                    "POSSIBLE DATA LOSS -- doesn't decode to valid "
-                    "MARC-8/text (may be truncated or boundary-shifted)"
-                )
                 preview = (
                     _marc8_bytes_to_readable_preview(decoded)
                     if recoverable else decoded.decode("latin-1")
@@ -3570,11 +3563,23 @@ def find_suspect_hex_encoded_marc8(parsed: ParsedRecord) -> list[tuple[str, str]
                     after = text[match.end():match.end() + _CONTEXT_CHARS]
                     context_suffix = f"; context: {before!r}...{after!r}"
                 subfield_label = f" ${code}" if code else ""
+                counts = (
+                    f"{n_groups} group{'s' if n_groups != 1 else ''}, "
+                    f"{layers} layer{'s' if layers != 1 else ''}"
+                )
+                if recoverable:
+                    body = (
+                        f"recovered {preview!r} ({counts}); "
+                        "verify against source"
+                    )
+                else:
+                    body = (
+                        f"POSSIBLE DATA LOSS, doesn't decode: {preview!r} "
+                        f"({counts}){context_suffix}"
+                    )
                 findings.append((
                     "suspect_hex_encoded_marc8",
-                    f"={f.tag}{subfield_label}: recovers {preview!r}; "
-                    f"{data_loss}; {n_groups} \"{{xxxxxx}}\" hex-brace "
-                    f"group(s), {layers} layer(s) deep{context_suffix}",
+                    f"={f.tag}{subfield_label}: {body}",
                 ))
     return findings
 
@@ -6316,8 +6321,10 @@ _CHECK_DESCRIPTIONS: dict[str, str] = {
     "(sometimes twice) in the source records, before this tool ever saw them; "
     "never auto-fixed, since the decode is boundary-sensitive and there's no "
     "safe way to guarantee exact byte alignment automatically. Each finding "
-    "names whether its own decoded preview looks recoverable or not -- see each "
-    "finding's own NO DATA LOSS/POSSIBLE DATA LOSS call. Detect-only, though, "
+    "says whether its decoded preview looks recovered or shows POSSIBLE DATA "
+    "LOSS (doesn't decode to valid MARC-8/text; may be truncated or "
+    "boundary-shifted). A recovered preview's byte alignment is not "
+    "guaranteed, hence \"verify against source\". Detect-only, though, "
     "so this tool never makes it worse: it's reporting damage that already "
     "happened upstream, before the file ever reached this tool.",
     "holdings_852_b_suspect_content": "An 852 $b (Sublocation) looks like data from a prior system migration that "
