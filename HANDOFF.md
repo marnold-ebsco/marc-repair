@@ -13,7 +13,9 @@ current state and open items.
 **Status: built, tested (509 pass), committed and pushed. Not yet seen to
 reject a real record -- see "Open".**
 
-What it is: a bib-only check, UNFIXABLE (category `unfixable`, `=UNFIXABLE` in
+What it is: a bib-only check, UNFIXABLE section but its own category
+`record_identifier_required` (not the generic `unfixable`; log header
+`=== UNFIXABLE: record_identifier_required ===`, DATA LOSS; `=UNFIXABLE` in
 `.mrk`). `--source-system sierra` requires a 907 $a on every record with **no
 fallback to 001**; `--source-system other` requires a 001. A failing record is
 removed from the main output and written unchanged to `_error.mrc`. If
