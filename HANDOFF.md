@@ -8,6 +8,35 @@ current state and open items.
 
 ## Current state
 
+### DONE (needs real-data confirmation) -- required record identifier check (`--source-system`), branch `guarantee-importable` (2026-10-23)
+
+**Status: built, tested (509 pass), committed and pushed. Not yet seen to
+reject a real record -- see "Open".**
+
+What it is: a bib-only check, UNFIXABLE (category `unfixable`, `=UNFIXABLE` in
+`.mrk`). `--source-system sierra` requires a 907 $a on every record with **no
+fallback to 001**; `--source-system other` requires a 001. A failing record is
+removed from the main output and written unchanged to `_error.mrc`. If
+`--source-system` is not given it is asked for at a prompt; with stdin not a
+tty the check is skipped with a stderr warning (so scripts/tests don't hang).
+
+Code: `marc_repair.py` -- `SOURCE_SYSTEMS`, `missing_identifier_reason()`, an
+`elif` after the `parsed.unresolved` branch in `main()`, prompt just before the
+main loop. `record_identifier()` (log labels, duplicate detection) is unchanged
+and still falls back 907 $a -> 001. Tests: `TestSourceSystemIdentifierCheck`
+in `tests/test_marc_repair_bib.py`; about 50 existing synthetic records gained
+a 001 so they are not diverted.
+
+Not done: holdings pipeline (holdings link by 004, so left alone).
+
+**Open:** the expected failure (loader error "907 $a is missing, although it is
+required for Sierra/iii migrations", record 001 `1456853630`) was NOT
+reproduced. `GTU_bibs.mrc` / `Downloads/Graduate_Theological_Union_instancesUnsuppressed_2026-09-28.mrc`
+(same 527,497,619-byte file) has a 907 $a on all 404,956 records, and that
+record has `907 $a .b1929265x` there. The pasted record (shorter leader,
+garbled 505, no 907) comes from a different file/version -- need the
+`..._repaired.mrc` or its source, to check whether 907 was lost in a run.
+
 ### DONE -- non-standard MARC field check (`non_standard_marc_fields`), branch `guarantee-importable` (2026-10-22)
 
 **Status: built, tested (504 pass), committed (`6263d4b` list, `29c2ef7`
