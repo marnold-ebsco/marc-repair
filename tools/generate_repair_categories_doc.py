@@ -400,7 +400,7 @@ BIB_ROWS = [
         "no fallback to 001; any other system: no 001) -- can't be loaded",
         "Diverted to `<output>_error.mrc`, unchanged",
         "Only when `--source-system` is given (or answered at the prompt)",
-        "`unfixable`", "UNFIXABLE", "**Yes**",
+        "`record_identifier_required`", "UNFIXABLE", "**Yes**",
         "`--source-system sierra|other`",
     ),
     CategoryRow(

@@ -6188,6 +6188,7 @@ _NEEDS_REVIEW = {
 #: in the output is at least loadable as MARC.
 _DEDICATED_SECTIONS: dict[str, tuple[int, str]] = {
     "unfixable": (-1, "UNFIXABLE"),
+    "record_identifier_required": (-1, "UNFIXABLE"),
     "duplicate_identifier": (3, "DUPLICATE RECORDS"),
     # Below even INFORMATIONAL: report-only, but unlike INFORMATIONAL its
     # entries ARE listed (first few per tag -- see NonStandardFieldTally).
@@ -6246,15 +6247,17 @@ _CHECK_DESCRIPTIONS: dict[str, str] = {
     "unfixable": "Record has no consistent directory in either parsing mode (or a field/base "
     "address too large for ISO 2709 to represent), or (holdings only) could not "
     "be structurally parsed at all, or a split copy's assembled length can't be "
-    "represented in ISO 2709's fixed-width leader/directory, or (bib only) the "
-    "record has no identifier for its --source-system (907 $a for Sierra, no "
-    "fallback to 001; 001 for any other system) -- written "
+    "represented in ISO 2709's fixed-width leader/directory -- written "
     "unchanged to the _error file instead of the main output. These records "
     "cannot be loaded. By default, also includes a record whose true length "
     "exceeds 99999 bytes (see oversized_sentinel_fixed): spec-valid MARC21, "
     "but known to abort FOLIO Data Import's entire batch with no job log, so "
     "it's diverted here instead of the main output too, unless --allow-"
     "oversized-sentinel is given.",
+    "record_identifier_required": "Bib record has no identifier for its --source-system: "
+    "Sierra/iii migrations require a 907 $a (no fallback to 001), any other "
+    "system requires a 001. A record without one cannot be loaded -- written "
+    "unchanged to the _error file instead of the main output.",
     "diverted_for_review": "A fix that would normally have run was disabled via its own "
     "--no-... flag, and the record it would have applied to was written unchanged to the "
     "_needs_review file instead of the main output, for a human to decide what "
@@ -6440,6 +6443,7 @@ _CHECK_DESCRIPTIONS: dict[str, str] = {
 #: the call on its own line no matter how the description wraps.
 _CHECK_DATA_LOSS: dict[str, str] = {
     "unfixable": "DATA LOSS",
+    "record_identifier_required": "DATA LOSS",
     "diverted_for_review": "DATA LOSS",
     "duplicate_identifier": "POSSIBLE DATA LOSS",
     "removed_non_repeatable_duplicate": "POSSIBLE DATA LOSS",
@@ -6529,6 +6533,7 @@ _CATEGORY_DISPLAY_NOTE: dict[str, str] = {
 _ALWAYS_FULL_CATEGORIES = {
     "non_standard_marc_fields",
     "unfixable",
+    "record_identifier_required",
     "diverted_for_review",
     "duplicate_identifier",
     "removed_non_repeatable_duplicate",
@@ -8544,7 +8549,10 @@ def main(argv: list[str] | None = None) -> int:
                     f"record {i}: UNFIXABLE ({reason}) -- writing to {error_path} instead",
                     file=sys.stderr,
                 )
-                log("unfixable", False, i, "", f"written to {error_path} unchanged: {reason}")
+                log(
+                    "record_identifier_required", False, i, "",
+                    f"written to {error_path} unchanged: {reason}",
+                )
                 error_fh.write(rec_text.encode(encoding_used, errors="surrogateescape"))
                 if mrk_fh:
                     mrk_fh.write(
@@ -8929,7 +8937,7 @@ def main(argv: list[str] | None = None) -> int:
     # category left out here because its flag is off must genuinely
     # never be logged this run (see each `log(...)` call site above).
     active_categories = {
-        "unfixable", "added_default_008", "doubled_proxy_url", "removed_invalid_subfield",
+        "unfixable", "record_identifier_required", "added_default_008", "doubled_proxy_url", "removed_invalid_subfield",
         "unfixed_non_numeric_tag", "invalid_indicator_value", "invalid_bibliographic_level",
         "leader_entry_map_fixed", "oversized_sentinel_fixed", "duplicate_identifier",
         "removed_null_identifier", "suspect_marc8_escape", "suspect_hex_encoded_marc8",

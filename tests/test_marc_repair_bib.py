@@ -4661,6 +4661,10 @@ class TestSourceSystemIdentifierCheck:
         assert rc == 1
         assert m.count_records(str(out)) == 1
         assert m.count_records(str(tmp_path / "out_error.mrc")) == 1
+        log_text = next(tmp_path.glob("run_*.log")).read_text()
+        assert "=== UNFIXABLE: record_identifier_required ===" in log_text
+        assert "=== UNFIXABLE: unfixable ===\n" in log_text
+        assert "record has no identifier" in log_text
 
 
 class TestNonStandardMarcFields:
