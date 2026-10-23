@@ -8,6 +8,34 @@ current state and open items.
 
 ## Current state
 
+### DONE -- log detail text condensed / `=TAG` labels (2026-10-23, on `main`: `68bf938`, `04d91c0`, `f9993f0`)
+
+**Status: built, tested (509 pass), committed and pushed.**
+
+Goal: log details use the standard `=TAG` field label (as in
+`=856  42$3... has no $u subfield`) and stop repeating boilerplate per line.
+- `suspect_marc8_escape`: bullets are `=500: '<window>'` (merged tags:
+  `=245, =830: '...'`), not `tag 500: ...`. The "(e.g. o, e, n, u)" hint is
+  gone from each record line (now only in the category description), so the
+  header reads `likely a miskeyed accented letter; verify against another
+  source. LCCN: ... OCLC: ...`.
+- `suspect_hex_encoded_marc8`: recoverable -> `=880 $a: recovered '<text>' (23
+  groups, 2 layers); verify against source`; not recoverable -> `=880 $a:
+  POSSIBLE DATA LOSS, doesn't decode: '<text>' (5 groups, 1 layer); context:
+  ...`. The caveats (byte alignment, truncated/boundary-shifted) moved into the
+  category description.
+- `unfixed_non_numeric_tag`: `=ABC: not 3 numeric digits`.
+- `non_standard_marc_fields`: entries start `=<tag> $a ...`.
+  `_write_non_standard_blocks` groups by `detail[1:4]` to skip the `=`; any
+  other code that slices these details by position must do the same.
+
+Open (not done, only noticed): `added_field` still says `added missing 040
+field` and the 880 linking detail says `880 linked to 245` (no `=`); a
+whole-field `=856  42$3...` style (indicators + subfields) is not used by the
+snippet-based escape/hex categories, which have no indicators to show. Other
+categories keep their `=tag: ...` / `=tag  ind$...` forms. Not checked:
+`tools/` report scripts that might parse these two detail strings.
+
 ### DONE (needs real-data confirmation) -- required record identifier check (`--source-system`), branch `guarantee-importable` (2026-10-23)
 
 **Status: built, tested (509 pass), committed and pushed. Not yet seen to
@@ -46,7 +74,7 @@ check). Nothing outstanding except what's under "Possible follow-ups".**
 
 What it is: a report-only, on-by-default, bib-only check. Every field whose tag
 is not in `standard_marc_fields.txt` is counted; the first **5 per tag** are
-logged (`record N (.bNNN)<TAB><tag> $a first-20-chars...`, no indicators, no
+logged (`record N (.bNNN)<TAB>=<tag> $a first-20-chars...`, no indicators, no
 byte offset), then `and N more <tag>`. Each tag gets its own block in numeric
 order with its own counts, `[OBSOLETE]` if listed obsolete. 9XX and non-numeric
 tags are never reported. Section `INFORMATION ONLY` (sorted last), category
