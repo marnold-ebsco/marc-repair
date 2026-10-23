@@ -1974,7 +1974,7 @@ def find_suspicious_fields(parsed: ParsedRecord) -> list[tuple[str, str]]:
     for f in parsed.fields:
         if not f.tag.isdigit():
             warnings.append(
-                ("unfixed_non_numeric_tag", f"tag {f.tag!r} is not 3 numeric digits")
+                ("unfixed_non_numeric_tag", f"={f.tag}: not 3 numeric digits")
             )
         if f.is_control():
             continue
@@ -4885,7 +4885,7 @@ class NonStandardFieldTally:
 
     def check(self, parsed: ParsedRecord) -> list[str]:
         """Count this record's non-standard fields; returns the detail
-        text ("<tag> <preview>") for those still under the per-tag
+        text ("=<tag> <preview>") for those still under the per-tag
         limit. Never modifies the record."""
         details = []
         tags_seen: set[str] = set()
@@ -4899,7 +4899,7 @@ class NonStandardFieldTally:
                 self.records[tag] = self.records.get(tag, 0) + 1
             if self.listed.get(tag, 0) < self.limit:
                 self.listed[tag] = self.listed.get(tag, 0) + 1
-                details.append(f"{tag} {field_preview(f)}")
+                details.append(f"={tag} {field_preview(f)}")
         if tags_seen:
             self.records_with_any += 1
         return details
@@ -6726,7 +6726,7 @@ def _write_non_standard_blocks(fh, group: list[LogEntry], tally: NonStandardFiel
     more <tag>" line if the tally counted more than were listed."""
     by_tag: dict[str, list[LogEntry]] = {}
     for e in group:
-        by_tag.setdefault(e.detail[:3], []).append(e)
+        by_tag.setdefault(e.detail[1:4], []).append(e)  # detail is "=TAG ..."
     for tag in sorted(tally.instances):
         n_inst, n_rec = tally.instances[tag], tally.records[tag]
         obsolete = " [OBSOLETE]" if tag in tally.obsolete else ""

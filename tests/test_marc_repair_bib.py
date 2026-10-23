@@ -4718,7 +4718,7 @@ class TestNonStandardMarcFields:
             m.Field_("605", " 0", [("a", "Methodism")]),
             m.Field_("009", None, None, content="old"),
         ])
-        assert t.check(rec) == ["605 $a Methodism", "009 old"]
+        assert t.check(rec) == ["=605 $a Methodism", "=009 old"]
         assert t.records_with_any == 1 and t.obsolete == {"009"}
 
     def test_cli_per_tag_blocks_cap_and_obsolete(self, tmp_path):
@@ -4737,7 +4737,7 @@ class TestNonStandardMarcFields:
         assert sec.count("\trecord ") == 6  # 5 x 241 + the 605 below it
         assert "\tand 3 more 241" in content
         assert "more 605" not in content
-        assert re.search(r"\trecord \d+ \(nsf\d+\)\t241 \$a Series 0\n", content)
+        assert re.search(r"\trecord \d+ \(nsf\d+\)\t=241 \$a Series 0\n", content)
         # report only: output still has the fields
         data = out.read_bytes()
         assert data.count(b"Series ") == 8 and b"Methodism" in data
