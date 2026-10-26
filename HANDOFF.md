@@ -8,6 +8,38 @@ current state and open items.
 
 ## Current state
 
+### DONE -- recode title-only 7xx to 730 / 650 `$b` to `$a`; 40-char log previews (2026-10-26, on `main`)
+
+**Status: built, tested (533 pass), committed, not pushed.** Re-run against
+the full GTU 2026-09-28 file: `field_removed_because_missing_a` fell from 122
+to 8 instances.
+
+- `recode_title_only_7xx_to_730`: a 700/710/711 with exactly one `$t` and no
+  real `$a` (missing, empty or punctuation-only) becomes a 730: `$t` -> `$a`,
+  other subfields kept if a 730 carries them (`_730_CODES`; no `$6`, `$b`,
+  `$e`, `$q`...), ind1 = nonfiling count (leading The/An/A, only when 008/35-37
+  is `eng`), ind2 = `2`. New 730s go after existing 730s, before the next
+  higher tag. GTU: 113 instances in 20 records. Category
+  `recoded_title_only_7xx_to_730` (NO DATA LOSS, FIXED/REQUIRES ATTENTION,
+  header + count by default). Opt-out `--no-recode-title-only-7xx`.
+- `recode_6xx_b_to_a`: 650/651/655 with no real `$a` whose first subfield is
+  the only `$b` -> `$b` becomes `$a` (obsolete `$b` there). Not done for
+  600/610/611 (`$b` is a real name part). GTU: 1 record. Category
+  `recoded_6xx_b_to_a`, opt-out `--no-recode-6xx-b-to-a`.
+- Both run in `main()` after `strip_null_identifiers`, before
+  `strip_missing_required_a`. Bib pipeline only.
+- Log previews: `_log_preview` / `_subfield_preview` cap quoted field text at
+  40 characters + `...`; used by `strip_missing_required_a` (all tags, so also
+  holdings) and the new recodes.
+- Deliberately NOT done: 6xx `$t`-only -> 630 (the one GTU case, `.b14081994`,
+  is three paper titles joined by `--`, not a subject). The 8 remaining GTU
+  removals are junk or unrecoverable (`.b11178942`, `.b11568173` holdings
+  statement in a 600, `.b14081994`, `$s93.00`, `$a***`, `650 $fMDP`, the
+  `710 $b/$c/$k Thesis`, blank-`$a` 100) -- fix by hand in the source if wanted.
+- Tests: `TestLogPreviewLength`, `TestRecodeTitleOnly7xxTo730`,
+  `TestRecode6xxBToA`, `TestRecodePipeline` in `tests/test_marc_repair_bib.py`.
+  Kitchen sink fixtures were not extended.
+
 ### DONE -- oversized fields are collapsed, then truncated, instead of dropped (2026-10-26, on `main`)
 
 **Status: built, tested (513 pass), committed and pushed.** Not yet re-run
