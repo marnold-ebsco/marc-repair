@@ -4366,7 +4366,7 @@ class TestStripDuplicateNonRepeatableFields:
                 m.Field_("001", None, None, content="rec3"),
                 m.Field_("008", None, None, content="x" * 40),
                 m.Field_("245", "14", [("a", "Real title /")]),
-                m.Field_("245", "  ", [("a", "2nd ed.")]),
+                m.Field_("245", "  ", [("6", "880-01"), ("a", "2nd title")]),
             ],
         )
         src = tmp_path / "dup245.mrc"
@@ -4985,12 +4985,12 @@ _FIXED_REQUIRES_ATTENTION_CASES = [
                 m.Field_("001", None, None, content="case15"),
                 m.Field_("008", None, None, content="x" * 40),
                 m.Field_("245", "14", [("a", "Real title /")]),
-                m.Field_("245", "  ", [("a", "2nd ed.")]),
+                m.Field_("245", "  ", [("6", "880-01"), ("a", "2nd title")]),
             ],
         )),
         required_log_substrings=[
             "=== FIXED/REQUIRES ATTENTION: removed_non_repeatable_duplicate ===",
-            "2nd ed.",
+            "2nd title",
         ],
         verify=lambda results: len([f for f in results[0].fields if f.tag == "245"]) == 1,
     ),
@@ -5575,3 +5575,285 @@ class TestMoveDuplicatePipeline:
         assert "moved_duplicate_to_added_entry" not in content.split(
             "CHECKS PERFORMED WITH NO FINDINGS")[0]
         assert "removed duplicate =245" in content and "removed duplicate =100" in content
+
+
+class TestMergeDuplicate040:
+    def test_later_c_and_d_merge_into_first_in_standard_order(self):
+        parsed = _rec(
+            m.Field_("040", "  ", [("a", "DLC"), ("c", "DLC")]),
+            m.Field_("040", "  ", [("d", "OCoLC"), ("d", "NYP")]),
+            m.Field_("245", "00", [("a", "T")]),
+        )
+        details = m.merge_duplicate_040(parsed)
+        assert [f.tag for f in parsed.fields] == ["040", "245"]
+        assert parsed.fields[0].subfields == [
+            ("a", "DLC"), ("c", "DLC"), ("d", "OCoLC"), ("d", "NYP")]
+        assert len(details) == 1 and details[0].endswith("NO DATA LOSS")
+
+    def test_missing_c_is_added_and_redundant_d_skipped(self):
+        parsed = _rec(
+            m.Field_("040", "  ", [("a", "CBGTU"), ("d", "UtOrBLW")]),
+            m.Field_("040", "  ", [("c", "CBGTU"), ("d", "CBGTU"), ("d", "UtOrBLW")]),
+        )
+        m.merge_duplicate_040(parsed)
+        assert parsed.fields[0].subfields == [("a", "CBGTU"), ("c", "CBGTU"), ("d", "UtOrBLW")]
+
+    def test_conflicting_a_is_demoted_to_d_and_flagged(self):
+        parsed = _rec(
+            m.Field_("040", "  ", [("a", "KBC"), ("c", "KBC")]),
+            m.Field_("040", "  ", [("a", "GTXA")]),
+        )
+        details = m.merge_duplicate_040(parsed)
+        assert parsed.fields[0].subfields == [("a", "KBC"), ("c", "KBC"), ("d", "GTXA")]
+        assert "demoted $aGTXA" in details[0] and details[0].endswith("POSSIBLE DATA LOSS")
+
+    def test_mistagged_041_is_recoded_and_its_agency_merged(self):
+        parsed = _rec(
+            m.Field_("040", "1 ", [("a", "eng"), ("h", "grc"), ("d", "UtOrBLW")]),
+            m.Field_("040", "  ", [("c", "CBGTU")]),
+            m.Field_("245", "00", [("a", "T")]),
+        )
+        details = m.merge_duplicate_040(parsed)
+        assert [f.tag for f in parsed.fields] == ["040", "041", "245"]
+        assert parsed.fields[0].subfields == [("c", "CBGTU"), ("d", "UtOrBLW")]
+        assert parsed.fields[1].indicators == "1 "
+        assert parsed.fields[1].subfields == [("a", "eng"), ("h", "grc")]
+        assert "041 recoded" in details[0]
+
+    def test_run_together_language_codes_split_into_041_a_subfields(self):
+        parsed = _rec(
+            m.Field_("040", "  ", [("a", "OHX"), ("c", "OHX")]),
+            m.Field_("040", "0 ", [("a", "gereng")]),
+        )
+        m.merge_duplicate_040(parsed)
+        assert parsed.fields[1].tag == "041"
+        assert parsed.fields[1].subfields == [("a", "ger"), ("a", "eng")]
+
+    def test_existing_041_leaves_the_lookalike_alone(self):
+        parsed = _rec(
+            m.Field_("040", "  ", [("a", "OHX")]),
+            m.Field_("040", "1 ", [("a", "eng"), ("h", "grc")]),
+            m.Field_("041", "1 ", [("a", "eng"), ("h", "grc")]),
+        )
+        assert m.merge_duplicate_040(parsed) == []
+        assert [f.tag for f in parsed.fields].count("040") == 2
+
+    def test_call_number_in_040_is_dropped_and_real_040_kept(self):
+        parsed = _rec(
+            m.Field_("040", "00", [("a", "BS1430.52"), ("b", ".H66 2002")]),
+            m.Field_("040", "  ", [("a", "DLC"), ("c", "DLC")]),
+        )
+        details = m.merge_duplicate_040(parsed)
+        assert [f.tag for f in parsed.fields] == ["040"]
+        assert parsed.fields[0].subfields == [("a", "DLC"), ("c", "DLC")]
+        assert "non-agency" in details[0] and details[0].endswith("POSSIBLE DATA LOSS")
+
+    def test_exact_copies_are_left_for_the_generic_removal(self):
+        parsed = _rec(
+            m.Field_("040", "  ", [("a", "DLC")]),
+            m.Field_("040", "  ", [("a", "DLC")]),
+        )
+        assert m.merge_duplicate_040(parsed) == []
+        assert len(parsed.fields) == 2
+
+
+class TestMoveDuplicate240To730:
+    @staticmethod
+    def _rec240(second, first=None, title="Some other title"):
+        return _rec(
+            m.Field_("240", "10", first or [("a", "First uniform title."), ("l", "English")]),
+            m.Field_("240", "10", second),
+            m.Field_("245", "10", [("a", title)]),
+            m.Field_("250", "  ", [("a", "1st ed.")]),
+        )
+
+    def test_extra_240_becomes_730(self):
+        parsed = self._rec240([("a", "Dialogue with Heraclides."), ("l", "French")])
+        details = m.move_duplicate_240_to_730(parsed)
+        assert [f.tag for f in parsed.fields] == ["240", "245", "250", "730"]
+        new = [f for f in parsed.fields if f.tag == "730"][0]
+        assert new.indicators == "0 "
+        assert new.subfields == [("a", "Dialogue with Heraclides."), ("l", "French")]
+        assert details[0].endswith("NO DATA LOSS")
+
+    def test_part_of_245_title_becomes_246(self):
+        parsed = self._rec240([("a", "Mystery of the revealed form")],
+                              title="Rembrandt : the mystery of the revealed form /")
+        m.move_duplicate_240_to_730(parsed)
+        new = [f for f in parsed.fields if f.tag == "246"][0]
+        assert new.indicators == "30"
+        assert not [f for f in parsed.fields if f.tag == "730"]
+
+    def test_bad_nonfiling_count_is_not_copied(self):
+        parsed = _rec(
+            m.Field_("240", "10", [("a", "First")]),
+            m.Field_("240", "12", [("a", "Commentary on the Canticles")]),
+        )
+        m.move_duplicate_240_to_730(parsed)
+        assert parsed.fields[-1].tag == "730" and parsed.fields[-1].indicators == "0 "
+
+    def test_good_nonfiling_count_is_copied(self):
+        parsed = _rec(
+            m.Field_("240", "10", [("a", "First")]),
+            m.Field_("240", "14", [("a", "The second work")]),
+        )
+        m.move_duplicate_240_to_730(parsed)
+        assert [f for f in parsed.fields if f.tag == "730"][0].indicators == "4 "
+
+    @pytest.mark.parametrize("second", [
+        [("a", "two no. a year from 1998")],  # frequency -> 310
+        [("l", "French")],  # no $a
+    ])
+    def test_frequency_and_no_a_are_left_for_removal(self, second):
+        parsed = self._rec240(second)
+        assert m.move_duplicate_240_to_730(parsed) == []
+        assert [f.tag for f in parsed.fields].count("240") == 2
+
+
+class TestRecodeMisfiledDuplicate245:
+    def test_uniform_title_first_245_is_swapped_into_a_240(self):
+        parsed = _rec(
+            m.Field_("100", "1 ", [("a", "Ebner, Margaret")]),
+            m.Field_("245", "10", [("a", "Offenbarungen."), ("l", "German")]),
+            m.Field_("245", "14", [("a", "Die Offenbarungen /"), ("c", "Josef Prestel")]),
+            m.Field_("260", "  ", [("a", "Weimar")]),
+        )
+        details = m.recode_misfiled_duplicate_245(parsed)
+        assert [f.tag for f in parsed.fields] == ["100", "240", "245", "260"]
+        assert parsed.fields[2].subfields[0] == ("a", "Die Offenbarungen /")
+        assert parsed.fields[1].indicators == "10"
+        assert parsed.fields[1].subfields == [("a", "Offenbarungen."), ("l", "German")]
+        assert details[0].endswith("NO DATA LOSS")
+
+    def test_uniform_title_becomes_730_when_record_has_a_240(self):
+        parsed = _rec(
+            m.Field_("240", "10", [("a", "Existing.")]),
+            m.Field_("245", "14", [("a", "The holy rule."), ("l", "German")]),
+            m.Field_("245", "10", [("a", "Das Leben /"), ("c", "T.F. Lindsay")]),
+        )
+        m.recode_misfiled_duplicate_245(parsed)
+        assert [f.tag for f in parsed.fields if f.tag in ("240", "730")] == ["240", "730"]
+        assert [f for f in parsed.fields if f.tag == "730"][0].indicators == "4 "
+
+    def test_series_first_245_becomes_490_or_is_dropped_when_present(self):
+        base = [
+            m.Field_("245", "04", [("a", "Studien zur Geschichte ;"), ("v", "3.")]),
+            m.Field_("245", "04", [("a", "Die Jesuiten :"), ("b", "Ausbreitung /"),
+                                   ("c", "Meier")]),
+        ]
+        parsed = _rec(*base)
+        m.recode_misfiled_duplicate_245(parsed)
+        new = [f for f in parsed.fields if f.tag == "490"][0]
+        assert new.indicators == "0 "
+        assert new.subfields == [("a", "Studien zur Geschichte ;"), ("v", "3.")]
+        again = _rec(*base, m.Field_("490", "1 ", [("a", "Studien zur Geschichte ;")]))
+        details = m.recode_misfiled_duplicate_245(again)
+        assert [f.tag for f in again.fields].count("490") == 1
+        assert "already on the record" in details[0]
+
+    def test_publication_statement_becomes_260(self):
+        parsed = _rec(
+            m.Field_("245", "10", [("a", "Symbols & civilization :"), ("b", "science /"),
+                                   ("c", "by Ralph Ross")]),
+            m.Field_("245", "10", [("a", "New York :"), ("b", "Harcourt, Brace & World /"),
+                                   ("c", "c1962")]),
+            m.Field_("490", "0 ", [("a", "Harbinger book")]),
+        )
+        m.recode_misfiled_duplicate_245(parsed)
+        new = [f for f in parsed.fields if f.tag == "260"][0]
+        assert new.subfields == [("a", "New York :"), ("b", "Harcourt, Brace & World,"),
+                                 ("c", "c1962.")]
+        assert [f.tag for f in parsed.fields] == ["245", "260", "490"]
+
+    def test_edition_statement_becomes_250_only_if_none(self):
+        base = [
+            m.Field_("245", "14", [("a", "The life of John Eliot /"), ("c", "John Wilson")]),
+            m.Field_("245", "10", [("a", "Abridged ed")]),
+        ]
+        parsed = _rec(*base)
+        m.recode_misfiled_duplicate_245(parsed)
+        assert [f for f in parsed.fields if f.tag == "250"][0].subfields == [("a", "Abridged ed.")]
+        other = _rec(*base, m.Field_("250", "  ", [("a", "2nd ed.")]))
+        assert m.recode_misfiled_duplicate_245(other) == []
+        assert [f.tag for f in other.fields].count("245") == 2
+
+    def test_volume_titles_become_740_analytical(self):
+        parsed = _rec(
+            m.Field_("245", "10", [("a", "Excavations at Mendes /"), ("c", "Redford")]),
+            m.Field_("245", "1 ", [("n", "Volume 1,"), ("p", "The Royal Necropolis /"),
+                                   ("c", "Redford")]),
+            m.Field_("245", "00", [("a", "Q in context II :"), ("b", "Social setting /"),
+                                   ("c", "Tiwald")]),
+        )
+        details = m.recode_misfiled_duplicate_245(parsed)
+        new = [f for f in parsed.fields if f.tag == "740"]
+        assert [f.indicators for f in new] == ["02", "02"]
+        assert new[0].subfields == [("a", "Excavations at Mendes."), ("n", "Volume 1,"),
+                                    ("p", "The Royal Necropolis")]
+        assert new[1].subfields == [("a", "Q in context II : Social setting")]
+        assert "dropped $c" in details[1] and details[0].endswith("NO DATA LOSS")
+
+    def test_near_duplicate_is_dropped_without_loss(self):
+        parsed = _rec(
+            m.Field_("245", "10", [("6", "880-01"), ("a", "Telo\x1bnai im Neuen Testament :"),
+                                   ("b", "zwischen sozialer Realitaet /"), ("c", "El Mansy")]),
+            m.Field_("245", "10", [("a", "Telonai im Neuen Testament :"),
+                                   ("b", "zwischen sozialer Realitaet /"), ("c", "El Mansy")]),
+        )
+        details = m.recode_misfiled_duplicate_245(parsed)
+        assert [f.tag for f in parsed.fields] == ["245"]
+        assert "near-duplicate" in details[0] and details[0].endswith("NO DATA LOSS")
+
+    def test_unrecognised_extra_is_left_for_removal(self):
+        parsed = _rec(
+            m.Field_("245", "10", [("a", "Real title /"), ("c", "Author")]),
+            m.Field_("245", "10", [("6", "880-01"), ("a", "Something unrelated entirely")]),
+        )
+        assert m.recode_misfiled_duplicate_245(parsed) == []
+        assert [f.tag for f in parsed.fields] == ["245", "245"]
+
+
+class TestMisfiledDuplicatePipeline:
+    def _run(self, tmp_path, fields, *extra):
+        parsed = _rec(
+            m.Field_("001", None, None, content="997"),
+            m.Field_("008", None, None, content="x" * 40),
+            *fields,
+        )
+        src = tmp_path / "bib.mrc"
+        src.write_bytes(m.assemble_marc(parsed))
+        out = tmp_path / "out.mrc"
+        log = tmp_path / "run.log"
+        assert m.main([str(src), "-o", str(out), "--log", str(log), *extra]) == 0
+        content = _resolve_log(log).read_text(encoding="utf-8")
+        return content, m.read_intact_record(out.read_bytes().decode("utf-8"))
+
+    def _fields(self):
+        return [
+            m.Field_("040", "  ", [("a", "DLC"), ("c", "DLC")]),
+            m.Field_("040", "  ", [("d", "OCoLC")]),
+            m.Field_("240", "10", [("a", "First work.")]),
+            m.Field_("240", "10", [("a", "Second work.")]),
+            m.Field_("245", "10", [("a", "Real title /"), ("c", "Author")]),
+            m.Field_("245", "10", [("a", "Abridged ed")]),
+        ]
+
+    def test_all_three_run_by_default(self, tmp_path):
+        content, out = self._run(tmp_path, self._fields())
+        tags = [f.tag for f in out.fields]
+        assert tags.count("040") == 1 and tags.count("240") == 1 and tags.count("245") == 1
+        assert "730" in tags and "250" in tags
+        assert [f for f in out.fields if f.tag == "040"][0].subfields[-1] == ("d", "OCoLC")
+        assert "FIXED/REQUIRES ATTENTION: merged_duplicate_040" in content
+        assert "removed duplicate" not in content
+
+    def test_flags_turn_each_off(self, tmp_path):
+        content, out = self._run(
+            tmp_path, self._fields(), "--no-merge-duplicate-040",
+            "--no-move-duplicate-240-to-730", "--no-recode-misfiled-duplicate-245",
+        )
+        tags = [f.tag for f in out.fields]
+        assert tags.count("040") == 1 and tags.count("240") == 1 and tags.count("245") == 1
+        assert "730" not in tags and "250" not in tags
+        assert "merged_duplicate_040" not in content.split("CHECKS PERFORMED")[0]
+        assert "removed duplicate =040" in content and "removed duplicate =245" in content

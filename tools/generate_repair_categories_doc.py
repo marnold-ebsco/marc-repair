@@ -223,20 +223,40 @@ BIB_ROWS = [
         '--',
     ),
     CategoryRow(
-        "A second (or later) 100, or a second 245 that is a plain variant "
-        "title (no $c/$6/$l/$v, not an edition statement, first 245 not "
-        "itself a uniform title or series) -- both Not Repeatable",
+        "A second (or later) 040 (Cataloging Source) -- Not Repeatable. "
+        "Usually a modifying agency's $d or the $c the first one lacks",
+        "Merged into the first 040: $c/$d/$e added (a $d naming the same "
+        "agency as $a/$c is skipped), a conflicting $a/$c demoted to $d, "
+        "order $a $b $c $d $e. A 040 that is really a 041 (language codes) "
+        "is recoded as one; one holding a call number or ISBN is dropped "
+        "(flagged). Exact copies are left to the removal below",
+        "Yes (`--no-merge-duplicate-040`)",
+        "`merged_duplicate_040`", "FIXED/REQUIRES ATTENTION",
+        "Yes", "`--no-merge-duplicate-040`",
+    ),
+    CategoryRow(
+        "A second (or later) 100, 240 or 245 -- all Not Repeatable",
         "100 recoded as a 700 (indicator 1 kept or guessed from a comma, "
-        "\"(editor)\"-style role moved to $e, $6 dropped); 245 recoded as a "
-        "246 (indicators `3 `; subfields a 246 can't carry are dropped). "
-        "Runs before the duplicate-non-repeatable removal below, so the "
-        "name/title is kept instead of lost; anything that doesn't qualify "
-        "still falls through to that removal",
+        "\"(editor)\"-style role moved to $e, $6 dropped). 240 recoded as a "
+        "730, or a 246 when it is just part of the 245 title (frequency "
+        "statements are left alone). 245: a plain variant title (no $c/$6, "
+        "not an edition statement, first 245 not a uniform title/series) "
+        "becomes a 246; otherwise a near-duplicate is dropped, a real title "
+        "following a mistagged uniform-title/series 245 takes its place (the "
+        "first becomes a 240/730/490), a publication statement becomes a "
+        "260, an edition statement a 250, and a further volume/part title a "
+        "740. Runs before the duplicate-non-repeatable removal below, so the "
+        "name/title is kept; anything that doesn't qualify still falls "
+        "through to it",
         "Yes (`--no-move-duplicate-100-to-700`, "
-        "`--no-move-duplicate-245-to-246`)",
+        "`--no-move-duplicate-245-to-246`, "
+        "`--no-recode-misfiled-duplicate-245`, "
+        "`--no-move-duplicate-240-to-730`)",
         "`moved_duplicate_to_added_entry`", "FIXED/REQUIRES ATTENTION",
         "Yes",
-        "`--no-move-duplicate-100-to-700`, `--no-move-duplicate-245-to-246`",
+        "`--no-move-duplicate-100-to-700`, `--no-move-duplicate-245-to-246`, "
+        "`--no-recode-misfiled-duplicate-245`, "
+        "`--no-move-duplicate-240-to-730`",
     ),
     CategoryRow(
         "700/710/711 with a $t (title) but no name in $a (or a "

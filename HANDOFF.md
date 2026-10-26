@@ -35,24 +35,49 @@ full, category label POSSIBLE DATA LOSS; each entry says NO/POSSIBLE).
   `TestMoveDuplicatePipeline`. Docs: README table row and
   `docs/REPAIR_CATEGORIES.md` (regenerated via the tool).
 
-### OPEN (phase 2, deliberately skipped) -- the 12 GTU duplicate 245s that are NOT variant titles (2026-10-26)
+### DONE -- phase 2: the other duplicate 245s, duplicate 240s, duplicate 040s (2026-10-26, uncommitted on `main`)
 
-Still removed by the generic pass (POSSIBLE DATA LOSS in the log). Each needs
-a different fix; about 15-20k tokens to do all of them:
-- **First 245 is really a uniform title/series, the removed one is the real
-  title** (`b12891526`, `b1349675x`, `b13547720`): keep the *other* 245 and
-  recode the first as 240 (when it ends `$l German`-style) or 490/830 (when it
-  has `$v`). Needs "which 245 to keep" logic, so the first-occurrence rule in
-  `strip_duplicate_non_repeatable_fields` must be bypassed for these.
-- **Mistagged other fields**: `b12218297` is a 260 (place : publisher / c1962),
-  `b14246077` is a 250 ("Abridged ed").
-- **Separate title/volume with its own `$c`** (`b15178390` "Q in context II",
-  `b16436428` "God speaks in my life", `b13947904` two `$n/$p`-only volume
-  titles with no `$a`): lower confidence; 246 or a 505 contents note.
-- **Near-duplicates / garbage, dropping is right** (`b14071654` mangled title
-  plus series; `b19022621`, `b19593478` same title re-encoded, 880-linked):
-  could be made explicit as a "dropped near-duplicate" log line instead of
-  POSSIBLE DATA LOSS.
+**Status: built and tested (new test classes `TestMergeDuplicate040`,
+`TestMoveDuplicate240To730`, `TestRecodeMisfiledDuplicate245`,
+`TestMisfiledDuplicatePipeline`), docs regenerated; not yet committed.** All
+default on; same flag style as above.
+
+- `recode_misfiled_duplicate_245` (`--no-recode-misfiled-duplicate-245`), runs
+  after the clean 245 -> 246 move. Per extra 245, first match wins:
+  near-duplicate of the kept 245 (same non-empty `$b`+`$c`, or 40-char common
+  prefix, or >= 0.8 similarity on ASCII letters/digits; a leaked leading "0 " is
+  ignored) -> dropped, NO DATA LOSS; first 245 is a mistagged uniform title
+  (`$l`) or series (`$v`) with no `$c` and the extra has `$a`+`$c` -> extra
+  takes the first 245's place, first becomes 240 (730 if the record has a
+  130/240) or 490 `0 ` (dropped if that series is already on the record);
+  publication statement (`$a` ends ":", `$b`, year-only `$c`) -> 260; edition
+  statement -> 250 (only if none, else dropped when identical); `$n/$p`-only or
+  `$a`+own `$c` -> 740 `x2` (analytical; `$c` dropped and flagged unless it
+  equals the first's).
+- `move_duplicate_240_to_730` (`--no-move-duplicate-240-to-730`): extra 240 ->
+  730 (indicator 1 = the 240's nonfiling count, only if it ends at a word
+  boundary), or 246 `30` when its text is a part of the 245 title. Frequency
+  statements ("two no. a year") are left for the generic removal.
+- `merge_duplicate_040` (`--no-merge-duplicate-040`, category
+  `merged_duplicate_040`): 040 IS Not Repeatable in MARC21, but the later ones
+  were mostly a modifying agency's `$d` or the `$c` the first lacked, so they are
+  merged (`$a $b $c $d $e` order; conflicting `$a`/`$c` -> `$d`; `$d` equal to
+  `$a`/`$c` skipped). Mistagged 041s (`$h`, or `$a` of lowercase 3-letter language
+  codes) become a 041 if the record has none; 040s holding a call number/ISBN
+  are dropped (flagged). Exact copies still go through the generic removal.
+- GTU (`working/GTU_bibs.mrc`): all 28 duplicate 040s merged (5 flagged POSSIBLE
+  DATA LOSS: 3 non-agency drops, 2 demotions of `$a` to `$d`), every duplicate
+  245/240 handled except `b11571408`.
+
+### OPEN (minor) -- leftovers after phase 2 (2026-10-26)
+- `b11571408`: both 240s are really frequency statements ("three no. a year", "two no.
+  a year from 1998") -> should be a 310/321 and the 240s dropped. Only one record in GTU; the
+  second 240 is still removed by the generic pass.
+- `b13582938` (ISBN in `$a`), `b13733989` and `b14152538` (call numbers in `$a`/`$b`)
+  have their junk 040 dropped; the call number probably belongs in a 050 and the ISBN in a
+  020. Not recoded.
+- 740 `x2` for a further volume drops that title's own `$c` when it differs from the first
+  245's (`b16436428`, `b13947904` vol. 2): flagged POSSIBLE DATA LOSS in the log.
 
 ### DONE -- trimmed log, `--log-zero` to restore zero-count headers (2026-10-26)
 

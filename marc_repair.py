@@ -181,6 +181,7 @@ from array import array
 from contextlib import contextmanager, redirect_stderr
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
+from difflib import SequenceMatcher
 from typing import Callable, Iterator
 
 SUBFIELD = "\x1f"
@@ -5454,6 +5455,397 @@ def move_duplicate_245_to_246(parsed: ParsedRecord) -> list[str]:
     return details
 
 
+def _place(fields: list[Field_], new: list[Field_]) -> list[Field_]:
+    """`fields` with each of `new` inserted after any existing field of
+    its own tag, ahead of the next higher tag."""
+    for f in new:
+        fields = _insert_after_tag(fields, [f], f.tag)
+    return fields
+
+
+def _is_mistagged_041(f: Field_) -> bool:
+    """A 040 that is really a 041 (language codes): it has an $h, or its
+    $a is nothing but lowercase three-letter language codes ("eng",
+    "gereng")."""
+    a = next((d for c, d in f.subfields if c == "a"), "")
+    return any(c == "h" for c, _ in f.subfields) or (
+        re.fullmatch(r"(?:[a-z]{3})+", a) is not None
+    )
+
+
+def _is_non_agency_040(f: Field_) -> bool:
+    """A 040 that isn't a cataloging source at all -- a call number
+    ("BS1430.52", with a $b cutter) or an ISBN in $a, or a $b that isn't
+    a three-letter language code."""
+    a = next((d for c, d in f.subfields if c == "a"), "")
+    return (
+        (a != "" and not re.fullmatch(r"[A-Za-z][A-Za-z0-9-]*", a))
+        or any(c == "b" and not re.fullmatch(r"[A-Za-z0-9-]+", d) for c, d in f.subfields)
+    )
+
+
+def _valid_nonfiling(ind: str, text: str) -> str:
+    """`ind` (a nonfiling-character count copied from another field) if the
+    characters it would skip in `text` end at a word boundary (a space,
+    apostrophe or hyphen -- "The ", "L'"), else "0": a count that cuts
+    into a word is a cataloging error that shouldn't be copied along."""
+    n = int(ind) if ind.isdigit() else 0
+    return str(n) if n == 0 or (n < len(text) and text[n - 1] in " '-") else "0"
+
+
+def merge_duplicate_040(parsed: ParsedRecord) -> list[str]:
+    """040 (Cataloging Source) is Not Repeatable, and a later 040 on a
+    record is almost always a modifying agency's stamp ($d) or the
+    transcribing agency ($c) the first one lacks -- so its subfields are
+    merged into the first 040 instead of being removed along with it.
+
+    Merge rules: $a/$b/$c keep the first value seen (a later, different
+    $a or $c is demoted to a $d, a later different $b is dropped); $d and
+    $e are added if not already there (a $d naming the same agency as
+    $a/$c is redundant and skipped); $6/$8 are ignored. Result order is
+    $a $b $c $d... $e. A 040 that is really a 041 (see
+    `_is_mistagged_041`, e.g. "1  $aeng$hgrc$dUtOrBLW") has its language
+    subfields moved to a new 041 (when the record has none) and its
+    agency subfields merged like any other; with a 041 already present
+    it is left alone. When every extra 040 is an exact copy of the first,
+    nothing is done here (the generic removal summarizes those).
+
+    Returns a list of detail strings, one per record (category
+    "merged_duplicate_040" -- see `main`)."""
+    f40 = [f for f in parsed.fields if f.tag == "040" and not f.is_control()]
+    if len(f40) < 2:
+        return []
+    odd = [f for f in f40 if _is_mistagged_041(f)]
+    rest = [f for f in f40 if not any(f is o for o in odd)]
+    junk = [f for f in rest if _is_non_agency_040(f)]
+    real = [f for f in rest if not any(f is j for j in junk)]
+    if not real:
+        return []
+    convert = [] if any(f.tag == "041" for f in parsed.fields) else odd
+    extras = real[1:]
+    if not convert and not junk and all(_fields_content_equal(x, real[0]) for x in extras):
+        return []
+    base = real[0]
+    cur: dict[str, str] = {}
+    d_list: list[str] = []
+    e_list: list[str] = []
+    lost: list[str] = []
+    demoted: list[str] = []
+
+    def add_d(value: str, skip_redundant: bool) -> None:
+        if value not in d_list and not (skip_redundant and value in (cur.get("a"), cur.get("c"))):
+            d_list.append(value)
+
+    def absorb(subs: list[tuple[str, str]], is_base: bool) -> None:
+        for c, d in subs:
+            if not d:
+                continue
+            if c in "abc":
+                if c not in cur:
+                    cur[c] = d
+                elif cur[c] != d:
+                    if c == "b":
+                        lost.append(f"$b{d}")
+                    else:
+                        demoted.append(f"${c}{d}")
+                        add_d(d, False)
+            elif c == "d":
+                add_d(d, not is_base)
+            elif c == "e":
+                if d not in e_list:
+                    e_list.append(d)
+            elif c not in "68":
+                lost.append(f"${c}{d}")
+
+    absorb(base.subfields, True)
+    for x in extras:
+        absorb(x.subfields, False)
+    new_041 = []
+    for o in convert:
+        lang = []
+        for c, d in o.subfields:
+            if c == "a" and d:
+                lang += [("a", d[i:i + 3]) for i in range(0, len(d), 3)]
+            elif c == "h" and d:
+                lang.append((c, d))
+        new_041.append(Field_("041", ("1" if any(c == "h" for c, _ in lang) else "0") + " ", lang))
+        absorb([(c, d) for c, d in o.subfields if c in "cde"], False)
+        lost.extend(f"${c}{d}" for c, d in o.subfields if c not in "ahcde68" and d)
+    lost.extend(
+        f"non-agency =040 {j.indicators}{_subfield_preview(j.subfields)}" for j in junk)
+    merged = (
+        [(c, cur[c]) for c in "abc" if c in cur]
+        + [("d", d) for d in d_list] + [("e", e) for e in e_list]
+    )
+    gone = [id(x) for x in extras + convert + junk]
+    before = f"={base.tag}  {base.indicators}{_subfield_preview(base.subfields)}"
+    joined = " + ".join(
+        f"={x.tag}  {x.indicators}{_subfield_preview(x.subfields)}"
+        for x in extras + convert + junk)
+    parsed.fields = [f for f in parsed.fields if id(f) not in gone]
+    base.subfields = merged
+    parsed.fields = _place(parsed.fields, new_041)
+    notes = [f"demoted {', '.join(demoted)} to $d"] if demoted else []
+    notes += [f"dropped {', '.join(lost)}"] if lost else []
+    notes += [f"{len(new_041)} mistagged 041 recoded"] if new_041 else []
+    return [
+        f"merged {joined} into {before} -> "
+        f"={base.tag}  {base.indicators}{_subfield_preview(merged)}"
+        f"{' (' + '; '.join(notes) + ')' if notes else ''} -- "
+        f"{'POSSIBLE DATA LOSS' if demoted or lost else 'NO DATA LOSS'}"
+    ]
+
+
+#: Something a serial's cataloger put in a 240 that is really its
+#: frequency (310), e.g. "two no. a year from 1998".
+_FREQUENCY_RE = re.compile(
+    r"\b(?:(?:no|issues?)\.?\s+(?:a|per)\s+(?:year|month|week)|(?:a|per)\s+"
+    r"(?:year|month|week)|(?:semi|bi|tri)?(?:monthly|weekly|annual(?:ly)?)|quarterly)\b",
+    re.IGNORECASE,
+)
+_730_FROM_240_CODES = frozenset("adfghklmnoprs012")
+
+
+def move_duplicate_240_to_730(parsed: ParsedRecord) -> list[str]:
+    """A second (or later) 240 -- Not Repeatable -- is another uniform
+    title for the record, so it's recoded as a 730 (Added Entry--Uniform
+    Title; indicator 1 = the 240's nonfiling count, indicator 2 blank)
+    instead of being removed. When its text is simply a part of the 245's
+    title it is a variant title and becomes a 246 (`3 0`, "portion of
+    title") instead. $6 is dropped.
+
+    Left alone (for the generic removal): an exact copy of the first 240,
+    one with no real $a, or one that reads as a frequency statement
+    ("three no. a year" -- really a 310). A recode already present on
+    the record as a 730/246 just drops the extra.
+
+    Returns a list of detail strings, one per field handled (category
+    "moved_duplicate_to_added_entry" -- see `main`)."""
+    f240 = [f for f in parsed.fields if f.tag == "240" and not f.is_control()]
+    if len(f240) < 2:
+        return []
+    first = f240[0]
+    title_245 = _normalized_title("".join(
+        d for f in parsed.fields if f.tag == "245" and not f.is_control()
+        for c, d in f.subfields[:6] if c in "ab"
+    ))
+    seen = {
+        _normalized_title(next((d for c, d in f.subfields if c == "a"), ""))
+        for f in parsed.fields if f.tag in ("730", "246") and not f.is_control()
+    }
+    details = []
+    new_fields = []
+    gone = []
+    for f in f240[1:]:
+        a_val = next((d for c, d in f.subfields if c == "a" and d), "")
+        if _fields_content_equal(f, first) or not _has_real_a(f) or _FREQUENCY_RE.search(a_val):
+            continue
+        key = _normalized_title(a_val)
+        shown = f"={f.tag}  {f.indicators}{_subfield_preview(f.subfields)}"
+        gone.append(f)
+        if key in seen:
+            details.append(f"removed duplicate {shown} (non-repeatable field) -- already "
+                           "present as a 730/246 -- NO DATA LOSS")
+            continue
+        seen.add(key)
+        if key and key in title_245:
+            new = Field_("246", "30", [(c, d) for c, d in f.subfields if c in "abfghinp" and d])
+        else:
+            nf = _valid_nonfiling(f.indicators[1:2], a_val)
+            new = Field_("730", nf + " ", [
+                (c, d) for c, d in f.subfields if c in _730_FROM_240_CODES and d])
+        dropped = sorted({c for c, d in f.subfields if d and c not in {x for x, _ in new.subfields}})
+        new_fields.append(new)
+        details.append(
+            f"moved duplicate {shown} to ={new.tag}  {new.indicators}"
+            f"{_subfield_preview(new.subfields)}"
+            f"{' (dropped $' + ', $'.join(dropped) + ')' if dropped else ''} -- "
+            f"{'POSSIBLE DATA LOSS' if dropped else 'NO DATA LOSS'}"
+        )
+    if details:
+        parsed.fields = _place([f for f in parsed.fields if not any(f is g for g in gone)],
+                               new_fields)
+    return details
+
+
+_TRAILING_ISBD_RE = re.compile(r"[\s/:;,.]+$")
+_PUBLICATION_YEAR_RE = re.compile(r"^\s*c?\[?\s*(?:ca\.\s*)?\d{4}\]?\.?\s*$")
+
+
+def _strip_isbd(text: str) -> str:
+    return _TRAILING_ISBD_RE.sub("", text)
+
+
+def _ascii_alnum(text: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", text.casefold())
+
+
+def _is_near_duplicate_245(extra: Field_, first: Field_) -> bool:
+    """True if `extra` is the first 245 again with different encoding,
+    spacing or punctuation (or a corrupted tail): the same non-empty $b
+    and $c, or at least 80% similar once reduced to ASCII letters/digits."""
+    def text(f: Field_) -> str:
+        # a stray leading "0 " is an indicator digit that leaked into $a
+        return _ascii_alnum(re.sub(
+            r"^0\s+", "", "".join(d for c, d in f.subfields if c in "abc")))
+
+    def sub(f: Field_, code: str) -> str:
+        return next((d for c, d in f.subfields if c == code), "")
+
+    if sub(extra, "b") and sub(extra, "b") == sub(first, "b") and sub(extra, "c") == sub(first, "c"):
+        return True
+    a, b = text(extra), text(first)
+    if not (a and b):
+        return False
+    return (
+        len(os.path.commonprefix([a, b])) >= 40
+        or SequenceMatcher(None, a, b).ratio() >= 0.8
+    )
+
+
+def recode_misfiled_duplicate_245(parsed: ParsedRecord) -> list[str]:
+    """What's left of the duplicate 245s once `move_duplicate_245_to_246`
+    has taken the clean variant titles. For each extra 245, the first
+    that applies:
+      * it is the first 245 again (see `_is_near_duplicate_245`) -- removed,
+        no data lost;
+      * the FIRST 245 is itself a mistagged uniform title ($l) or series
+        ($v) with no $c and the extra is the real title (has $a and $c, no
+        $6) -- the extra takes the first 245's place and the first is
+        recoded as a 240 (or a 730 if the record has a 130 or 240), or as a
+        490 `0 ` (dropped when the series is already on the record);
+      * it is a publication statement ($a ending ":", $b, year-only $c) --
+        recoded as a 260;
+      * it is only an edition statement ("Abridged ed") -- recoded as a
+        250, if the record has none;
+      * it is a further volume/part title: $n/$p only (the first 245's $a
+        is borrowed) or $a plus its own $c -- recoded as a 740 `x2`
+        (analytical added entry; $c is dropped and flagged).
+    Anything else is left for the generic removal.
+
+    Returns a list of detail strings, one per extra 245 handled (category
+    "moved_duplicate_to_added_entry" -- see `main`)."""
+    f245 = [f for f in parsed.fields if f.tag == "245" and not f.is_control()]
+    if len(f245) < 2:
+        return []
+    fields = list(parsed.fields)
+    tags = {f.tag for f in fields}
+    series_keys = {
+        _ascii_alnum(next((d for c, d in f.subfields if c == "a"), ""))
+        for f in fields if f.tag in ("490", "830") and not f.is_control()
+    }
+    existing_250 = [f for f in fields if f.tag == "250" and not f.is_control()]
+    existing_26x = {
+        _ascii_alnum(next((d for c, d in f.subfields if c == "b"), ""))
+        for f in fields if f.tag in ("260", "264") and not f.is_control()
+    }
+    details = []
+    added = []
+    first = f245[0]
+
+    def note(src: Field_, new: Field_ | None, why: str, dropped: list[str]) -> str:
+        shown = f"={src.tag}  {src.indicators}{_subfield_preview(src.subfields)}"
+        tail = f" (dropped ${', $'.join(dropped)})" if dropped else ""
+        loss = "POSSIBLE DATA LOSS" if dropped else "NO DATA LOSS"
+        if new is None:
+            return f"removed duplicate {shown} (non-repeatable field) -- {why} -- {loss}"
+        return (f"moved duplicate {shown} to ={new.tag}  {new.indicators}"
+                f"{_subfield_preview(new.subfields)}{tail} -- {why} -- {loss}")
+
+    for extra in f245[1:]:
+        if _fields_content_equal(extra, first):
+            continue
+        codes = {c for c, d in extra.subfields if d}
+        first_codes = {c for c, d in first.subfields if d}
+        a_val = next((d for c, d in extra.subfields if c == "a" and d), "")
+        b_val = next((d for c, d in extra.subfields if c == "b" and d), "")
+        c_val = next((d for c, d in extra.subfields if c == "c" and d), "")
+        if _is_near_duplicate_245(extra, first):
+            fields = [f for f in fields if f is not extra]
+            details.append(note(extra, None, "near-duplicate of the kept 245", []))
+        elif "a" in codes and "c" in codes and "6" not in codes \
+                and first_codes & set("lv") and "c" not in first_codes:
+            ind2 = _valid_nonfiling(first.indicators[1:2], next(
+                (d for c, d in first.subfields if c == "a"), ""))
+            if "l" in first_codes:
+                subs = [(c, d) for c, d in first.subfields if c in "adfghklmnoprs" and d]
+                if tags & {"130", "240"}:
+                    new = Field_("730", ind2 + " ", subs)
+                else:
+                    new = Field_("240", ("1" if tags & {"100", "110", "111"} else "0") + ind2,
+                                 subs)
+                    tags.add("240")
+            else:
+                subs = [(c, d) for c, d in first.subfields if c in "avx" and d]
+                new = Field_("490", "0 ", subs)
+            dropped = sorted({c for c, d in first.subfields if d} - {c for c, _ in new.subfields})
+            key = _ascii_alnum(next((d for c, d in subs if c == "a"), ""))
+            idx = next(i for i, f in enumerate(fields) if f is first)
+            fields = [f for f in fields if f is not extra]
+            fields[idx] = extra
+            why = "second 245 is the real title and takes its place; first 245 was a mistagged "
+            if new.tag == "490" and key and any(key in s or s in key for s in series_keys if s):
+                details.append(note(first, None, why + "series already on the record", dropped))
+            else:
+                if new.tag == "490":
+                    series_keys.add(key)
+                added.append(new)
+                details.append(note(first, new, why + ("uniform title" if "l" in first_codes
+                                                       else "series"), dropped))
+            first = extra
+        elif codes <= {"a", "b", "c"} and {"a", "b", "c"} <= codes \
+                and a_val.rstrip().endswith(":") and _PUBLICATION_YEAR_RE.match(c_val):
+            year = c_val.strip().rstrip(".")
+            new = Field_("260", "  ", [("a", a_val.strip()), ("b", _strip_isbd(b_val) + ","),
+                                       ("c", year + ".")])
+            fields = [f for f in fields if f is not extra]
+            if _ascii_alnum(_strip_isbd(b_val)) in existing_26x:
+                details.append(note(extra, None, "publication data already on the record", []))
+            else:
+                added.append(new)
+                existing_26x.add(_ascii_alnum(_strip_isbd(b_val)))
+                details.append(note(extra, new, "publication statement keyed as a title", []))
+        elif codes == {"a"} and _EDITION_ONLY_RE.search(a_val.strip()) \
+                and len(a_val.split()) <= 6 and (
+                    not existing_250
+                    or _ascii_alnum(a_val) == _ascii_alnum(
+                        "".join(d for c, d in existing_250[0].subfields if c == "a"))):
+            text = a_val.strip()
+            new = Field_("250", "  ", [("a", text if text[-1] in ".]" else text + ".")])
+            fields = [f for f in fields if f is not extra]
+            if existing_250:
+                details.append(note(extra, None, "edition already on the record as a 250", []))
+            else:
+                added.append(new)
+                existing_250.append(new)
+                details.append(note(extra, new, "edition statement keyed as a title", []))
+        elif "6" not in codes and (
+                (not a_val and codes and codes <= {"n", "p", "c"} and codes & {"n", "p"})
+                or (a_val and "c" in codes)):
+            nf = _valid_nonfiling(extra.indicators[1:2], a_val)
+            subs = []
+            if a_val:
+                joined = a_val.strip() if not b_val else (
+                    a_val.strip() + " " + _strip_isbd(b_val)
+                    if a_val.rstrip().endswith(":") else _strip_isbd(a_val) + " : "
+                    + _strip_isbd(b_val))
+                subs.append(("a", _strip_isbd(joined) if not b_val else joined))
+            else:
+                first_a = _strip_isbd(next((d for c, d in first.subfields if c == "a"), ""))
+                subs.append(("a", first_a + "."))
+            subs += [(c, _strip_isbd(d) if c == "p" else d)
+                     for c, d in extra.subfields if c in "np" and d]
+            new = Field_("740", nf + "2", subs)
+            fields = [f for f in fields if f is not extra]
+            added.append(new)
+            same_c = c_val.strip() == next((d for c, d in first.subfields if c == "c"), "").strip()
+            details.append(note(extra, new, "further volume/part title",
+                                [] if same_c else ["c"]))
+    if details:
+        parsed.fields = _place(fields, added)
+    return details
+
+
 def _fields_content_equal(a: Field_, b: Field_) -> bool:
     """True if `a` and `b` carry identical content -- same control
     content, or same indicators and subfields for a data field. Used
@@ -6624,6 +7016,7 @@ class LogEntry:
 #: than a routine fix.
 _FIXED_REQUIRES_ATTENTION = {
     "moved_duplicate_to_added_entry",
+    "merged_duplicate_040",
     "removed_non_repeatable_duplicate",
     "fixed_008_length",
     "fixed_holdings_008_length",
@@ -6799,10 +7192,16 @@ _CHECK_DESCRIPTIONS: dict[str, str] = {
     "duplicate_identifier": "The same identifier (usually 001, or 907 $a for Sierra records) is used by "
     "more than one distinct record in this file. (Duplicate 001's may be normal "
     "with records from Voyager.)",
-    "moved_duplicate_to_added_entry": "A second 100 (another person's name) was recoded as a 700, or a second 245 "
-    "that is a plain variant title was recoded as a 246, instead of being removed "
-    "as a duplicate of a non-repeatable field. Only $6 / $c / $k-type subfields a "
-    "700 or 246 can't carry are ever dropped (noted per entry).",
+    "moved_duplicate_to_added_entry": "A second 100 (another person's name) was recoded as a 700, a second 245 "
+    "or 240 was recoded as the added entry it really is (246/730/740, or a "
+    "260/250/240/490 when it was a mistagged publication, edition, uniform title "
+    "or series), or a near-duplicate was dropped, instead of being removed as a "
+    "duplicate of a non-repeatable field. Only subfields the new field can't "
+    "carry ($6, $c, ...) are ever dropped (noted per entry).",
+    "merged_duplicate_040": "A record had more than one 040 (Cataloging Source, non-repeatable) -- "
+    "the later ones were merged into the first (subfields added, a conflicting $a/$c "
+    "demoted to $d) instead of being removed. A 040 that was really a 041 (language "
+    "codes) was recoded as one.",
     "removed_non_repeatable_duplicate": "A non-repeatable field (e.g. 001/005/008) appeared more than once on one "
     "record -- all but one copy removed.",
     "field_removed_because_missing_a": "A heading/added-entry field (or a holdings caption field) lacked a "
@@ -7057,6 +7456,7 @@ _CHECK_DATA_LOSS: dict[str, str] = {
     "recoded_852_b_to_i": "NO DATA LOSS",
     "recoded_title_only_7xx_to_730": "NO DATA LOSS",
     "moved_duplicate_to_added_entry": "POSSIBLE DATA LOSS",
+    "merged_duplicate_040": "POSSIBLE DATA LOSS",
     "recoded_6xx_b_to_a": "NO DATA LOSS",
     "truncated_oversized_field": "DATA LOSS",
     "collapsed_oversized_field_escapes": "POSSIBLE DATA LOSS",
@@ -7095,6 +7495,7 @@ _ALWAYS_FULL_CATEGORIES = {
     "diverted_for_review",
     "duplicate_identifier",
     "moved_duplicate_to_added_entry",
+    "merged_duplicate_040",
     "removed_non_repeatable_duplicate",
     "field_removed_because_missing_a",
     "deduped_010_lccn",
@@ -8350,6 +8751,41 @@ def main(argv: list[str] | None = None) -> int:
         f"(default: {DEFAULT_REQUIRED_A_TAGS_FILE})",
     )
     parser.add_argument(
+        "--no-merge-duplicate-040",
+        dest="merge_duplicate_040",
+        action="store_false",
+        default=True,
+        help="do NOT merge a second (or later) 040 into the first (a later "
+        "$c/$d/$e is added, a later different $a/$c becomes a $d, a "
+        "mistagged language-code 040 is recoded as a 041). By default this "
+        "runs BEFORE the duplicate-non-repeatable-field removal, so the "
+        "agency information is kept instead of removed. Logged in full as "
+        "merged_duplicate_040",
+    )
+    parser.add_argument(
+        "--no-move-duplicate-240-to-730",
+        dest="move_duplicate_240_to_730",
+        action="store_false",
+        default=True,
+        help="do NOT recode a second (or later) 240 as a 730 (or a 246 "
+        "when it's just part of the 245 title). Frequency statements "
+        "keyed as a 240 are always left for the removal. Logged in full as "
+        "moved_duplicate_to_added_entry",
+    )
+    parser.add_argument(
+        "--no-recode-misfiled-duplicate-245",
+        dest="recode_misfiled_duplicate_245",
+        action="store_false",
+        default=True,
+        help="do NOT fix the second (or later) 245s that are not plain "
+        "variant titles: a near-duplicate is dropped, a real title that "
+        "follows a mistagged uniform-title/series 245 takes its place (the "
+        "first becomes a 240/730/490), a publication statement becomes a "
+        "260, an edition statement a 250, and a further volume/part title "
+        "a 740. Anything else is left for the removal. Logged in full as "
+        "moved_duplicate_to_added_entry",
+    )
+    parser.add_argument(
         "--no-move-duplicate-100-to-700",
         dest="move_duplicate_100_to_700",
         action="store_false",
@@ -9350,6 +9786,10 @@ def main(argv: list[str] | None = None) -> int:
                     log("removed_880_missing_a", True, i, rec_id, detail)
                 if args.strip_empty_fields:
                     strip_empty_fields(parsed)
+                if args.merge_duplicate_040:
+                    rec_id = record_identifier(parsed)
+                    for detail in merge_duplicate_040(parsed):
+                        log("merged_duplicate_040", True, i, rec_id, detail)
                 if args.move_duplicate_100_to_700:
                     rec_id = record_identifier(parsed)
                     for detail in move_duplicate_100_to_700(parsed):
@@ -9357,6 +9797,15 @@ def main(argv: list[str] | None = None) -> int:
                 if args.move_duplicate_245_to_246:
                     rec_id = record_identifier(parsed)
                     for detail in move_duplicate_245_to_246(parsed):
+                        log("moved_duplicate_to_added_entry", True, i, rec_id, detail)
+                # after the clean 245 -> 246 move above: this takes what's left
+                if args.recode_misfiled_duplicate_245:
+                    rec_id = record_identifier(parsed)
+                    for detail in recode_misfiled_duplicate_245(parsed):
+                        log("moved_duplicate_to_added_entry", True, i, rec_id, detail)
+                if args.move_duplicate_240_to_730:
+                    rec_id = record_identifier(parsed)
+                    for detail in move_duplicate_240_to_730(parsed):
                         log("moved_duplicate_to_added_entry", True, i, rec_id, detail)
                 if args.strip_duplicate_non_repeatable_fields:
                     rec_id = record_identifier(parsed)
@@ -9671,8 +10120,11 @@ def main(argv: list[str] | None = None) -> int:
         active_categories.add("recoded_6xx_b_to_a")
     if args.strip_missing_required_a:
         active_categories.add("field_removed_because_missing_a")
-    if args.move_duplicate_100_to_700 or args.move_duplicate_245_to_246:
+    if (args.move_duplicate_100_to_700 or args.move_duplicate_245_to_246
+            or args.recode_misfiled_duplicate_245 or args.move_duplicate_240_to_730):
         active_categories.add("moved_duplicate_to_added_entry")
+    if args.merge_duplicate_040:
+        active_categories.add("merged_duplicate_040")
     if args.strip_duplicate_non_repeatable_fields:
         active_categories.add("removed_non_repeatable_duplicate")
     if ensure_specs:
