@@ -8,6 +8,22 @@ current state and open items.
 
 ## Current state
 
+### DONE -- supplemental file listing every non-standard MARC field (2026-10-26, on `main`: `1fb4f6a`)
+
+**Status: built, tested (540 pass), committed and pushed.** The log's
+`non_standard_marc_fields` section still lists only the first 5 per tag
+("and N more"); `<log name>_non_standard_fields.txt` (next to the log) lists
+every occurrence in the same layout, grouped by tag, with no cut-off. Not
+written when nothing is non-standard; its path is printed to stderr.
+
+- `NonStandardFieldTally.check(parsed, record_idx, rec_id)` streams each
+  occurrence to a `tempfile.TemporaryFile` (one line each, per-tag line
+  offsets in `array("Q")`), so memory stays small on big files;
+  `write_non_standard_supplement(path, tally)` builds the file from it and
+  `tally.close()` releases the spool. Only the bib `main` path uses it.
+- Tests: `TestNonStandardMarcFields` (supplement lists all 8 of 8; no file
+  when nothing non-standard).
+
 ### DONE -- recode unambiguous 856-without-`$u` URLs in bibs (2026-10-26, on `main`)
 
 **Status: built, tested (538 pass), committed and pushed.** Run against
