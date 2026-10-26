@@ -8,6 +8,60 @@ current state and open items.
 
 ## Current state
 
+### DONE -- `dedupe_010_fields` moves different LCCNs to `$z`; valid LCCN always wins `$a` (2026-10-26, uncommitted on `main`)
+
+**Status: built and tested (607 pass), `docs/REPAIR_CATEGORIES.md` regenerated;
+not yet committed.** `deduped_010_lccn` used to merge several 010s by keeping one
+`$a` and discarding the others (the log still said "merged"). Now:
+
+- Every non-surviving `$a` is moved to `$z` (after existing `$z/$b`, de-duplicated
+  against them), so nothing is lost. Category label is NO DATA LOSS; entries
+  read "kept $a..., moved $a... to $z (different LCCN, status unverified) -- all
+  values retained". Whitespace-only merges are still collapsed into a count line;
+  moved-value records are still listed in full. The category header carries a
+  caveat: treating the other LCCNs as canceled/invalid (`$z`) is a guess and
+  should be verified.
+- Which value keeps `$a` (`_010_a_sort_key`): a **valid LCCN always beats
+  anything else**, however new or big the other looks; among valid ones the
+  newest year, then the highest serial. Validity (`_lccn_year_serial`,
+  `is_valid_lccn`) follows https://www.loc.gov/marc/lccn_structure.html:
+  - pre-2001: 0-3 letter prefix (lowercase, from the page's bibliographic +
+    authority/classification list), 2-digit year, 6-digit serial, optional
+    `/SUFFIX` (any uppercase letters accepted -- only a partial identifier list
+    was available) and `//r74`-style revision. 2-digit year's century comes from
+    the page's serial-number table (98/99/00).
+  - 2001+: prefix of at most 2 letters, only authority/classification
+    (`n nb nr no sh sj sp cf ct`) -- the page lists bibliographic prefixes for
+    the old structure only; 4-digit year >= 2001, 6-digit serial, no suffix.
+  - Strict: uppercase prefix and a stored hyphen are invalid. Stored values are
+    never rewritten by the check (a `//r96` suffix is kept).
+- Tests: `Test010ASortKey` (new) plus updated `TestDedupe010Fields`.
+- GTU (`working/GTU_bibs.mrc`, 404,956 recs; 207,301 with a 010): only 9 records
+  have more than one 010/`$a`. The four the user checked (b10542450, b12348879,
+  b13132258, b13133056) merge as: 31022135 (z 02002135); 09002724 (z 02003919);
+  27021481 (z AFX34000080 -- the only one where the choice depends on validity);
+  29021407 (z 14003305).
+
+### OUT OF SCOPE (for now) -- flag invalid 010 `$a` values on any record (2026-10-26)
+
+The repair above only touches records with more than one `$a`. Under the strict
+LC rules, **1,379 GTU records (0.67% of those with a 010)** carry at least one
+010 `$a` that is not a valid LCCN, and nothing flags them. Breakdown:
+
+| Count | Why invalid | Examples |
+|---|---|---|
+| 1,351 | right shape, prefix/suffix not allowed | `gb` 734, `cn` 403, `ce` 12, `miu` 8; bad revision suffix (`//r` with no year, `/rev`) ~140 |
+| 11 | uppercase letters in prefix | `A54009040`, `Rc00000850` |
+| 10 | wrong digit count | `525159`, `7978670` |
+| 7 | not LCCN-shaped | `w231`, `5029559rev`, `ic`, `.40010711` |
+
+About 1,140 of these are `gb` (British Library) and `cn` (Canadian) control
+numbers that look like real national-library numbers but are not on LC's prefix
+list. **Open question for the user:** treat those as invalid, or exempt them?
+Idea if picked up: a new log category (INFORMATIONAL or FIXED/REQUIRES ATTENTION)
+listing records with an invalid 010 `$a`, reusing `is_valid_lccn`; no data would
+be changed. Not started.
+
 ### DONE -- move duplicate 100 -> 700 and clean duplicate 245 -> 246 (2026-10-26, uncommitted on `main`)
 
 **Status: built, tested (567 pass), flake8 clean on the touched files; not yet

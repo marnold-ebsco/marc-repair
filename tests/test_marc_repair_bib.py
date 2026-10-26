@@ -1992,6 +1992,71 @@ class TestStrip010WhitespaceOnlyA:
 # the rest).
 # ---------------------------------------------------------------------------
 
+class Test010ASortKey:
+    """Which of several different values `dedupe_010_fields` keeps as $a:
+    a valid LCCN (per https://www.loc.gov/marc/lccn_structure.html) always
+    beats anything else; among valid ones, newest year then serial."""
+
+    def _best(self, *values):
+        return max(values, key=m._010_a_sort_key)
+
+    def test_valid_lccn_beats_invalid_even_if_invalid_looks_bigger(self):
+        assert self._best("AFX34000080", "27021481") == "27021481"
+        assert self._best("c2002905579", "27021481") == "27021481"
+        assert self._best("5029559rev", "2013008343") == "2013008343"
+        assert self._best("w231", "sn85006973") == "sn85006973"
+
+    def test_older_valid_lccn_beats_newer_looking_invalid(self):
+        assert self._best("02002135", "2099999999x") == "02002135"
+
+    def test_newer_year_wins_across_structures(self):
+        assert self._best("31022135", "02002135") == "31022135"
+        assert self._best("99012345", "2013008343") == "2013008343"
+
+    def test_century_rule_for_two_digit_years(self):
+        assert m._lccn_year_serial("98002000") == (1898, 2000)
+        assert m._lccn_year_serial("98003000") == (1998, 3000)
+        assert m._lccn_year_serial("99005999") == (1899, 5999)
+        assert m._lccn_year_serial("99006000") == (1999, 6000)
+        assert m._lccn_year_serial("00007999") == (1900, 7999)
+        assert m._lccn_year_serial("00008000") == (2000, 8000)
+
+    def test_same_year_higher_serial_wins(self):
+        assert self._best("2018028463", "2018031265") == "2018031265"
+
+    def test_valid_forms(self):
+        for v in (
+            "2013008343", "68004897", "n79051955", "sh85035539", "cf2001050268",
+            "a55005242", "map56000004", "74025987//r96", "83019980/AC/r932",
+            "49034952/L",
+        ):
+            assert m.is_valid_lccn(v), v
+        assert m.is_valid_lccn("  2013008343")
+
+    def test_invalid_forms(self):
+        for v in (
+            "ic", "w231", "5029559rev", "525159", "AFX34000080",  # not LCCNs
+            "A54009040", "85-12345",           # uppercase prefix / hyphen
+            "c2002905579", "bl2004118368",     # bib prefix on a 2001+ number
+            "1999012345",                      # 4-digit year before 2001
+            "zz55005242",                      # prefix not on the LC list
+            "13020456//r",                     # revision date with no year
+        ):
+            assert not m.is_valid_lccn(v), v
+
+    def test_stored_value_keeps_its_suffix(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[
+                m.Field_("010", "  ", [("a", "74025987//r96")]),
+                m.Field_("010", "  ", [("a", "ic")]),
+            ],
+        )
+        m.dedupe_010_fields(parsed)
+        assert parsed.fields[0].subfields == [("a", "74025987//r96"), ("z", "ic")]
+
+
 class TestDedupe010Fields:
     def test_single_010_one_a_is_untouched(self):
         parsed = m.ParsedRecord(
@@ -2066,7 +2131,7 @@ class TestDedupe010Fields:
             ("a", "2013008343"), ("z", "11111111"), ("z", "22222222"),
         ]
 
-    def test_different_a_different_z_second_a_dropped_both_z_kept(self):
+    def test_different_a_different_z_second_a_moved_to_z(self):
         parsed = m.ParsedRecord(
             leader="0" * 24,
             entries=[],
@@ -2077,16 +2142,16 @@ class TestDedupe010Fields:
         )
         details = m.dedupe_010_fields(parsed)
         assert len(details) == 1
-        assert "DATA LOSS" in details[0]
-        assert "NO DATA LOSS" not in details[0]
-        assert "2018028463" in details[0]
+        assert "DATA LOSS" not in details[0]
+        assert "moved $a2018028463 to $z" in details[0]
         remaining = [f for f in parsed.fields if f.tag == "010"]
         assert len(remaining) == 1
         assert remaining[0].subfields == [
             ("a", "2018031265"), ("z", "11111111"), ("z", "22222222"),
+            ("z", "2018028463"),
         ]
 
-    def test_different_a_identical_z_second_a_dropped_z_deduped(self):
+    def test_different_a_identical_z_second_a_moved_z_deduped(self):
         parsed = m.ParsedRecord(
             leader="0" * 24,
             entries=[],
@@ -2097,11 +2162,12 @@ class TestDedupe010Fields:
         )
         details = m.dedupe_010_fields(parsed)
         assert len(details) == 1
-        assert "DATA LOSS" in details[0]
-        assert "NO DATA LOSS" not in details[0]
+        assert "DATA LOSS" not in details[0]
         remaining = [f for f in parsed.fields if f.tag == "010"]
         assert len(remaining) == 1
-        assert remaining[0].subfields == [("a", "2018031265"), ("z", "99999999")]
+        assert remaining[0].subfields == [
+            ("a", "2018031265"), ("z", "99999999"), ("z", "2018028463"),
+        ]
 
     def test_a_in_one_z_only_in_other_combines_no_data_loss(self):
         parsed = m.ParsedRecord(
@@ -2180,13 +2246,13 @@ class TestDedupe010Fields:
         )
         details = m.dedupe_010_fields(parsed)
         assert len(details) == 1
-        assert "DATA LOSS" in details[0]
-        assert "NO DATA LOSS" not in details[0]
+        assert "DATA LOSS" not in details[0]
         assert "2018028463" in details[0]
         remaining = [f for f in parsed.fields if f.tag == "010"]
         assert len(remaining) == 1
         assert remaining[0].subfields == [
             ("a", "2018031265"), ("z", "11111111"), ("z", "22222222"),
+            ("z", "2018028463"),
         ]
 
     def test_different_a_numerically_larger_second_one_kept(self):
@@ -2200,10 +2266,10 @@ class TestDedupe010Fields:
         )
         details = m.dedupe_010_fields(parsed)
         assert len(details) == 1
-        assert "DATA LOSS" in details[0]
+        assert "DATA LOSS" not in details[0]
         assert "2013008343" in details[0]
         remaining = [f for f in parsed.fields if f.tag == "010"]
-        assert remaining[0].subfields == [("a", "2018031265")]
+        assert remaining[0].subfields == [("a", "2018031265"), ("z", "2013008343")]
 
     def test_z_matching_surviving_a_is_dropped(self):
         parsed = m.ParsedRecord(
@@ -2231,7 +2297,7 @@ class TestDedupe010Fields:
         assert len(details) == 1
         remaining = [f for f in parsed.fields if f.tag == "010"]
         assert remaining[0].subfields == [
-            ("a", "2018031265"), ("z", "11111111"),
+            ("a", "2018031265"), ("z", "11111111"), ("z", "2018028463"),
         ]
 
     def test_b_matching_surviving_a_is_kept(self):
@@ -2284,14 +2350,14 @@ class TestDedupe010Fields:
         assert rc == 0
         content = _resolve_log(log).read_text(encoding="utf-8")
         assert "=== FIXED/REQUIRES ATTENTION: deduped_010_lccn ===" in content
-        assert "DATA LOSS" in content
-        assert "2018028463" in content
+        assert "moved $a2018028463 to $z" in content
         assert _detail_line_marker("deduped_010_lccn").search(content)
         out_parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
         out_010s = [f for f in out_parsed.fields if f.tag == "010"]
         assert len(out_010s) == 1
         assert out_010s[0].subfields == [
             ("a", "2018031265"), ("z", "11111111"), ("z", "22222222"),
+            ("z", "2018028463"),
         ]
 
 

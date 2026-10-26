@@ -310,8 +310,12 @@ BIB_ROWS = [
         "Every $a is compared with its whitespace stripped: if they all "
         "normalize the same, the stripped value survives and nothing is "
         "lost; if two or more normalize to genuinely different values, "
-        "the numerically largest one is kept and the rest are discarded "
-        "(real DATA LOSS). Every $z (Canceled/Invalid LCCN) and $b (NUCMC "
+        "the best one is kept as $a (a value that is a valid LCCN under "
+        "LC's structure rules, loc.gov/marc/lccn_structure.html, always "
+        "beats one that is not; among valid LCCNs the newest year wins, "
+        "then the highest serial) and "
+        "the rest are moved to $z (nothing is lost, but treating them as "
+        "Canceled/Invalid LCCNs is a guess that should be verified). Every $z (Canceled/Invalid LCCN) and $b (NUCMC "
         "control number -- rare, treated the same as $z) from every "
         "original 010 survives onto the merged field, de-duplicated -- "
         "except a $z that normalizes to the same value as the surviving "
@@ -324,8 +328,8 @@ BIB_ROWS = [
         "Merged all 010 fields into one (see non_repeatable_tags.txt "
         "note)",
         "Yes, always", "`deduped_010_lccn`", "FIXED/REQUIRES ATTENTION",
-        "**Yes** (only true DATA LOSS instances; identical-except-"
-        "whitespace merges are summarized as a count)",
+        "**Yes** (only records where a different LCCN was moved to $z; "
+        "identical-except-whitespace merges are summarized as a count)",
         "-- (no switch -- always runs and always logged)",
     ),
     CategoryRow(

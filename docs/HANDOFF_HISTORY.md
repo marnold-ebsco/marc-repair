@@ -56,6 +56,11 @@ row, bulleted category list, usage-example comment) and
 **Status: shipped to `main` (`5839e67`), pushed. Full suite 461 passed/1
 skipped, flake8 clean except pre-existing findings.**
 
+**Superseded 2026-10-26** (see HANDOFF.md): the "numerically largest $a wins,
+the rest are discarded (DATA LOSS)" rule below no longer applies. A valid LCCN
+(per loc.gov/marc/lccn_structure.html) now always keeps $a, newest year then
+serial among valid ones, and every other different $a is moved to $z.
+
 Scanning `working/WTS_bibs_2026-10-01.out` (a MARC-8 file -- had to drop
 `force_utf8=True` from the one-off pymarc scan script to parse it at all)
 turned up 41 records with more than one 010 (LCCN) field -- almost all

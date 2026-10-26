@@ -353,7 +353,7 @@ def build_bib_records() -> list[bytes]:
     ]))
 
     # deduped_010_lccn: different $a, different $z in each -- second $a
-    # dropped (real DATA LOSS, logged in full), both $z kept.
+    # moved to $z (logged in full), both original $z kept.
     records.append(_record(_BIB_LEADER, [
         m.Field_("001", None, None, content="ks-010dup-a-diff-z-diff"),
         m.Field_("008", None, None, content="x" * 40),
@@ -363,7 +363,7 @@ def build_bib_records() -> list[bytes]:
     ]))
 
     # deduped_010_lccn: different $a, but identical $z in both -- second
-    # $a dropped (DATA LOSS), $z deduped down to one.
+    # $a moved to $z, $z deduped down to one.
     records.append(_record(_BIB_LEADER, [
         m.Field_("001", None, None, content="ks-010dup-a-diff-z-same"),
         m.Field_("008", None, None, content="x" * 40),

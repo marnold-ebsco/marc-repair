@@ -5982,15 +5982,93 @@ def _normalize_010_value(value: str) -> str:
     return _WHITESPACE_RUN_RE.sub("", value)
 
 
-def _010_a_sort_key(norm: str) -> int:
-    """Numeric sort key for a normalized 010 $a value, used by
+#: Prefixes the LC "Structure of the LC Control Number" page
+#: (https://www.loc.gov/marc/lccn_structure.html) gives for MARC records.
+#: Bibliographic ones exist only in Structure A (pre-2001 numbers);
+#: authority and classification ones (n, nb, ..., cf, ct) are valid in
+#: both structures. Always lowercase in MARC.
+_LCCN_AUTH_CLASS_PREFIXES = frozenset(
+    "n nb nr no sh sj sp cf ct".split()
+)
+_LCCN_BIB_PREFIXES = frozenset(
+    "a ac af afl agr bi br bs c ca cad cd clc cs cx cy d do e es f fi fia "
+    "fie g gm gs h ha he hew hex it int j ja jx k kx l llh ltf m ma map med "
+    "mic mid mie mif mm mp mpa ms mus ncn ne nex no ntc nuc or pa pho php "
+    "phq po pp r ra rc re ru s sa sax sc sd sf sg sn ss su tb tmp um unk w "
+    "war x z".split()
+)
+
+#: Structure A (1898-2000): prefix, 2-digit year, 6-digit serial, then
+#: (bibliographic only) optional "/SUFFIX" identifiers and an optional
+#: revision date: "//r74" with no suffix, "/r743" after one.
+_LCCN_A_RE = re.compile(
+    r"^([a-z]{0,3})(\d{2})(\d{6})(?:/[A-Z]+)*(?:/{1,2}r\d{2,3})?$"
+)
+#: Structure B (2001-): prefix of at most 2 letters, 4-digit year,
+#: 6-digit serial, nothing after.
+_LCCN_B_RE = re.compile(r"^([a-z]{0,2})(\d{4})(\d{6})$")
+
+
+def _lccn_year_serial(norm: str) -> tuple[int, int] | None:
+    """(year, serial) if `norm` -- a 010 $a with whitespace already
+    stripped -- is a valid LCCN under the LC structure rules, else None.
+    Strict: lowercase prefix, no hyphen (LC never stores it), 6-digit
+    serial, and a prefix that the LC page lists for that structure. A
+    2-digit year's century is decided by the serial, per the page's
+    table (98 -> 18xx below 3000, 99 -> 18xx below 6000, 00 -> 19xx
+    below 8000, otherwise 19xx; 00 at 8000+ is 2000)."""
+    m = _LCCN_A_RE.match(norm)
+    if m:
+        prefix, yy, serial_s = m.groups()
+        if prefix and prefix not in (
+            _LCCN_BIB_PREFIXES | _LCCN_AUTH_CLASS_PREFIXES
+        ):
+            return None
+        yy_i, serial = int(yy), int(serial_s)
+        if yy_i == 98:
+            year = 1898 if serial < 3000 else 1998
+        elif yy_i == 99:
+            year = 1899 if serial < 6000 else 1999
+        elif yy_i == 0:
+            year = 1900 if serial < 8000 else 2000
+        else:
+            year = 1900 + yy_i
+        return year, serial
+    m = _LCCN_B_RE.match(norm)
+    if m:
+        prefix, year_s, serial_s = m.groups()
+        if prefix and prefix not in _LCCN_AUTH_CLASS_PREFIXES:
+            return None
+        year = int(year_s)
+        if year < 2001:
+            return None
+        return year, int(serial_s)
+    return None
+
+
+def is_valid_lccn(value: str) -> bool:
+    """True if a 010 $a value (whitespace ignored) is a valid LCCN under
+    the LC structure rules -- see `_lccn_year_serial`."""
+    return _lccn_year_serial(_normalize_010_value(value)) is not None
+
+
+def _010_a_sort_key(norm: str) -> tuple[int, int, int]:
+    """Sort key for a normalized 010 $a value, used by
     `dedupe_010_fields` to pick which of several genuinely different
-    LCCNs survives. LCCNs mix an optional alphabetic prefix with a
-    numeric year+serial portion (e.g. "sh85035539", "2013008343"), so
-    the digits are pulled out of the whole value and compared as a
-    single integer; a value with no digits at all sorts lowest."""
-    digits = "".join(ch for ch in norm if ch.isdigit())
-    return int(digits) if digits else -1
+    values survives as $a (the largest key wins):
+
+      1. A valid LCCN (see `_lccn_year_serial`) always beats anything
+         else -- a value that isn't a valid LCCN never takes $a from one
+         that is, however new or large it looks.
+      2. Among valid LCCNs, the newest year, then the highest serial.
+
+    Among values that are not valid LCCNs, their digits read as one
+    integer (-1 if there are none) just so the choice is deterministic."""
+    ys = _lccn_year_serial(norm)
+    if ys is None:
+        digits = "".join(ch for ch in norm if ch.isdigit())
+        return (0, int(digits) if digits else -1, 0)
+    return (1, ys[0], ys[1])
 
 
 def dedupe_010_fields(parsed: ParsedRecord) -> list[str]:
@@ -6022,9 +6100,11 @@ def dedupe_010_fields(parsed: ParsedRecord) -> list[str]:
         LOSS -- only formatting differed -- and the stripped value is
         what's kept.
       * If two or more $a values normalize to genuinely different
-        values, the numerically largest one (see `_010_a_sort_key`) is
-        kept and every other one is discarded. This is real DATA LOSS,
-        and is always logged in detail naming every value involved.
+        values, the best one (see `_010_a_sort_key`: normal-looking
+        LCCN first, then newest year) is kept as $a and every other one is moved to a $z (nothing is
+        lost, though a $z asserts "canceled/invalid", which hasn't been
+        verified for these). Always logged in detail naming every
+        value moved.
       * Every $z and $b from every 010 on the record is carried onto
         the single surviving field, each normalized the same way and
         de-duplicated (separately per code) -- so a $z or $b is never
@@ -6080,7 +6160,6 @@ def dedupe_010_fields(parsed: ParsedRecord) -> list[str]:
     else:
         surviving_a = None
         dropped_a_norms = []
-    data_loss = bool(dropped_a_norms)
 
     seen_zb: dict[str, set[str]] = {"z": set(), "b": set()}
     kept_zb: list[tuple[str, str]] = []
@@ -6093,6 +6172,14 @@ def dedupe_010_fields(parsed: ParsedRecord) -> list[str]:
         seen_zb[code].add(norm)
         kept_zb.append((code, norm))
 
+    # Every non-surviving $a is moved to $z rather than discarded, so no
+    # LCCN is ever lost (appended after the existing $z/$b, de-duplicated
+    # against the $z values already kept).
+    for norm in dropped_a_norms:
+        if norm not in seen_zb["z"]:
+            seen_zb["z"].add(norm)
+            kept_zb.append(("z", norm))
+
     new_subfields = ([("a", surviving_a)] if surviving_a is not None else []) + kept_zb
 
     before = "; ".join(
@@ -6100,11 +6187,12 @@ def dedupe_010_fields(parsed: ParsedRecord) -> list[str]:
     )
     after = "".join(f"${c}{d}" for c, d in new_subfields)
 
-    if data_loss:
+    if dropped_a_norms:
         detail = (
             f"merged {len(tag_fields)} =010 field(s) [{before}] into one "
             f"({kept_field.indicators}{after}) -- kept $a{surviving_a}, "
-            f"DROPPED {', '.join(f'$a{a}' for a in dropped_a_norms)} -- DATA LOSS"
+            f"moved {', '.join(f'$a{a}' for a in dropped_a_norms)} to $z "
+            "(different LCCN, status unverified) -- all values retained"
         )
     else:
         detail = (
@@ -7227,9 +7315,14 @@ _CHECK_DESCRIPTIONS: dict[str, str] = {
     "retained.",
     "deduped_010_lccn": "A record had more than one 010 (LCCN) field, or a single 010 with more "
     "than one $a -- merged into exactly one 010. Every $a on the record is compared with its "
-    "whitespace stripped: if they all normalize the same, the stripped value is kept and "
-    "nothing is lost; if two or more normalize to genuinely different values, the numerically "
-    "largest one is kept and the rest are discarded. Every $z (Canceled/Invalid LCCN) and $b "
+    "whitespace stripped: if they all normalize the same, the stripped value is kept; if two "
+    "or more normalize to genuinely different values, the best one is kept as $a (a value "
+    "that is a valid LCCN under LC's structure rules, https://www.loc.gov/marc/lccn_structure.html, "
+    "always beats one that is not; among valid LCCNs the newest year wins, then the highest "
+    "serial) and the others are moved to $z (nothing is lost). NOTE: treating the other LCCNs as "
+    "canceled/invalid ($z) is a guess -- it has not been verified that they are invalid, "
+    "so each should be checked. Every $z "
+    "(Canceled/Invalid LCCN) and $b "
     "(NUCMC control number -- rare, treated the same as $z) from every original 010 is "
     "carried onto the surviving field, de-duplicated -- except a $z matching the surviving "
     "$a, which is dropped as a contradiction.",
@@ -7418,7 +7511,7 @@ _CHECK_DATA_LOSS: dict[str, str] = {
     "removed_non_repeatable_duplicate": "POSSIBLE DATA LOSS",
     "field_removed_because_missing_a": "POSSIBLE DATA LOSS",
     "removed_010_whitespace_a": "NO DATA LOSS",
-    "deduped_010_lccn": "POSSIBLE DATA LOSS",
+    "deduped_010_lccn": "NO DATA LOSS",
     "removed_880_missing_a": "DATA LOSS",
     "removed_invalid_subfield": "POSSIBLE DATA LOSS",
     "removed_untranscodable_subfield": "DATA LOSS",
