@@ -5041,8 +5041,64 @@ def find_856_missing_u(parsed: ParsedRecord) -> list[str]:
             continue
         if any(code == "u" for code, _ in f.subfields):
             continue
-        body = "".join(f"${code}{data}" for code, data in f.subfields)
-        details.append(f"={f.tag}  {f.indicators}{body} has no $u subfield")
+        body = _subfield_preview(f.subfields)
+        details.append(f"={f.tag}  {f.indicators}{body} (has no $u subfield)")
+    return details
+
+
+_STRAY_U_URL_RE = re.compile(r"\$?u\s+(https?://\S+)\s*")
+_BARE_URL_RE = re.compile(r"\s*((?:https?://|www\.)\S+)\s*")
+
+
+def recode_856_missing_u(parsed: ParsedRecord) -> list[str]:
+    """Recode the URL in an 856 with no $u to $u, when that's
+    unambiguous: (1) the "u" subfield code was lost into another
+    subfield's data -- `$a` "u http://..." / "$u http://...", or `$a` "u"
+    followed by `$h` "ttps://..." (the code and first letter shifted) --
+    or (2) exactly one $a or $z holds nothing but a bare http(s) URL,
+    or a scheme-less "www...." address (https:// is added, and the log
+    detail says so). Text with a URL embedded in it is left alone for
+    `find_856_missing_u` to flag. Returns one detail
+    string per field recoded (category "bib_856_missing_u", fixed)."""
+    details = []
+    for f in parsed.fields:
+        if f.tag != "856" or f.is_control():
+            continue
+        if any(code == "u" for code, _ in f.subfields):
+            continue
+        subs = list(f.subfields)
+        what = None
+        for n, (code, data) in enumerate(subs):
+            m = _STRAY_U_URL_RE.fullmatch(data)
+            if m:
+                subs[n] = ("u", m.group(1))
+                what = f"${code} recoded to $u, stray 'u' removed"
+                break
+            if (
+                code == "a" and data == "u" and n + 1 < len(subs)
+                and subs[n + 1][0] == "h" and subs[n + 1][1].startswith("ttp")
+            ):
+                subs[n:n + 2] = [("u", "h" + subs[n + 1][1])]
+                what = "$a 'u' + $h recombined into $u"
+                break
+        if what is None:
+            urls = [
+                n for n, (code, data) in enumerate(subs)
+                if code in ("a", "z") and _BARE_URL_RE.fullmatch(data)
+            ]
+            if len(urls) != 1:
+                continue
+            code, data = subs[urls[0]]
+            url = data.strip()
+            what = f"${code} recoded to $u"
+            if url.startswith("www."):
+                url = "https://" + url
+                what += ", https:// scheme added"
+            subs[urls[0]] = ("u", url)
+        details.append(
+            f"={f.tag}  {f.indicators}{_subfield_preview(subs)} ({what})"
+        )
+        f.subfields = subs
     return details
 
 
@@ -6588,7 +6644,9 @@ _CHECK_DESCRIPTIONS: dict[str, str] = {
     "holdings_856_missing_u": "An 856 (Electronic Location and Access) field has no $u (URI) -- the field "
     "exists but has no actual link. Check to see if the link is in an incorrect subfield.",
     "bib_856_missing_u": "A bib record's 856 (Electronic Location and Access) field has no $u (URI) -- "
-    "the field exists but has no actual link. Check to see if the link is in an incorrect subfield.",
+    "the field exists but has no actual link. Check to see if the link is in an incorrect subfield. "
+    "Where the URL is unambiguous (a lost 'u' code, or a bare http(s) URL alone in $a/$z) it is "
+    "recoded to $u; the action taken is in parentheses.",
     "split_holdings_multiple_852": "A holdings record had more than one usable 852 (Location) -- split into "
     'one record per 852, with "-2", "-3", etc. appended to each additional '
     "copy's 001.",
@@ -9087,6 +9145,9 @@ def main(argv: list[str] | None = None) -> int:
                 ):
                     rec_id = record_identifier(parsed)
                     log(category, False, i, rec_id, detail)
+                for detail in recode_856_missing_u(parsed):
+                    rec_id = record_identifier(parsed)
+                    log("bib_856_missing_u", True, i, rec_id, detail)
                 for detail in find_856_missing_u(parsed):
                     rec_id = record_identifier(parsed)
                     log("bib_856_missing_u", False, i, rec_id, detail)

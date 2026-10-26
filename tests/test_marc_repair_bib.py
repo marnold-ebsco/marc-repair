@@ -4557,7 +4557,7 @@ class TestDetectOnlyChecks:
         )
         findings = m.find_856_missing_u(parsed)
         assert len(findings) == 1
-        assert "has no $u subfield" in findings[0]
+        assert "(has no $u subfield)" in findings[0]
 
     def test_does_not_flag_856_with_u(self):
         parsed = m.ParsedRecord(
@@ -4566,6 +4566,42 @@ class TestDetectOnlyChecks:
             fields=[m.Field_("856", "40", [("u", "https://example.org/resource")])],
         )
         assert m.find_856_missing_u(parsed) == []
+
+    # -- recode_856_missing_u --
+
+    @staticmethod
+    def _recode(subfields):
+        f = m.Field_("856", "41", subfields)
+        parsed = m.ParsedRecord(leader="0" * 24, entries=[], fields=[f])
+        return m.recode_856_missing_u(parsed), f.subfields
+
+    def test_recodes_stray_u_prefix(self):
+        for code, data in [("a", "u http://x.org/a"), ("a", "$u http://x.org/a"),
+                           ("i", "u http://x.org/a")]:
+            details, subs = self._recode([(code, data), ("3", "TOC")])
+            assert subs == [("u", "http://x.org/a"), ("3", "TOC")]
+            assert len(details) == 1
+
+    def test_recombines_a_u_and_h(self):
+        _, subs = self._recode([("a", "u"), ("h", "ttps://x.org/a"), ("z", "n")])
+        assert subs == [("u", "https://x.org/a"), ("z", "n")]
+
+    def test_recodes_bare_url_in_a_or_z(self):
+        assert self._recode([("a", "http://x.org/a"), ("z", "note")])[1][0] == (
+            "u", "http://x.org/a")
+        assert self._recode([("z", "http://x.org/a")])[1] == [("u", "http://x.org/a")]
+
+    def test_adds_https_to_www(self):
+        details, subs = self._recode([("a", "www.x.org")])
+        assert subs == [("u", "https://www.x.org")]
+        assert "https:// scheme added" in details[0]
+
+    def test_leaves_ambiguous_alone(self):
+        for subs in ([("a", "see http://x.org/a")], [("a", "see www.x.org")],
+                     [("a", "http://x.org/a"), ("z", "http://x.org/b")],
+                     [("z", "Available online")]):
+            details, after = self._recode(list(subs))
+            assert details == [] and after == subs
 
 
 class TestBib856MissingUCli:
