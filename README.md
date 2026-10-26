@@ -290,6 +290,15 @@ which bucket a given fix fell into:
    a sign it belongs in FIXED/REQUIRES ATTENTION or NEEDS REVIEW
    instead
 
+**Trimmed by default (`--log-zero` to undo):** the log lists only
+categories that found something. Every check that ran but found nothing
+is named, with a one-line description, in a closing
+`=== CHECKS PERFORMED WITH NO FINDINGS (N) ===` block, so the log still
+shows the full scope of what was tested. `--log-zero` restores the full
+header + `0 record(s)` block for every category instead (`--sample-log`
+always does this). Checks that didn't run (off-by-default flags) appear in
+neither place.
+
 Two detect-only checks don't even run by default, since they're pure
 overhead with no fix attached unless you're actually looking for their
 specific finding: `--check-dangling-880-links` and

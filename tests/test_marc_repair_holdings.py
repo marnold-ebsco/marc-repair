@@ -1376,7 +1376,7 @@ class TestRepairHoldingsRecords:
         ]
         result, out, log = self._run(
             tmp_path, [self._holdings_record(fields=fields)],
-            allow_single_digit_852b=True,
+            allow_single_digit_852b=True, include_zero=True,
         )
         content = _resolve_log(log).read_text(encoding="utf-8")
         assert "=== FIXED/REQUIRES ATTENTION: holdings_852_b_suspect_content ===" in content

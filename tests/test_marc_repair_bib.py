@@ -298,7 +298,7 @@ class TestFixBadIndicators:
         src.write_bytes(corrupted.encode("utf-8", errors="surrogateescape"))
         out = tmp_path / "out.mrc"
         log = tmp_path / "run.log"
-        rc = m.main([str(src), "-o", str(out), "--log", str(log)])
+        rc = m.main([str(src), "-o", str(out), "--log", str(log), "--log-zero"])
         assert rc == 0
         lines = _resolve_log(log).read_text(encoding="utf-8").splitlines()
         attention_idx = next(
@@ -4652,10 +4652,10 @@ class TestBib856MissingUCli:
         )))
         out = tmp_path / "out.mrc"
         log = tmp_path / "run.log"
-        rc = m.main([str(src), "-o", str(out), "--log", str(log)])
+        rc = m.main([str(src), "-o", str(out), "--log", str(log), "--log-zero"])
         assert rc == 0
         content = _resolve_log(log).read_text(encoding="utf-8")
-        # the category always gets a header+count (it's always active --
+        # with --log-zero the category gets a header+count (it's always active --
         # see active_categories in main()), but with zero matches here
         assert "=== NEEDS REVIEW: bib_856_missing_u ===" in content
         assert "=== 0 record(s) ===" in content.split("bib_856_missing_u")[1]
@@ -4693,7 +4693,7 @@ class TestSourceSystemIdentifierCheck:
         src.write_bytes(m.assemble_marc(self._rec(good)) + m.assemble_marc(self._rec(bad)))
         out = tmp_path / "out.mrc"
         rc = m.main([str(src), "-o", str(out), "--source-system", system,
-                     "--log", str(tmp_path / "run.log")])
+                     "--log", str(tmp_path / "run.log"), "--log-zero"])
         assert rc == 1
         assert m.count_records(str(out)) == 1
         assert m.count_records(str(tmp_path / "out_error.mrc")) == 1
@@ -4797,7 +4797,7 @@ class TestNonStandardMarcFields:
         assert not glob.glob(str(tmp_path / "*_non_standard_fields.txt"))
 
     def test_cli_nothing_non_standard_gets_zero_header(self, tmp_path):
-        content, _ = self._run(tmp_path, [self._rec([])])
+        content, _ = self._run(tmp_path, [self._rec([])], "--log-zero")
         sec = content.split("non_standard_marc_fields")[1]
         assert "=== 0 record(s) ===" in sec and "--- " not in sec
 
@@ -5367,7 +5367,7 @@ class TestRecodePipeline:
         src.write_bytes(m.assemble_marc(parsed))
         out = tmp_path / "out.mrc"
         log = tmp_path / "run.log"
-        assert m.main([str(src), "-o", str(out), "--log", str(log), *extra]) == 0
+        assert m.main([str(src), "-o", str(out), "--log", str(log), "--log-zero", *extra]) == 0
         content = _resolve_log(log).read_text(encoding="utf-8")
         out_parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
         return content, out_parsed

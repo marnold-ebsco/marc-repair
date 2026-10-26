@@ -8,6 +8,19 @@ current state and open items.
 
 ## Current state
 
+### DONE -- trimmed log, `--log-zero` to restore zero-count headers (2026-10-26)
+
+**Status: built, tested (545 pass), flake8 clean, not yet committed.**
+`write_log(include_zero=False)` drops header blocks with no findings and
+lists them once at the end under `=== CHECKS PERFORMED WITH NO FINDINGS (N) ===`
+(section: category -- first sentence of its description; only checks that
+actually ran). `--log-zero` / `include_zero=True` restores the old output;
+`--sample-log` always passes True. Existing tests that assert on zero-count
+headers now pass `--log-zero`; `TestWriteLogTrimmed` covers the new default.
+GTU (`working/GTU_bibs.mrc`): 41 categories = 19 in body + 22 in footer,
+identical to the `--log-zero` set. The saving on GTU is small (3,701 -> 3,553
+lines) because per-record entries, not empty headers, dominate it.
+
 ### DONE -- supplemental file listing every non-standard MARC field (2026-10-26, on `main`: `1fb4f6a`)
 
 **Status: built, tested (540 pass), committed and pushed.** The log's

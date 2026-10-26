@@ -973,7 +973,8 @@ class TestGuaranteeImportable:
         src.write_bytes(_read("kitchen_sink_bib.mrc").encode("utf-8"))
         out = tmp_path / "out.mrc"
         log_path = tmp_path / "out.log"
-        m.main([str(src), "-o", str(out), "--guarantee-importable", "--log", str(log_path)])
+        m.main([str(src), "-o", str(out), "--guarantee-importable", "--log", str(log_path),
+                "--log-zero"])
         log_text = _resolve_log(log_path).read_text(encoding="utf-8")
         assert "ks-oversized-ok" in log_text
         assert re.search(r"=== [^\n]*: unfixable ===", log_text)
@@ -1380,3 +1381,54 @@ class TestInformationalNeverFull:
         content = _resolve_log(log).read_text(encoding="utf-8")
         assert "INFORMATIONAL: normalized_smart_characters" in content
         assert not _detail_line_marker("normalized_smart_characters").search(content)
+
+
+# ---------------------------------------------------------------------------
+# write_log -- trimmed output (include_zero) and the no-findings footer
+# ---------------------------------------------------------------------------
+
+
+class TestWriteLogTrimmed:
+    ACTIVE = {"padded_indicators", "removed_null_identifier", "typographic_normalization"}
+
+    @staticmethod
+    def _entries():
+        return [m.LogEntry("removed_null_identifier", True, "ts", 1, "rec1", "x")]
+
+    def test_zero_categories_trimmed_to_footer_by_default(self, tmp_path):
+        log = tmp_path / "a.log"
+        m.write_log(str(log), self._entries(), active_categories=self.ACTIVE,
+                    full_categories=set())
+        text = log.read_text(encoding="utf-8")
+        assert ": removed_null_identifier ===" in text
+        assert "=== 0 record(s) ===" not in text
+        assert ": padded_indicators ===" not in text
+        footer = text.split("=== CHECKS PERFORMED WITH NO FINDINGS (2) ===\n")[1]
+        assert "padded_indicators -- " in footer
+        assert "typographic_normalization -- " in footer
+        assert "removed_null_identifier" not in footer
+
+    def test_include_zero_restores_full_headers_and_no_footer(self, tmp_path):
+        log = tmp_path / "a.log"
+        m.write_log(str(log), self._entries(), active_categories=self.ACTIVE,
+                    full_categories=set(), include_zero=True)
+        text = log.read_text(encoding="utf-8")
+        assert text.count("=== 0 record(s) ===") == 2
+        assert "CHECKS PERFORMED" not in text
+
+    def test_inactive_category_in_neither_place(self, tmp_path):
+        log = tmp_path / "a.log"
+        m.write_log(str(log), self._entries(), active_categories=self.ACTIVE,
+                    full_categories=set())
+        assert "fixed_marc8_diacritic" not in log.read_text(encoding="utf-8")
+
+    def test_no_findings_at_all_is_footer_only(self, tmp_path):
+        log = tmp_path / "a.log"
+        m.write_log(str(log), [], active_categories=self.ACTIVE)
+        text = log.read_text(encoding="utf-8")
+        assert text.startswith("=== CHECKS PERFORMED WITH NO FINDINGS (3) ===\n")
+        assert "\n\n" not in text
+
+    def test_first_sentence(self):
+        assert m._first_sentence("One.  Two\nthree. Four.") == "One."
+        assert m._first_sentence("no period") == "no period"

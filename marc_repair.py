@@ -7118,6 +7118,7 @@ def write_log(
     full_categories: set[str] | None = None,
     count_notes: dict[str, str] | None = None,
     non_standard_tally: NonStandardFieldTally | None = None,
+    include_zero: bool = False,
 ) -> None:
     """Write `entries` grouped into sections -- NOT FIXED, then FIXED/
     REQUIRES ATTENTION, then DUPLICATE RECORDS, then INFORMATIONAL at
@@ -7176,7 +7177,14 @@ def write_log(
     entries don't by themselves add up to some other total a reader
     would want -- e.g. split_holdings_multiple_852's count is the
     number of *input* records split, not how many holdings records
-    that produced in total."""
+    that produced in total.
+
+    Unless `include_zero` is set, a category with no findings gets no
+    header block above; instead every such category (still only those
+    in `active_categories`, i.e. checks that really ran) is listed once,
+    by name with a one-line description, in a closing "CHECKS PERFORMED
+    WITH NO FINDINGS" block -- so the log stays trim but still shows the
+    full scope of what was tested."""
     if full_categories is None:
         full_categories = _ALWAYS_FULL_CATEGORIES
     groups: dict[tuple[int, str, str], list[LogEntry]] = {}
@@ -7191,8 +7199,19 @@ def write_log(
         order, label, category = key
         return (order, label, *_category_sort_key(category))
 
+    ordered = sorted(groups, key=_group_sort_key)
+    skipped: list[tuple[str, str]] = []
+    if not include_zero:
+        kept = []
+        for key in ordered:
+            if groups[key]:
+                kept.append(key)
+            else:
+                skipped.append((key[1], key[2]))
+        ordered = kept
+
     with open(path, "a", encoding="utf-8") as fh:
-        for section_num, (order, label, category) in enumerate(sorted(groups, key=_group_sort_key)):
+        for section_num, (order, label, category) in enumerate(ordered):
             group = groups[(order, label, category)]
             if section_num > 0:
                 fh.write("\n")
@@ -7242,6 +7261,21 @@ def write_log(
                 else:
                     for e in group:
                         fh.write(e.render() + "\n")
+        if skipped:
+            if ordered:
+                fh.write("\n")
+            fh.write(f"=== CHECKS PERFORMED WITH NO FINDINGS ({len(skipped)}) ===\n")
+            for label, category in skipped:
+                description = _CHECK_DESCRIPTIONS.get(category, "(no description available)")
+                fh.write(f"{label}: {category} -- {_first_sentence(description)}\n")
+
+
+def _first_sentence(text: str) -> str:
+    """`text` up to and including its first sentence-ending period (or
+    all of it if there isn't one), whitespace collapsed to single spaces."""
+    flat = " ".join(text.split())
+    m = re.search(r"\.(\s|$)", flat)
+    return flat[: m.end()].strip() if m else flat
 
 
 class ProgressReporter:
@@ -7426,6 +7460,7 @@ def repair_holdings_records(
     on_progress: Callable[[int], None] | None = None,
     on_record: Callable[[int], None] | None = None,
     on_estimate: Callable[[int, int], None] | None = None,
+    include_zero: bool = False,
 ) -> dict[str, int]:
     """Actually repair a holdings-only MARC file (e.g. one of
     `split_bib_holdings`'s outputs) -- unlike `check_holdings_records`
@@ -7958,6 +7993,7 @@ def repair_holdings_records(
     write_log(
         log_path, log_entries, active_categories=active_categories,
         full_categories=resolved_full_categories, count_notes=count_notes,
+        include_zero=include_zero,
     )
     n_not_fixed = sum(1 for e in log_entries if _section_for(e)[1] == "NOT FIXED")
     return {
@@ -8231,6 +8267,17 @@ def main(argv: list[str] | None = None) -> int:
         "the per-record detail on. Has no effect on a category "
         "currently in the INFORMATIONAL section, which is never "
         "listed in full",
+    )
+    parser.add_argument(
+        "--log-zero",
+        dest="log_zero",
+        action="store_true",
+        help="also write a header block for every check that ran but "
+        "found nothing (0 records). By default the log is trimmed to "
+        "categories with at least one finding, and the rest are listed "
+        "by name, with a one-line description, in a closing \"CHECKS "
+        "PERFORMED WITH NO FINDINGS\" block so the log still shows the "
+        "full scope of what was tested",
     )
     parser.add_argument(
         "--sample-problems",
@@ -8553,7 +8600,7 @@ def main(argv: list[str] | None = None) -> int:
             "(none -- --sample-log, no input read)",
             "(none -- --sample-log, no input read)",
         )
-        write_log(log_path, [], active_categories=set(_CHECK_DESCRIPTIONS))
+        write_log(log_path, [], active_categories=set(_CHECK_DESCRIPTIONS), include_zero=True)
         print(
             f"sample log ({len(_CHECK_DESCRIPTIONS)} category header(s), "
             f"all 0 record(s)) written to {log_path}"
@@ -8614,6 +8661,7 @@ def main(argv: list[str] | None = None) -> int:
                 allow_single_digit_852b=args.allow_single_digit_852b,
                 allow_oversized_sentinel=args.allow_oversized_sentinel,
                 full_categories=set(args.log_full),
+                include_zero=args.log_zero,
                 on_progress=holdings_progress.on_progress,
                 on_record=holdings_progress.maybe_print,
                 on_estimate=holdings_progress.maybe_print_estimate,
@@ -8628,7 +8676,7 @@ def main(argv: list[str] | None = None) -> int:
                 f"{_error_output_path(holdings_repaired_path)})"
             )
             print(
-                f"holdings log (every check run, one header per category) written to "
+                f"holdings log (findings only; checks with none are listed at the end; --log-zero for all headers) written to "
                 f"{holdings_log_path} ({result['log_lines']} record-level finding(s): "
                 f"{result['not_fixed']} not fixed, "
                 f"{result['log_lines'] - result['not_fixed']} fixed)",
@@ -8674,6 +8722,7 @@ def main(argv: list[str] | None = None) -> int:
             allow_single_digit_852b=args.allow_single_digit_852b,
             allow_oversized_sentinel=args.allow_oversized_sentinel,
             full_categories=set(args.log_full),
+            include_zero=args.log_zero,
             on_progress=progress.on_progress,
             on_record=progress.maybe_print,
             on_estimate=progress.maybe_print_estimate,
@@ -8688,7 +8737,7 @@ def main(argv: list[str] | None = None) -> int:
             f"in {elapsed:.2f}s"
         )
         print(
-            f"log (every check run, one header per category) written to {log_path} "
+            f"log (findings only; checks with none are listed at the end; --log-zero for all headers) written to {log_path} "
             f"({result['log_lines']} record-level finding(s): {result['not_fixed']} not "
             f"fixed, {result['log_lines'] - result['not_fixed']} fixed)",
             file=sys.stderr,
@@ -9453,6 +9502,7 @@ def main(argv: list[str] | None = None) -> int:
         log_path, log_entries, active_categories=active_categories,
         full_categories=resolved_full_categories,
         non_standard_tally=non_standard_tally,
+        include_zero=args.log_zero,
     )
     if non_standard_tally is not None:
         supplement_path = os.path.splitext(log_path)[0] + "_non_standard_fields.txt"
@@ -9476,7 +9526,7 @@ def main(argv: list[str] | None = None) -> int:
     n_info_only = sum(1 for e in log_entries if e.category == NON_STANDARD_FIELD_CATEGORY)
     n_fixed = n_log_lines - n_not_fixed - n_info_only
     print(
-        f"log (every check run, one header per category) written to {log_path} "
+        f"log (findings only; checks with none are listed at the end; --log-zero for all headers) written to {log_path} "
         f"({n_log_lines} record-level finding(s): {n_not_fixed} not fixed, "
         f"{n_fixed} fixed"
         + (f", {n_info_only} information only" if n_info_only else "")
