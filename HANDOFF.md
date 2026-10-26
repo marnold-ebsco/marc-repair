@@ -40,6 +40,15 @@ from a plain default run, which also refreshed content that had gone stale.
 Both categories are in `docs/REPAIR_CATEGORIES.md` (bib and holdings tables).
 Open: run a full GTU re-run to confirm nothing else changes.
 
+### OPEN (minor) -- flake8 config (2026-10-26)
+
+No flake8 config exists, so default `flake8` (79 cols) reports ~487 E501 in
+`marc_repair.py`; earlier sessions used `--max-line-length=100`. Ignoring E501,
+`marc_repair.py`, `tests/` and `tools/generate_repair_categories_doc.py` are
+clean; `tools/context_probe/` has 13 pre-existing issues (blank lines,
+trailing whitespace). Optional: add a flake8 config (e.g. `max-line-length =
+120`, exclude `venv*`/`.venv`/`working`) and clean up `context_probe`.
+
 ### DONE -- log detail text condensed / `=TAG` labels (2026-10-23, on `main`: `68bf938`, `04d91c0`, `f9993f0`)
 
 **Status: built, tested (509 pass), committed and pushed.**
