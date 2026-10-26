@@ -8,9 +8,33 @@ current state and open items.
 
 ## Current state
 
+### DONE -- recode unambiguous 856-without-`$u` URLs in bibs (2026-10-26, on `main`)
+
+**Status: built, tested (538 pass), committed and pushed.** Run against
+`working/GTU_bibs.mrc` (the 0928 source file isn't on this machine): 14 of the
+21 `bib_856_missing_u` records are recoded, 7 stay flagged.
+
+- `recode_856_missing_u` (bib pipeline only, always on, no switch) runs just
+  before `find_856_missing_u` in `main()`. Recodes to `$u`: (1) a lost `u` code
+  -- `$a`/`$i` data `u http://...` or `$u http://...`, or `$a` "u" + `$h`
+  "ttps://..." (shifted code); (2) exactly one `$a`/`$z` that is only an
+  http(s) URL; (3) the same for a bare `www.` address, with `https://` added.
+- Logged under `bib_856_missing_u` (fixed=True, same NEEDS REVIEW section) with
+  the action in parens, e.g. `($a recoded to $u, https:// scheme added)`.
+  Unfixed entries now end `(has no $u subfield)` and quote at most 40 chars.
+- Left flagged: URL embedded in text (`.b13720995`, `.b14343034`) and no URL
+  at all (`.b11054049`, `.b12232397`, `.b14101257`, `.b14898032`,
+  `.b19606175`). Holdings `holdings_856_missing_u` is unchanged (detect-only).
+- Not done: the section header still counts recoded + unfixed together
+  ("21 record(s)"); no `--no-...` opt-out switch.
+- Docs: row in `tools/generate_repair_categories_doc.py` (regenerated
+  `docs/REPAIR_CATEGORIES.md`). Tests: `TestBib856MissingU` recode cases in
+  `tests/test_marc_repair_bib.py`. flake8 still reports the pre-existing E501s.
+
+
 ### DONE -- recode title-only 7xx to 730 / 650 `$b` to `$a`; 40-char log previews (2026-10-26, on `main`)
 
-**Status: built, tested (533 pass), committed, not pushed.** Re-run against
+**Status: built, tested (533 pass), committed and pushed.** Re-run against
 the full GTU 2026-09-28 file: `field_removed_because_missing_a` fell from 122
 to 8 instances.
 
