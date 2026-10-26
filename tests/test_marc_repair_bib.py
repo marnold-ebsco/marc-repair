@@ -5857,3 +5857,32 @@ class TestMisfiledDuplicatePipeline:
         assert "730" not in tags and "250" not in tags
         assert "merged_duplicate_040" not in content.split("CHECKS PERFORMED")[0]
         assert "removed duplicate =040" in content and "removed duplicate =245" in content
+
+
+class TestChooseKept003:
+    @staticmethod
+    def _strip(*values):
+        parsed = _rec(*[m.Field_("003", None, None, content=v) for v in values])
+        details = m.strip_duplicate_non_repeatable_fields(parsed, {"003"})
+        return [f.content for f in parsed.fields], details
+
+    @pytest.mark.parametrize("values", [
+        ("301198", "OCoLC"),
+        ("gsto", "OCoLC"),
+        ("WITDRAWN AS PER C.E.D. 11-04", "OCoLC"),
+        ("|a3", "OCoLC"),
+        ("OCoLC", "301198"),
+    ])
+    def test_org_code_wins_over_junk(self, values):
+        kept, details = self._strip(*values)
+        assert kept == ["OCoLC"]
+        assert len(details) == 1
+
+    def test_lowercase_code_kept_when_it_is_the_only_code(self):
+        assert self._strip("301198", "gsto")[0] == ["gsto"]
+
+    def test_no_code_among_them_keeps_the_first(self):
+        assert self._strip("301198", "9881801")[0] == ["301198"]
+
+    def test_two_real_codes_keep_the_first(self):
+        assert self._strip("DLC", "OCoLC")[0] == ["DLC"]

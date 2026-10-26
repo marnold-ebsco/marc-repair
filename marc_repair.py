@@ -5197,11 +5197,26 @@ def _choose_kept_008(fields_for_tag: list[Field_], is_sirsi: bool) -> Field_:
     return best
 
 
+_ORG_CODE_RE = re.compile(r"[A-Za-z][A-Za-z0-9-]*")
+
+
+def _choose_kept_003(fields_for_tag: list[Field_], is_sirsi: bool) -> Field_:
+    """003 (MARC organization code, e.g. "OCoLC") keeps the occurrence
+    that looks like one -- letters/digits/hyphens starting with a letter,
+    a capital preferred -- over junk such as an OCLC number or a stray
+    note ("301198", "WITDRAWN AS PER C.E.D. 11-04") that ended up in 003
+    ahead of the real code. Falls back to the first occurrence if none
+    looks like a code."""
+    codes = [f for f in fields_for_tag if _ORG_CODE_RE.fullmatch((f.content or "").strip())]
+    return max(codes, key=lambda f: f.content.strip()[0].isupper(), default=fields_for_tag[0])
+
+
 #: Per-tag tiebreakers for which occurrence of a duplicated
 #: non-repeatable field to keep -- anything not listed here just keeps
 #: the first occurrence (see `strip_duplicate_non_repeatable_fields`).
 _DUPLICATE_FIELD_RESOLVERS = {
     "001": _choose_kept_001,
+    "003": _choose_kept_003,
     "005": _choose_kept_005,
     "008": _choose_kept_008,
 }
@@ -5228,7 +5243,8 @@ def strip_duplicate_non_repeatable_fields(
 
     Which occurrence is kept is normally just the first, with tag-
     specific exceptions in `_DUPLICATE_FIELD_RESOLVERS`: 001 prefers a
-    "u"-prefixed value on Sierra/Symphony records, 005 and 008 keep
+    "u"-prefixed value on Sierra/Symphony records, 003 prefers a value
+    that looks like an organization code over junk, 005 and 008 keep
     the most recent by date.
 
     This discards real data, so unlike this tool's routine removals

@@ -22,6 +22,9 @@
 # duplicate 001 is kept as whichever occurrence starts with "u" (that
 # system's real bib-id convention, e.g. "u508261") rather than just the
 # first -- see strip_duplicate_non_repeatable_fields.
+#
+# 003: a duplicate 003 keeps the occurrence that looks like an organization
+# code ("OCoLC") over junk such as an OCLC number or a stray note.
 001
 003
 005
