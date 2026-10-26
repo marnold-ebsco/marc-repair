@@ -10,7 +10,7 @@ current state and open items.
 
 ### DONE -- trimmed log, `--log-zero` to restore zero-count headers (2026-10-26)
 
-**Status: built, tested (545 pass), flake8 clean, not yet committed.**
+**Status: built, tested (545 pass), flake8 clean, committed and pushed (`d4bf4ed`).**
 `write_log(include_zero=False)` drops header blocks with no findings and
 lists them once at the end under `=== CHECKS PERFORMED WITH NO FINDINGS (N) ===`
 (section: category -- first sentence of its description; only checks that
