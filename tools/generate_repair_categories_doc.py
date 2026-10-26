@@ -223,12 +223,42 @@ BIB_ROWS = [
         '--',
     ),
     CategoryRow(
+        "700/710/711 with a $t (title) but no name in $a (or a "
+        "punctuation-only $a) -- an anonymous work's analytical title keyed "
+        "as a name-title entry. Only when it has exactly one $t and no "
+        "subfield a 730 can't carry (e.g. $f date of work is fine; $b/$e/"
+        "$q/$6 are not -- those fall through to the removal below)",
+        "Recoded as a 730 (Added Entry--Uniform Title): $t moved to $a, "
+        "other subfields kept, indicator 1 = nonfiling count (leading "
+        "English article, English records only), indicator 2 = 2 "
+        "(analytical). Runs before the missing-required-$a removal below, "
+        "so the title is kept instead of lost",
+        "Yes (`--no-recode-title-only-7xx`)",
+        "`recoded_title_only_7xx_to_730`", "FIXED/REQUIRES ATTENTION",
+        "No (header + count always shown; full per-record list via "
+        "--log-full recoded_title_only_7xx_to_730)",
+        "`--no-recode-title-only-7xx`",
+    ),
+    CategoryRow(
+        "650/651/655 with no $a that starts with a single $b (obsolete in "
+        "these tags -- really the heading term, e.g. `650 0 $bPhilosophy"
+        "$vEarly works to 1800`)",
+        "$b recoded to $a. Runs before the missing-required-$a removal "
+        "below, so the heading is kept instead of lost",
+        "Yes (`--no-recode-6xx-b-to-a`)",
+        "`recoded_6xx_b_to_a`", "FIXED/REQUIRES ATTENTION",
+        "No (header + count always shown; full per-record list via "
+        "--log-full recoded_6xx_b_to_a)",
+        "`--no-recode-6xx-b-to-a`",
+    ),
+    CategoryRow(
         "Missing-required-$a field removal (also treats a punctuation-only "
         '$a, e.g. "." or "--", as missing)', "Removed field",
         "Yes (`--no-strip-missing-required-a`)",
         "`field_removed_because_missing_a`", "FIXED/REQUIRES ATTENTION",
         "**Yes**",
-        "`--no-strip-missing-required-a`; `--required-a-tags-file`",
+        "`--no-strip-missing-required-a`; `--required-a-tags-file`. The "
+        "logged content is cut to its first 40 characters",
     ),
     CategoryRow(
         "010 (LCCN) $a present but made up entirely of whitespace (e.g. "

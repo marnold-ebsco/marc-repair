@@ -5461,6 +5461,26 @@ def dedupe_010_fields(parsed: ParsedRecord) -> list[str]:
 _880_REQUIRED_A_TAGS = frozenset({"880"})
 
 
+#: Longest run of a field's own text a log line may quote before it is
+#: cut short with "..." -- a whole field (a long 505, a 700 $t that is a
+#: full transcribed title) makes the log unreadable, and the first 40
+#: characters are plenty to find the field again in the record.
+_LOG_PREVIEW_CHARS = 40
+
+
+def _log_preview(text: str) -> str:
+    """`text` cut to its first `_LOG_PREVIEW_CHARS` characters (plus
+    "..." if anything was cut), for quoting field content in a log line."""
+    if len(text) <= _LOG_PREVIEW_CHARS:
+        return text
+    return text[:_LOG_PREVIEW_CHARS] + "..."
+
+
+def _subfield_preview(subfields: list[tuple[str, str]]) -> str:
+    """The "$a...$b..." text of `subfields`, cut by `_log_preview`."""
+    return _log_preview("".join(f"${code}{data}" for code, data in subfields))
+
+
 def strip_missing_required_a(
     parsed: ParsedRecord,
     required_a_tags: set[str],
@@ -5492,7 +5512,9 @@ def strip_missing_required_a(
     For an 880 specifically, the logged line only shows $6 and $a (the
     subfields that actually matter for diagnosing a missing/punctuation-only
     $a) plus 20 characters of whatever else the field held, not the full
-    (sometimes very long) vernacular-script body.
+    (sometimes very long) vernacular-script body. For every tag, the
+    quoted field text is cut to its first 40 characters (see
+    `_log_preview`).
     """
     details = []
     kept = []
@@ -5522,6 +5544,7 @@ def strip_missing_required_a(
                     body += f" [{rest[:20]}{ellipsis}]"
             else:
                 body = "".join(f"${code}{data}" for code, data in f.subfields)
+            body = _log_preview(body)
             reason = (
                 f"{code_label} is punctuation only"
                 if any(code in valid_codes and data for code, data in f.subfields)
@@ -5533,6 +5556,135 @@ def strip_missing_required_a(
             )
         # else: field was entirely empty -- drop it without logging
     parsed.fields = kept
+    return details
+
+
+def _has_real_a(f: Field_) -> bool:
+    """True if `f` has a $a with content that isn't punctuation only."""
+    return any(
+        code == "a" and data and not _is_punctuation_only(data)
+        for code, data in f.subfields
+    )
+
+
+#: Tags `recode_title_only_7xx_to_730` looks at: a name-title added entry
+#: whose name was never entered.
+_TITLE_ONLY_7XX_TAGS = frozenset({"700", "710", "711"})
+
+#: Subfields that mean the same thing in a 730 as in the 7XX name-title
+#: field they came from -- the title-of-work subfields plus the
+#: control/link ones. Deliberately excludes everything that describes the
+#: (missing) name itself ($b $c $d $e $j $q $u $4, ...), and $6 (its
+#: "700-01" occurrence number names the old tag, and the paired 880 would
+#: need rewriting too).
+_730_CODES = frozenset("tfghiklmnoprsx012358")
+
+#: Leading English articles skipped in filing, as 730 indicator 1.
+_ENGLISH_ARTICLES = ("the ", "an ", "a ")
+
+
+def _nonfiling_count(title: str, english: bool) -> int:
+    """Characters of a leading English article ("The ", "An ", "A ")
+    in `title` that a 730 should skip in filing -- 0 unless the record's
+    language is English (an "A " or "An " could be a word in another
+    language)."""
+    if not english:
+        return 0
+    low = title.lower()
+    for article in _ENGLISH_ARTICLES:
+        if low.startswith(article) and len(title) > len(article):
+            return len(article)
+    return 0
+
+
+def recode_title_only_7xx_to_730(parsed: ParsedRecord) -> list[str]:
+    """Recode a 700/710/711 that has a $t (title of a work) but no real $a
+    (name) as a 730 (Added Entry--Uniform Title). Such a field is invalid
+    as a name-title entry, and `strip_missing_required_a` would otherwise
+    remove it, losing the title -- seen in the wild on bound collections of
+    pamphlets, where the cataloger entered an analytical title for an
+    anonymous work in the same 700 pattern as its attributed siblings.
+
+    Only done when the field has exactly one non-empty $t and every other
+    non-empty subfield is one a 730 also carries (`_730_CODES`, e.g. $f
+    date of work); otherwise the field is left alone for
+    `strip_missing_required_a`. A punctuation-only or empty $a is dropped
+    in the conversion. The $t becomes the 730's $a; indicator 1 is the
+    nonfiling count (leading English article, if the record is
+    English -- 008/35-37 "eng"), indicator 2 is 2 (analytical entry).
+    The new 730 is placed after any existing 730s, ahead of the next
+    higher tag, the converted fields keeping their relative order.
+
+    Returns a list of detail strings, one per field recoded (category
+    "recoded_title_only_7xx_to_730" -- see `main`)."""
+    english = any(
+        f.tag == "008" and f.is_control() and (f.content or "")[35:38] == "eng"
+        for f in parsed.fields
+    )
+    details = []
+    kept = []
+    converted = []
+    for f in parsed.fields:
+        if f.is_control() or f.tag not in _TITLE_ONLY_7XX_TAGS or _has_real_a(f):
+            kept.append(f)
+            continue
+        subs = [(code, data) for code, data in f.subfields if code != "a" and data]
+        titles = [data for code, data in subs if code == "t"]
+        if (
+            len(titles) != 1
+            or _is_punctuation_only(titles[0])
+            or any(code not in _730_CODES for code, data in subs)
+        ):
+            kept.append(f)
+            continue
+        new_subs = [("a" if code == "t" else code, data) for code, data in subs]
+        new = Field_(
+            "730", f"{_nonfiling_count(titles[0], english)}2", new_subs
+        )
+        converted.append(new)
+        details.append(
+            f"recoded ={f.tag}  {f.indicators}{_subfield_preview(subs)} to "
+            f"={new.tag}  {new.indicators}{_subfield_preview(new_subs)}"
+        )
+    if converted:
+        at = next((i for i, f in enumerate(kept) if f.tag > "730"), len(kept))
+        parsed.fields = kept[:at] + converted + kept[at:]
+    return details
+
+
+#: Tags `recode_6xx_b_to_a` looks at: topical/geographic/genre headings,
+#: where $b is obsolete (it once held the term following a place-name
+#: entry element) -- unlike 600/610/611, where $b is a real, different
+#: part of the name.
+_B_TO_A_6XX_TAGS = frozenset({"650", "651", "655"})
+
+
+def recode_6xx_b_to_a(parsed: ParsedRecord) -> list[str]:
+    """Recode a 650/651/655 that has no real $a, but starts with a single
+    $b, so that $b becomes the $a -- the heading term was simply
+    mis-coded (e.g. `650 0 $bPhilosophy$vEarly works to 1800`), and
+    `strip_missing_required_a` would otherwise remove the whole field.
+    A punctuation-only or empty $a is dropped in the conversion. Returns a
+    list of detail strings, one per field recoded (category
+    "recoded_6xx_b_to_a" -- see `main`)."""
+    details = []
+    for f in parsed.fields:
+        if f.is_control() or f.tag not in _B_TO_A_6XX_TAGS or _has_real_a(f):
+            continue
+        subs = [(code, data) for code, data in f.subfields if code != "a" and data]
+        if (
+            not subs
+            or subs[0][0] != "b"
+            or _is_punctuation_only(subs[0][1])
+            or sum(1 for code, _ in subs if code == "b") != 1
+        ):
+            continue
+        new_subs = [("a", subs[0][1])] + subs[1:]
+        details.append(
+            f"={f.tag}  {f.indicators}: $b recoded to $a -- "
+            f"{_subfield_preview(new_subs)}"
+        )
+        f.subfields = new_subs
     return details
 
 
@@ -6201,6 +6353,8 @@ _FIXED_REQUIRES_ATTENTION = {
     "truncated_oversized_field",
     "collapsed_oversized_field_escapes",
     "field_removed_because_missing_a",
+    "recoded_title_only_7xx_to_730",
+    "recoded_6xx_b_to_a",
     "added_field",
     "holdings_leader_byte_defaulted",
     "reattached_orphaned_field",
@@ -6530,6 +6684,11 @@ _CHECK_DESCRIPTIONS: dict[str, str] = {
     "reattached to the record it actually belongs to.",
     "removed_empty_852_subfield": "An 852 (Location) subfield (other than $h) was present but held no data -- "
     "removed.",
+    "recoded_title_only_7xx_to_730": "A 700/710/711 had a $t (title) but no name in $a -- recoded as a 730 "
+    "(Added Entry--Uniform Title), with the $t moved to $a, rather than "
+    "removed.",
+    "recoded_6xx_b_to_a": "A 650/651/655 had no $a but started with a $b -- recoded so the $b is the "
+    "$a (the heading term was just mis-coded) rather than removing the field.",
     "recoded_852_b_to_i": "852 had a second $b positioned after $h -- recoded to $i (it's the "
     "cutter/copy number that goes with $h, just miscoded).",
     "truncated_oversized_field": "A field's real, delimiter-bounded content is longer than 9999 bytes -- too "
@@ -6612,6 +6771,8 @@ _CHECK_DATA_LOSS: dict[str, str] = {
     "reattached_orphaned_field": "NO DATA LOSS",
     "removed_empty_852_subfield": "NO DATA LOSS",
     "recoded_852_b_to_i": "NO DATA LOSS",
+    "recoded_title_only_7xx_to_730": "NO DATA LOSS",
+    "recoded_6xx_b_to_a": "NO DATA LOSS",
     "truncated_oversized_field": "DATA LOSS",
     "collapsed_oversized_field_escapes": "POSSIBLE DATA LOSS",
     "non_standard_marc_fields": "NO DATA LOSS",
@@ -7823,6 +7984,32 @@ def main(argv: list[str] | None = None) -> int:
         "--ensure-field \"008:780615s19uu    xx a                    d\"",
     )
     parser.add_argument(
+        "--no-recode-title-only-7xx",
+        dest="recode_title_only_7xx",
+        action="store_false",
+        default=True,
+        help="do NOT recode a 700/710/711 that has a $t (title) but no "
+        "name in $a as a 730 (Added Entry--Uniform Title, $t moved to "
+        "$a). By default this runs BEFORE --strip-missing-required-a, "
+        "so the title is kept instead of the field being removed; pass "
+        "this flag to leave such fields for that removal instead. Header "
+        "+ count always logged (see --log); full per-record list via "
+        "--log-full recoded_title_only_7xx_to_730",
+    )
+    parser.add_argument(
+        "--no-recode-6xx-b-to-a",
+        dest="recode_6xx_b_to_a",
+        action="store_false",
+        default=True,
+        help="do NOT recode a 650/651/655 that has no $a but starts with "
+        "a $b so that the $b becomes $a. By default this runs BEFORE "
+        "--strip-missing-required-a, so the heading is kept instead of "
+        "the field being removed; pass this flag to leave such fields "
+        "for that removal instead. Header + count always logged (see "
+        "--log); full per-record list via --log-full "
+        "recoded_6xx_b_to_a",
+    )
+    parser.add_argument(
         "--no-strip-missing-required-a",
         dest="strip_missing_required_a",
         action="store_false",
@@ -8781,6 +8968,14 @@ def main(argv: list[str] | None = None) -> int:
                     log("removed_invalid_subfield", True, i, rec_id, detail)
                 for detail in strip_null_identifiers(parsed):
                     log("removed_null_identifier", True, i, rec_id, detail)
+                if args.recode_title_only_7xx:
+                    rec_id = record_identifier(parsed)
+                    for detail in recode_title_only_7xx_to_730(parsed):
+                        log("recoded_title_only_7xx_to_730", True, i, rec_id, detail)
+                if args.recode_6xx_b_to_a:
+                    rec_id = record_identifier(parsed)
+                    for detail in recode_6xx_b_to_a(parsed):
+                        log("recoded_6xx_b_to_a", True, i, rec_id, detail)
                 if args.strip_missing_required_a:
                     rec_id = record_identifier(parsed)
                     for detail in strip_missing_required_a(parsed, required_a_tags):
@@ -9100,6 +9295,10 @@ def main(argv: list[str] | None = None) -> int:
         active_categories.add("normalized_smart_characters")
     if args.fix_misplaced_subfield_codes:
         active_categories.add("fixed_misplaced_subfield_code")
+    if args.recode_title_only_7xx:
+        active_categories.add("recoded_title_only_7xx_to_730")
+    if args.recode_6xx_b_to_a:
+        active_categories.add("recoded_6xx_b_to_a")
     if args.strip_missing_required_a:
         active_categories.add("field_removed_because_missing_a")
     if args.strip_duplicate_non_repeatable_fields:

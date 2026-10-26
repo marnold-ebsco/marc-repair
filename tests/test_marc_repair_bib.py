@@ -5157,3 +5157,203 @@ class TestFixMarc8B2Umlaut:
         path = tmp_path / "lex.json"
         path.write_text(json.dumps(_B2_LEXICON), encoding="utf-8")
         assert m.load_b2_lexicon(str(path)) == _B2_LEXICON
+
+
+# ---------------------------------------------------------------------------
+# log previews (40 characters) and the 7xx/6xx recodes that run before
+# missing-required-$a removal
+# ---------------------------------------------------------------------------
+
+def _rec(*fields):
+    return m.ParsedRecord(leader=_VALID_LEADER, entries=[], fields=list(fields))
+
+
+class TestLogPreviewLength:
+    def test_removed_field_log_quotes_only_first_40_characters(self):
+        long_text = "x" * 100
+        parsed = _rec(m.Field_("650", " 0", [("z", long_text)]))
+        details = m.strip_missing_required_a(parsed, {"650"})
+        assert len(details) == 1
+        assert "$z" + "x" * 38 + "..." in details[0]
+        assert "x" * 39 not in details[0]
+
+    def test_short_field_is_quoted_whole(self):
+        parsed = _rec(m.Field_("650", " 0", [("z", "United States.")]))
+        details = m.strip_missing_required_a(parsed, {"650"})
+        assert "$zUnited States.\t" in details[0]
+        assert "..." not in details[0]
+
+
+class TestRecodeTitleOnly7xxTo730:
+    def test_700_t_and_f_becomes_730_a_and_f(self):
+        parsed = _rec(
+            m.Field_("245", "00", [("a", "Misc")]),
+            m.Field_("700", "1 ", [("t", "Sermon on cholera."), ("f", "1832")]),
+            m.Field_("856", "40", [("u", "http://x")]),
+        )
+        details = m.recode_title_only_7xx_to_730(parsed)
+        assert [f.tag for f in parsed.fields] == ["245", "730", "856"]
+        new = parsed.fields[1]
+        assert new.indicators == "02"
+        assert new.subfields == [("a", "Sermon on cholera."), ("f", "1832")]
+        assert len(details) == 1
+        assert "=700" in details[0] and "=730" in details[0]
+
+    def test_english_article_sets_nonfiling_count(self):
+        parsed = _rec(
+            m.Field_("008", None, None, content=" " * 35 + "eng" + " " * 2),
+            m.Field_("700", "1 ", [("t", "The voice of truth")]),
+            m.Field_("700", "1 ", [("t", "An address")]),
+            m.Field_("700", "1 ", [("t", "Annual report")]),
+        )
+        m.recode_title_only_7xx_to_730(parsed)
+        assert [f.indicators for f in parsed.fields[1:]] == ["42", "32", "02"]
+
+    def test_no_nonfiling_count_for_non_english_record(self):
+        parsed = _rec(
+            m.Field_("008", None, None, content=" " * 35 + "por" + " " * 2),
+            m.Field_("700", "1 ", [("t", "A voz")]),
+        )
+        m.recode_title_only_7xx_to_730(parsed)
+        assert parsed.fields[1].indicators == "02"
+
+    def test_punctuation_only_a_is_dropped_in_conversion(self):
+        parsed = _rec(m.Field_("700", "0 ", [("a", "."), ("t", "Prerreforma")]))
+        m.recode_title_only_7xx_to_730(parsed)
+        assert parsed.fields[0].tag == "730"
+        assert parsed.fields[0].subfields == [("a", "Prerreforma")]
+
+    def test_710_and_711_are_converted_too(self):
+        parsed = _rec(
+            m.Field_("710", "2 ", [("t", "Some title")]),
+            m.Field_("711", "2 ", [("t", "Other title")]),
+        )
+        m.recode_title_only_7xx_to_730(parsed)
+        assert [f.tag for f in parsed.fields] == ["730", "730"]
+
+    def test_placed_after_existing_730_before_higher_tags(self):
+        parsed = _rec(
+            m.Field_("700", "1 ", [("a", "Smith, J.")]),
+            m.Field_("700", "1 ", [("t", "First")]),
+            m.Field_("730", "02", [("a", "Existing")]),
+            m.Field_("700", "1 ", [("t", "Second")]),
+            m.Field_("830", " 0", [("a", "Series")]),
+        )
+        m.recode_title_only_7xx_to_730(parsed)
+        assert [f.tag for f in parsed.fields] == ["700", "730", "730", "730", "830"]
+        assert [f.subfields[0][1] for f in parsed.fields[1:4]] == [
+            "Existing", "First", "Second",
+        ]
+
+    def test_field_with_real_a_is_untouched(self):
+        parsed = _rec(m.Field_("700", "1 ", [("a", "Smith, J."), ("t", "Title")]))
+        assert m.recode_title_only_7xx_to_730(parsed) == []
+        assert parsed.fields[0].tag == "700"
+
+    def test_name_subfields_without_a_are_not_converted(self):
+        parsed = _rec(m.Field_("710", "2 ", [("b", "Th. M."), ("k", "Thesis.")]))
+        assert m.recode_title_only_7xx_to_730(parsed) == []
+        assert parsed.fields[0].tag == "710"
+
+    def test_t_with_disallowed_subfield_is_not_converted(self):
+        parsed = _rec(m.Field_("700", "1 ", [("t", "Title"), ("e", "author")]))
+        assert m.recode_title_only_7xx_to_730(parsed) == []
+        assert parsed.fields[0].tag == "700"
+
+    def test_linked_880_field_is_not_converted(self):
+        parsed = _rec(m.Field_("700", "1 ", [("6", "880-01"), ("t", "Title")]))
+        assert m.recode_title_only_7xx_to_730(parsed) == []
+
+    def test_log_quotes_only_first_40_characters(self):
+        parsed = _rec(m.Field_("700", "1 ", [("t", "y" * 200)]))
+        details = m.recode_title_only_7xx_to_730(parsed)
+        assert "y" * 41 not in details[0]
+        assert details[0].count("...") == 2
+
+
+class TestRecode6xxBToA:
+    def test_650_leading_b_becomes_a(self):
+        parsed = _rec(
+            m.Field_("650", " 0", [("b", "Philosophy"), ("v", "Early works to 1800")])
+        )
+        details = m.recode_6xx_b_to_a(parsed)
+        assert parsed.fields[0].subfields == [
+            ("a", "Philosophy"), ("v", "Early works to 1800"),
+        ]
+        assert len(details) == 1
+        assert "650" in details[0]
+
+    def test_650_with_real_a_is_untouched(self):
+        parsed = _rec(m.Field_("650", " 0", [("a", "Ethics"), ("b", "Other")]))
+        assert m.recode_6xx_b_to_a(parsed) == []
+        assert parsed.fields[0].subfields == [("a", "Ethics"), ("b", "Other")]
+
+    def test_600_b_is_not_recoded(self):
+        parsed = _rec(m.Field_("600", "10", [("b", "II")]))
+        assert m.recode_6xx_b_to_a(parsed) == []
+
+    def test_b_not_first_is_not_recoded(self):
+        parsed = _rec(m.Field_("650", " 0", [("x", "History"), ("b", "Philosophy")]))
+        assert m.recode_6xx_b_to_a(parsed) == []
+
+    def test_unrecoverable_f_only_650_is_left_for_removal(self):
+        parsed = _rec(m.Field_("650", " 0", [("f", "MDP")]))
+        assert m.recode_6xx_b_to_a(parsed) == []
+
+
+class TestRecodePipeline:
+    def _run(self, tmp_path, fields, *extra):
+        parsed = _rec(
+            m.Field_("001", None, None, content="997"),
+            m.Field_("008", None, None, content="x" * 40),
+            m.Field_("245", "00", [("a", "Some title.")]),
+            *fields,
+        )
+        src = tmp_path / "bib.mrc"
+        src.write_bytes(m.assemble_marc(parsed))
+        out = tmp_path / "out.mrc"
+        log = tmp_path / "run.log"
+        assert m.main([str(src), "-o", str(out), "--log", str(log), *extra]) == 0
+        content = _resolve_log(log).read_text(encoding="utf-8")
+        out_parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
+        return content, out_parsed
+
+    @staticmethod
+    def _count(content, category):
+        """The N in `category`'s "=== N record(s) ===" (or "N instance(s)
+        in M record(s)") header line."""
+        hit = re.search(
+            rf"=== [^\n]*: {category} ===\n(?:=== [^\n]*\n)+?"
+            r"=== (\d+) (?:instance\(s\) in \d+ )?record\(s\)",
+            content,
+        )
+        return int(hit.group(1))
+
+    def _fields(self):
+        return [
+            m.Field_("650", " 0", [("b", "Philosophy"), ("v", "Early works")]),
+            m.Field_("700", "1 ", [("t", "A pamphlet"), ("f", "1857")]),
+        ]
+
+    def test_recodes_run_by_default_instead_of_removal(self, tmp_path):
+        content, out = self._run(tmp_path, self._fields())
+        assert "recoded_title_only_7xx_to_730" in content
+        assert "recoded_6xx_b_to_a" in content
+        assert self._count(content, "recoded_title_only_7xx_to_730") == 1
+        assert self._count(content, "recoded_6xx_b_to_a") == 1
+        assert self._count(content, "field_removed_because_missing_a") == 0
+        tags = [f.tag for f in out.fields]
+        assert "730" in tags and "700" not in tags
+        assert [f for f in out.fields if f.tag == "650"][0].subfields[0] == (
+            "a", "Philosophy",
+        )
+
+    def test_flags_turn_recodes_off_and_fall_back_to_removal(self, tmp_path):
+        content, out = self._run(
+            tmp_path, self._fields(),
+            "--no-recode-title-only-7xx", "--no-recode-6xx-b-to-a",
+        )
+        assert "=== FIXED/REQUIRES ATTENTION: recoded_" not in content
+        assert self._count(content, "field_removed_because_missing_a") == 2
+        tags = [f.tag for f in out.fields]
+        assert "730" not in tags and "700" not in tags and "650" not in tags
