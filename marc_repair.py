@@ -5282,6 +5282,178 @@ def strip_duplicate_non_repeatable_fields(
     return details
 
 
+#: Role words that cataloging sometimes leaves in parentheses after a
+#: name in $a (e.g. "Daly, Pat (editor)"), mapped to the relator term
+#: that belongs in $e instead.
+_ROLE_IN_A_TERMS = {
+    "editor": "editor", "ed.": "editor", "author": "author",
+    "translator": "translator", "compiler": "compiler",
+    "illustrator": "illustrator", "contributor": "contributor",
+    "preface": "writer of preface", "foreword": "writer of foreword",
+    "foreward": "writer of foreword", "introduction": "writer of introduction",
+}
+_ROLE_IN_A_RE = re.compile(
+    r"^(?P<name>.*\S)\s*\((?P<role>" + "|".join(
+        re.escape(r) for r in _ROLE_IN_A_TERMS) + r")\)\.?\s*$",
+    re.IGNORECASE,
+)
+
+#: Subfields a 246 carries -- everything else on a 245 ($c, $k, $s, ...)
+#: is dropped when a duplicate 245 is moved to a 246.
+_246_CODES = frozenset("abfghinp568")
+
+#: A 245 that's really an edition statement ("Abridged ed", "2nd rev. ed.")
+#: -- belongs in a 250, not a 246.
+_EDITION_ONLY_RE = re.compile(r"\b(ed\.?|edition|rev\.?|reprint)\s*$", re.IGNORECASE)
+
+
+def _insert_after_tag(fields: list[Field_], new: list[Field_], tag: str) -> list[Field_]:
+    """`fields` with `new` inserted after any existing `tag` fields,
+    ahead of the next higher tag."""
+    at = next((i for i, f in enumerate(fields) if f.tag > tag), len(fields))
+    return fields[:at] + new + fields[at:]
+
+
+def move_duplicate_100_to_700(parsed: ParsedRecord) -> list[str]:
+    """A second (or later) 100 on one record -- 100 is Not Repeatable --
+    is another person's name in practice (co-author, editor,
+    contributor), so it's recoded as a 700 (Added Entry--Personal Name)
+    instead of being removed by `strip_duplicate_non_repeatable_fields`.
+    The first 100 stays where it is.
+
+    Left alone (so the generic removal still handles it) when it's an
+    exact copy of the first 100, or has no real $a. Indicator 1 is kept
+    if 0/1/3, otherwise 1 when $a has a comma and 0 if not; indicator 2
+    is blank. A trailing "(editor)"-style role on $a moves to $e. $6 is
+    dropped (its occurrence number names the old tag and the paired 880
+    would need rewriting too). A move whose 700 is already on the record
+    just drops the extra 100.
+
+    Returns a list of detail strings, one per field handled (category
+    "moved_duplicate_to_added_entry" -- see `main`)."""
+    firsts = [f for f in parsed.fields if f.tag == "100" and not f.is_control()]
+    if len(firsts) < 2:
+        return []
+    first = firsts[0]
+    existing_700 = [f for f in parsed.fields if f.tag == "700" and not f.is_control()]
+    details = []
+    new_fields = []
+    kept = []
+    for f in parsed.fields:
+        if f is first or f.tag != "100" or f.is_control():
+            kept.append(f)
+            continue
+        if _fields_content_equal(f, first) or not _has_real_a(f):
+            kept.append(f)
+            continue
+        subs = [(c, d) for c, d in f.subfields if c != "6" and d]
+        notes = ["dropped $6 link"] if len(subs) != len(f.subfields) else []
+        a_val = next(d for c, d in subs if c == "a")
+        role = _ROLE_IN_A_RE.match(a_val)
+        if role and not any(c == "e" for c, _ in subs):
+            subs = [("a", role.group("name").rstrip(" ,") + ",") if c == "a" and d == a_val
+                    else (c, d) for c, d in subs]
+            at = max(i for i, (c, _) in enumerate(subs) if c in "abcdq")
+            subs.insert(at + 1, ("e", _ROLE_IN_A_TERMS[role.group("role").lower()] + "."))
+            notes.append("role moved from $a to $e")
+        ind1 = f.indicators[0] if f.indicators[:1] in ("0", "1", "3") else (
+            "1" if "," in a_val else "0")
+        new = Field_("700", ind1 + " ", subs)
+        shown = f"={f.tag}  {f.indicators}{_subfield_preview(f.subfields)}"
+        if any(x.subfields == subs and x.indicators == new.indicators for x in existing_700):
+            details.append(f"removed duplicate {shown} (non-repeatable field) -- already "
+                           "present as a 700 -- NO DATA LOSS")
+            continue
+        new_fields.append(new)
+        existing_700.append(new)
+        tail = f" ({'; '.join(notes)})" if notes else ""
+        details.append(
+            f"moved duplicate {shown} to ={new.tag}  {new.indicators}"
+            f"{_subfield_preview(subs)}{tail} -- "
+            f"{'POSSIBLE DATA LOSS' if notes else 'NO DATA LOSS'}"
+        )
+    if details:
+        parsed.fields = _insert_after_tag(kept, new_fields, "700")
+    return details
+
+
+def _normalized_title(text: str) -> str:
+    return re.sub(r"\W+", "", text.casefold())
+
+
+def move_duplicate_245_to_246(parsed: ParsedRecord) -> list[str]:
+    """A second (or later) 245 on one record -- 245 is Not Repeatable --
+    that is really a variant of the title (shortened, alternate,
+    cover-style) is recoded as a 246 (Varying Form of Title, indicator 1
+    = 3 "no note, added entry", indicator 2 blank) instead of being
+    removed by `strip_duplicate_non_repeatable_fields`. The first 245
+    stays where it is.
+
+    Deliberately conservative -- the extra 245 is moved only when ALL of
+    these hold, anything else is left for the generic removal:
+      * it has a real $a and no $6 (the paired 880 would need rewriting)
+        and no $c: a statement of responsibility means it's a separate
+        title (another volume, a part, a series item), not a variant;
+      * its $a doesn't look like an edition statement ("Abridged ed" is a
+        250) or start with a stray "0 " (a leaked indicator);
+      * the FIRST 245 has no $l, $v, $t or $6: one of those means the
+        first 245 is itself a mistagged uniform title or series, so
+        which one is the real title can't be told from here;
+      * it isn't a normalized copy of a 246 already on the record.
+    Subfields a 246 can't carry ($k, $s, ...) are dropped, noted in the
+    log line.
+
+    Returns a list of detail strings, one per field moved (category
+    "moved_duplicate_to_added_entry" -- see `main`)."""
+    firsts = [f for f in parsed.fields if f.tag == "245" and not f.is_control()]
+    if len(firsts) < 2:
+        return []
+    first = firsts[0]
+    if any(c in "lvt6" for c, _ in first.subfields):
+        return []
+    existing = {
+        _normalized_title("".join(d for c, d in f.subfields if c in "ab"))
+        for f in parsed.fields if f.tag == "246" and not f.is_control()
+    }
+    details = []
+    new_fields = []
+    kept = []
+    for f in parsed.fields:
+        if f is first or f.tag != "245" or f.is_control():
+            kept.append(f)
+            continue
+        codes = {c for c, d in f.subfields if d}
+        a_val = next((d for c, d in f.subfields if c == "a" and d), "")
+        if (
+            _fields_content_equal(f, first) or not _has_real_a(f)
+            or "6" in codes or "c" in codes
+            or (codes <= {"a"} and _EDITION_ONLY_RE.search(a_val.strip()))
+            or re.match(r"0\s", a_val)
+        ):
+            kept.append(f)
+            continue
+        subs = [(c, d) for c, d in f.subfields if c in _246_CODES and d]
+        dropped = sorted({c for c, d in f.subfields if d and c not in _246_CODES})
+        new = Field_("246", "3 ", subs)
+        shown = f"={f.tag}  {f.indicators}{_subfield_preview(f.subfields)}"
+        key = _normalized_title("".join(d for c, d in subs if c in "ab"))
+        if key in existing:
+            details.append(f"removed duplicate {shown} (non-repeatable field) -- already "
+                           "present as a 246 -- NO DATA LOSS")
+            continue
+        existing.add(key)
+        new_fields.append(new)
+        tail = f" (dropped ${', $'.join(dropped)})" if dropped else ""
+        details.append(
+            f"moved duplicate {shown} to ={new.tag}  {new.indicators}"
+            f"{_subfield_preview(subs)}{tail} -- "
+            f"{'POSSIBLE DATA LOSS' if dropped else 'NO DATA LOSS'}"
+        )
+    if details:
+        parsed.fields = _insert_after_tag(kept, new_fields, "246")
+    return details
+
+
 def _fields_content_equal(a: Field_, b: Field_) -> bool:
     """True if `a` and `b` carry identical content -- same control
     content, or same indicators and subfields for a data field. Used
@@ -6451,6 +6623,7 @@ class LogEntry:
 #: FIXED: not as urgent as something left broken, but more urgent
 #: than a routine fix.
 _FIXED_REQUIRES_ATTENTION = {
+    "moved_duplicate_to_added_entry",
     "removed_non_repeatable_duplicate",
     "fixed_008_length",
     "fixed_holdings_008_length",
@@ -6626,6 +6799,10 @@ _CHECK_DESCRIPTIONS: dict[str, str] = {
     "duplicate_identifier": "The same identifier (usually 001, or 907 $a for Sierra records) is used by "
     "more than one distinct record in this file. (Duplicate 001's may be normal "
     "with records from Voyager.)",
+    "moved_duplicate_to_added_entry": "A second 100 (another person's name) was recoded as a 700, or a second 245 "
+    "that is a plain variant title was recoded as a 246, instead of being removed "
+    "as a duplicate of a non-repeatable field. Only $6 / $c / $k-type subfields a "
+    "700 or 246 can't carry are ever dropped (noted per entry).",
     "removed_non_repeatable_duplicate": "A non-repeatable field (e.g. 001/005/008) appeared more than once on one "
     "record -- all but one copy removed.",
     "field_removed_because_missing_a": "A heading/added-entry field (or a holdings caption field) lacked a "
@@ -6879,6 +7056,7 @@ _CHECK_DATA_LOSS: dict[str, str] = {
     "removed_empty_852_subfield": "NO DATA LOSS",
     "recoded_852_b_to_i": "NO DATA LOSS",
     "recoded_title_only_7xx_to_730": "NO DATA LOSS",
+    "moved_duplicate_to_added_entry": "POSSIBLE DATA LOSS",
     "recoded_6xx_b_to_a": "NO DATA LOSS",
     "truncated_oversized_field": "DATA LOSS",
     "collapsed_oversized_field_escapes": "POSSIBLE DATA LOSS",
@@ -6916,6 +7094,7 @@ _ALWAYS_FULL_CATEGORIES = {
     "record_identifier_required",
     "diverted_for_review",
     "duplicate_identifier",
+    "moved_duplicate_to_added_entry",
     "removed_non_repeatable_duplicate",
     "field_removed_because_missing_a",
     "deduped_010_lccn",
@@ -8171,6 +8350,30 @@ def main(argv: list[str] | None = None) -> int:
         f"(default: {DEFAULT_REQUIRED_A_TAGS_FILE})",
     )
     parser.add_argument(
+        "--no-move-duplicate-100-to-700",
+        dest="move_duplicate_100_to_700",
+        action="store_false",
+        default=True,
+        help="do NOT recode a second (or later) 100 as a 700 (Added Entry--"
+        "Personal Name). By default this runs BEFORE the duplicate-non-"
+        "repeatable-field removal (see --no-strip-duplicate-non-"
+        "repeatable-fields), so the name is kept instead of removed; pass "
+        "this flag to leave it for that removal. Logged in full as "
+        "moved_duplicate_to_added_entry",
+    )
+    parser.add_argument(
+        "--no-move-duplicate-245-to-246",
+        dest="move_duplicate_245_to_246",
+        action="store_false",
+        default=True,
+        help="do NOT recode a second (or later) 245 that is a plain variant "
+        "title (no $c, $6, edition statement, ...) as a 246. By default "
+        "this runs BEFORE the duplicate-non-repeatable-field removal, so "
+        "the title is kept instead of removed; anything that doesn't look "
+        "like a clean variant title is left for that removal. Logged in "
+        "full as moved_duplicate_to_added_entry",
+    )
+    parser.add_argument(
         "--no-strip-duplicate-non-repeatable-fields",
         dest="strip_duplicate_non_repeatable_fields",
         action="store_false",
@@ -9147,6 +9350,14 @@ def main(argv: list[str] | None = None) -> int:
                     log("removed_880_missing_a", True, i, rec_id, detail)
                 if args.strip_empty_fields:
                     strip_empty_fields(parsed)
+                if args.move_duplicate_100_to_700:
+                    rec_id = record_identifier(parsed)
+                    for detail in move_duplicate_100_to_700(parsed):
+                        log("moved_duplicate_to_added_entry", True, i, rec_id, detail)
+                if args.move_duplicate_245_to_246:
+                    rec_id = record_identifier(parsed)
+                    for detail in move_duplicate_245_to_246(parsed):
+                        log("moved_duplicate_to_added_entry", True, i, rec_id, detail)
                 if args.strip_duplicate_non_repeatable_fields:
                     rec_id = record_identifier(parsed)
                     for detail in strip_duplicate_non_repeatable_fields(
@@ -9460,6 +9671,8 @@ def main(argv: list[str] | None = None) -> int:
         active_categories.add("recoded_6xx_b_to_a")
     if args.strip_missing_required_a:
         active_categories.add("field_removed_because_missing_a")
+    if args.move_duplicate_100_to_700 or args.move_duplicate_245_to_246:
+        active_categories.add("moved_duplicate_to_added_entry")
     if args.strip_duplicate_non_repeatable_fields:
         active_categories.add("removed_non_repeatable_duplicate")
     if ensure_specs:

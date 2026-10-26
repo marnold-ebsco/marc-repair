@@ -223,6 +223,22 @@ BIB_ROWS = [
         '--',
     ),
     CategoryRow(
+        "A second (or later) 100, or a second 245 that is a plain variant "
+        "title (no $c/$6/$l/$v, not an edition statement, first 245 not "
+        "itself a uniform title or series) -- both Not Repeatable",
+        "100 recoded as a 700 (indicator 1 kept or guessed from a comma, "
+        "\"(editor)\"-style role moved to $e, $6 dropped); 245 recoded as a "
+        "246 (indicators `3 `; subfields a 246 can't carry are dropped). "
+        "Runs before the duplicate-non-repeatable removal below, so the "
+        "name/title is kept instead of lost; anything that doesn't qualify "
+        "still falls through to that removal",
+        "Yes (`--no-move-duplicate-100-to-700`, "
+        "`--no-move-duplicate-245-to-246`)",
+        "`moved_duplicate_to_added_entry`", "FIXED/REQUIRES ATTENTION",
+        "Yes",
+        "`--no-move-duplicate-100-to-700`, `--no-move-duplicate-245-to-246`",
+    ),
+    CategoryRow(
         "700/710/711 with a $t (title) but no name in $a (or a "
         "punctuation-only $a) -- an anonymous work's analytical title keyed "
         "as a name-title entry. Only when it has exactly one $t and no "

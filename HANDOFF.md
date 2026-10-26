@@ -8,6 +8,52 @@ current state and open items.
 
 ## Current state
 
+### DONE -- move duplicate 100 -> 700 and clean duplicate 245 -> 246 (2026-10-26, uncommitted on `main`)
+
+**Status: built, tested (567 pass), flake8 clean on the touched files; not yet
+committed.** A second+ 100/245 used to be deleted by
+`strip_duplicate_non_repeatable_fields`; now `move_duplicate_100_to_700` and
+`move_duplicate_245_to_246` run just before it (default on; opt-out
+`--no-move-duplicate-100-to-700` / `--no-move-duplicate-245-to-246`). Anything
+that doesn't qualify still falls through to the old removal. One log category,
+`moved_duplicate_to_added_entry` (FIXED/REQUIRES ATTENTION, always listed in
+full, category label POSSIBLE DATA LOSS; each entry says NO/POSSIBLE).
+
+- 100 -> 700: any extra 100 with a real `$a` that isn't an exact copy. `$6`
+  dropped (flagged), trailing "(editor)"-style role moved to `$e`, indicator 1
+  kept if 0/1/3 else guessed from a comma, indicator 2 blank; already-present
+  700 -> just dropped.
+- 245 -> 246 (`3 `): only when the extra has a real `$a`, no `$c` (a statement
+  of responsibility means a separate title/volume), no `$6`, isn't an edition
+  statement ("Abridged ed" -> 250), doesn't start with a stray "0 ", AND the
+  first 245 has no `$l/$v/$t/$6` (first is itself a mistagged uniform title or
+  series). Keeps `$a $b $f $g $h $i $n $p $5 $6 $8`; drops the rest, flagged.
+- GTU (`working/GTU_bibs.mrc`, 404,956 recs): 24 instances in 20 records moved
+  (14 x 100, 10 x 245); 12 extra 245s left for removal, 0 100s. Matches the
+  pre-build estimate exactly.
+- Tests: `TestMoveDuplicate100To700`, `TestMoveDuplicate245To246`,
+  `TestMoveDuplicatePipeline`. Docs: README table row and
+  `docs/REPAIR_CATEGORIES.md` (regenerated via the tool).
+
+### OPEN (phase 2, deliberately skipped) -- the 12 GTU duplicate 245s that are NOT variant titles (2026-10-26)
+
+Still removed by the generic pass (POSSIBLE DATA LOSS in the log). Each needs
+a different fix; about 15-20k tokens to do all of them:
+- **First 245 is really a uniform title/series, the removed one is the real
+  title** (`b12891526`, `b1349675x`, `b13547720`): keep the *other* 245 and
+  recode the first as 240 (when it ends `$l German`-style) or 490/830 (when it
+  has `$v`). Needs "which 245 to keep" logic, so the first-occurrence rule in
+  `strip_duplicate_non_repeatable_fields` must be bypassed for these.
+- **Mistagged other fields**: `b12218297` is a 260 (place : publisher / c1962),
+  `b14246077` is a 250 ("Abridged ed").
+- **Separate title/volume with its own `$c`** (`b15178390` "Q in context II",
+  `b16436428` "God speaks in my life", `b13947904` two `$n/$p`-only volume
+  titles with no `$a`): lower confidence; 246 or a 505 contents note.
+- **Near-duplicates / garbage, dropping is right** (`b14071654` mangled title
+  plus series; `b19022621`, `b19593478` same title re-encoded, 880-linked):
+  could be made explicit as a "dropped near-duplicate" log line instead of
+  POSSIBLE DATA LOSS.
+
 ### DONE -- trimmed log, `--log-zero` to restore zero-count headers (2026-10-26)
 
 **Status: built, tested (545 pass), flake8 clean, committed and pushed (`d4bf4ed`).**

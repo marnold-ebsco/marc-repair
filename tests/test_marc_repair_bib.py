@@ -5411,3 +5411,167 @@ class TestRecodePipeline:
         assert self._count(content, "field_removed_because_missing_a") == 2
         tags = [f.tag for f in out.fields]
         assert "730" not in tags and "700" not in tags and "650" not in tags
+
+
+class TestMoveDuplicate100To700:
+    def test_extra_100_becomes_700_after_existing_700s(self):
+        parsed = _rec(
+            m.Field_("100", "1 ", [("a", "Wolfe, Tom")]),
+            m.Field_("100", "1 ", [("a", "Kesey, Ken")]),
+            m.Field_("700", "1 ", [("a", "Other, A.")]),
+            m.Field_("856", "40", [("u", "http://x")]),
+        )
+        details = m.move_duplicate_100_to_700(parsed)
+        assert [f.tag for f in parsed.fields] == ["100", "700", "700", "856"]
+        assert parsed.fields[2].indicators == "1 "
+        assert parsed.fields[2].subfields == [("a", "Kesey, Ken")]
+        assert len(details) == 1 and "=100" in details[0] and "=700" in details[0]
+        assert details[0].endswith("NO DATA LOSS")
+
+    def test_blank_indicator_guessed_from_comma(self):
+        parsed = _rec(
+            m.Field_("100", "  ", [("a", "Hammer, Barry J")]),
+            m.Field_("100", "  ", [("a", "Hammer, Max")]),
+            m.Field_("100", "  ", [("a", "Shree Maa")]),
+        )
+        m.move_duplicate_100_to_700(parsed)
+        assert [f.indicators for f in parsed.fields[1:]] == ["1 ", "0 "]
+
+    def test_role_in_a_moves_to_e(self):
+        parsed = _rec(
+            m.Field_("100", "  ", [("a", "Daly, Pat (editor)")]),
+            m.Field_("100", "  ", [("a", "Hendren, Trista (editor)")]),
+        )
+        m.move_duplicate_100_to_700(parsed)
+        assert parsed.fields[1].subfields == [("a", "Hendren, Trista,"), ("e", "editor.")]
+
+    def test_link_subfield_dropped_and_flagged(self):
+        parsed = _rec(
+            m.Field_("100", "1 ", [("a", "Wang, C. H.")]),
+            m.Field_("100", "1 ", [("6", "880-01"), ("a", "Ye, Shan")]),
+        )
+        details = m.move_duplicate_100_to_700(parsed)
+        assert parsed.fields[1].subfields == [("a", "Ye, Shan")]
+        assert "dropped $6" in details[0] and details[0].endswith("POSSIBLE DATA LOSS")
+
+    def test_exact_copy_and_no_a_are_left_for_removal(self):
+        parsed = _rec(
+            m.Field_("100", "1 ", [("a", "Wolfe, Tom")]),
+            m.Field_("100", "1 ", [("a", "Wolfe, Tom")]),
+            m.Field_("100", "1 ", [("e", "author")]),
+        )
+        assert m.move_duplicate_100_to_700(parsed) == []
+        assert [f.tag for f in parsed.fields] == ["100", "100", "100"]
+
+    def test_already_present_as_700_is_just_dropped(self):
+        parsed = _rec(
+            m.Field_("100", "1 ", [("a", "Wolfe, Tom")]),
+            m.Field_("100", "1 ", [("a", "Kesey, Ken")]),
+            m.Field_("700", "1 ", [("a", "Kesey, Ken")]),
+        )
+        details = m.move_duplicate_100_to_700(parsed)
+        assert [f.tag for f in parsed.fields] == ["100", "700"]
+        assert "already present" in details[0]
+
+    def test_single_100_untouched(self):
+        parsed = _rec(m.Field_("100", "1 ", [("a", "Wolfe, Tom")]))
+        assert m.move_duplicate_100_to_700(parsed) == []
+
+
+class TestMoveDuplicate245To246:
+    @staticmethod
+    def _two(second, first=None):
+        return _rec(
+            m.Field_("245", "10", first or [("a", "A dictionary of church music /"),
+                                            ("c", "by J. R. Davidson")]),
+            m.Field_("245", "10", second),
+            m.Field_("250", "  ", [("a", "2nd ed.")]),
+        )
+
+    def test_variant_title_becomes_246(self):
+        parsed = self._two([("a", "Protestant church music")])
+        details = m.move_duplicate_245_to_246(parsed)
+        assert [f.tag for f in parsed.fields] == ["245", "246", "250"]
+        assert parsed.fields[1].indicators == "3 "
+        assert parsed.fields[1].subfields == [("a", "Protestant church music")]
+        assert len(details) == 1 and details[0].endswith("NO DATA LOSS")
+
+    def test_ab_and_n_p_kept_other_subfields_dropped(self):
+        parsed = self._two([("a", "Foundations :"), ("b", "newsmagazine"), ("k", "x")])
+        details = m.move_duplicate_245_to_246(parsed)
+        assert parsed.fields[1].subfields == [("a", "Foundations :"), ("b", "newsmagazine")]
+        assert "dropped $k" in details[0] and details[0].endswith("POSSIBLE DATA LOSS")
+
+    def test_lands_after_existing_246(self):
+        parsed = self._two([("a", "Alt title")])
+        parsed.fields.insert(2, m.Field_("246", "3 ", [("a", "Earlier")]))
+        m.move_duplicate_245_to_246(parsed)
+        assert [f.tag for f in parsed.fields] == ["245", "246", "246", "250"]
+        assert parsed.fields[2].subfields == [("a", "Alt title")]
+
+    @pytest.mark.parametrize("second", [
+        [("a", "New York :"), ("b", "Harcourt"), ("c", "c1962")],  # has $c
+        [("a", "Q in context II"), ("c", "Tiwald (ed.)")],  # separate title
+        [("a", "Abridged ed")],  # edition statement -> 250
+        [("a", "0 Choice & coercion :"), ("b", "birth control")],  # leaked indicator
+        [("6", "880-01"), ("a", "Title")],  # 880 link
+        [("n", "Volume 1,"), ("p", "The Royal Necropolis")],  # no $a
+    ])
+    def test_unsafe_second_245_is_left_for_removal(self, second):
+        parsed = self._two(second)
+        assert m.move_duplicate_245_to_246(parsed) == []
+        assert [f.tag for f in parsed.fields] == ["245", "245", "250"]
+
+    @pytest.mark.parametrize("first", [
+        [("a", "Offenbarungen."), ("l", "German")],  # first is a uniform title
+        [("a", "Studien ;"), ("v", "3.")],  # first is a series
+        [("6", "880-01"), ("a", "Title")],  # first is 880-linked
+    ])
+    def test_suspect_first_245_leaves_both_alone(self, first):
+        parsed = self._two([("a", "Real title")], first=first)
+        assert m.move_duplicate_245_to_246(parsed) == []
+
+    def test_already_present_as_246_is_just_dropped(self):
+        parsed = self._two([("a", "Protestant church music")])
+        parsed.fields.insert(2, m.Field_("246", "3 ", [("a", "Protestant Church Music")]))
+        details = m.move_duplicate_245_to_246(parsed)
+        assert [f.tag for f in parsed.fields] == ["245", "246", "250"]
+        assert "already present" in details[0]
+
+
+class TestMoveDuplicatePipeline:
+    def _run(self, tmp_path, *extra):
+        parsed = _rec(
+            m.Field_("001", None, None, content="997"),
+            m.Field_("008", None, None, content="x" * 40),
+            m.Field_("100", "1 ", [("a", "Wolfe, Tom")]),
+            m.Field_("100", "1 ", [("a", "Kesey, Ken")]),
+            m.Field_("245", "10", [("a", "Some title /"), ("c", "Tom Wolfe")]),
+            m.Field_("245", "10", [("a", "Alternate title")]),
+        )
+        src = tmp_path / "bib.mrc"
+        src.write_bytes(m.assemble_marc(parsed))
+        out = tmp_path / "out.mrc"
+        log = tmp_path / "run.log"
+        assert m.main([str(src), "-o", str(out), "--log", str(log), *extra]) == 0
+        content = _resolve_log(log).read_text(encoding="utf-8")
+        return content, m.read_intact_record(out.read_bytes().decode("utf-8"))
+
+    def test_on_by_default_and_logged_in_full(self, tmp_path):
+        content, out = self._run(tmp_path)
+        assert [f.tag for f in out.fields].count("245") == 1
+        assert [f.tag for f in out.fields].count("100") == 1
+        assert [f.tag for f in out.fields if f.tag in ("246", "700")] == ["246", "700"]
+        assert "FIXED/REQUIRES ATTENTION: moved_duplicate_to_added_entry" in content
+        assert "removed_non_repeatable_duplicate" not in content.split(
+            "CHECKS PERFORMED WITH NO FINDINGS")[0]
+        assert "to =700" in content and "to =246" in content
+
+    def test_flags_turn_moves_off_and_fall_back_to_removal(self, tmp_path):
+        content, out = self._run(
+            tmp_path, "--no-move-duplicate-100-to-700", "--no-move-duplicate-245-to-246"
+        )
+        assert [f.tag for f in out.fields if f.tag in ("246", "700")] == []
+        assert "moved_duplicate_to_added_entry" not in content.split(
+            "CHECKS PERFORMED WITH NO FINDINGS")[0]
+        assert "removed duplicate =245" in content and "removed duplicate =100" in content
