@@ -271,8 +271,7 @@ BIB_ROWS = [
         "so the title is kept instead of lost",
         "Yes (`--no-recode-title-only-7xx`)",
         "`recoded_title_only_7xx_to_730`", "FIXED/REQUIRES ATTENTION",
-        "No (header + count always shown; full per-record list via "
-        "--log-full recoded_title_only_7xx_to_730)",
+        "**Yes** (one comma-delimited line of record identifiers)",
         "`--no-recode-title-only-7xx`",
     ),
     CategoryRow(
@@ -283,8 +282,7 @@ BIB_ROWS = [
         "below, so the heading is kept instead of lost",
         "Yes (`--no-recode-6xx-b-to-a`)",
         "`recoded_6xx_b_to_a`", "FIXED/REQUIRES ATTENTION",
-        "No (header + count always shown; full per-record list via "
-        "--log-full recoded_6xx_b_to_a)",
+        "**Yes**",
         "`--no-recode-6xx-b-to-a`",
     ),
     CategoryRow(

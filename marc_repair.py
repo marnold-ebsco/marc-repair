@@ -7514,6 +7514,8 @@ _ALWAYS_FULL_CATEGORIES = {
     "merged_duplicate_040",
     "removed_non_repeatable_duplicate",
     "field_removed_because_missing_a",
+    "recoded_6xx_b_to_a",
+    "recoded_title_only_7xx_to_730",
     "deduped_010_lccn",
     "removed_880_missing_a",
     "removed_invalid_subfield",
@@ -7558,6 +7560,14 @@ _ALWAYS_FULL_CATEGORIES = {
 _SUMMARIZE_NO_DATA_LOSS_ENTRIES = {
     "removed_non_repeatable_duplicate",
     "deduped_010_lccn",
+}
+
+#: Categories listed in full as just one comma-delimited line of record
+#: identifiers (bib numbers; "record N" for one with no identifier),
+#: de-duplicated and in file order, instead of one detail line per
+#: record -- see `write_log`.
+_ID_LIST_ONLY_CATEGORIES = {
+    "recoded_title_only_7xx_to_730",
 }
 
 
@@ -7844,7 +7854,12 @@ def write_log(
             if tally is not None:
                 _write_non_standard_blocks(fh, group, tally)
             elif category in full_categories and label != "INFORMATIONAL":
-                if category in _SUMMARIZE_NO_DATA_LOSS_ENTRIES:
+                if category in _ID_LIST_ONLY_CATEGORIES:
+                    ids = dict.fromkeys(
+                        e.record_id or f"record {e.record_idx}" for e in group
+                    )
+                    fh.write(", ".join(ids) + "\n")
+                elif category in _SUMMARIZE_NO_DATA_LOSS_ENTRIES:
                     no_loss_count = sum(1 for e in group if "NO DATA LOSS" in e.detail)
                     if no_loss_count:
                         fh.write(
@@ -8731,9 +8746,9 @@ def main(argv: list[str] | None = None) -> int:
         "name in $a as a 730 (Added Entry--Uniform Title, $t moved to "
         "$a). By default this runs BEFORE --strip-missing-required-a, "
         "so the title is kept instead of the field being removed; pass "
-        "this flag to leave such fields for that removal instead. Header "
-        "+ count always logged (see --log); full per-record list via "
-        "--log-full recoded_title_only_7xx_to_730",
+        "this flag to leave such fields for that removal instead. The "
+        "--log lists the recoded records' identifiers as one "
+        "comma-delimited line",
     )
     parser.add_argument(
         "--no-recode-6xx-b-to-a",
@@ -8744,9 +8759,8 @@ def main(argv: list[str] | None = None) -> int:
         "a $b so that the $b becomes $a. By default this runs BEFORE "
         "--strip-missing-required-a, so the heading is kept instead of "
         "the field being removed; pass this flag to leave such fields "
-        "for that removal instead. Header + count always logged (see "
-        "--log); full per-record list via --log-full "
-        "recoded_6xx_b_to_a",
+        "for that removal instead. Every recoded record is listed in "
+        "the --log",
     )
     parser.add_argument(
         "--no-strip-missing-required-a",
