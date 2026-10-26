@@ -175,6 +175,29 @@ def _oversized_field_record(leader: str, before: list, after: list) -> bytes:
     return raw.replace(needle, b"x" * 10000)
 
 
+def _wrapped_length_record(leader: str, before: list, big_tag: str, big_content: str, after: list) -> bytes:
+    """Build a record with one field over 9999 bytes whose directory length
+    is wrapped to 4 digits -- the real defect behind GTU's b1929265x (a
+    10,033-byte 505). Every later entry's start still reflects the true
+    layout, which is what lets parse_directory recover the real length.
+    assemble_marc can't build this (the field can't be declared), so the
+    record is assembled by hand."""
+    def chunk(f):
+        return f.delimited()  # already includes the field terminator
+    pieces = [(f.tag, chunk(f)) for f in before]
+    pieces.append((big_tag, big_content + m.FIELDTERM))
+    pieces += [(f.tag, chunk(f)) for f in after]
+    entries, pos = [], 0
+    for tag, c in pieces:
+        entries.append(f"{tag}{len(c) % 10000:04d}{pos:05d}")
+        pos += len(c)
+    directory = "".join(entries) + m.FIELDTERM
+    base = 24 + len(directory)
+    total = base + pos + 1
+    new_leader = f"{total:05d}" + leader[5:12] + f"{base:05d}" + leader[17:]
+    return (new_leader + directory + "".join(c for _, c in pieces) + "").encode("utf-8")
+
+
 # ---------------------------------------------------------------------------
 # Bib pipeline: one synthetic record per category
 # ---------------------------------------------------------------------------
@@ -752,6 +775,37 @@ def build_bib_records() -> list[bytes]:
             ("z", "Available online"),
         ]),
     ]))
+
+    # collapsed_oversized_field_escapes: a 505 over 9999 bytes because
+    # nearly every character is wrapped in a spurious subscript/reset
+    # escape pair (modelled on GTU's b1929265x) -- shrinks to fit once
+    # those are collapsed, nothing truncated.
+    esc = ""
+    wrapped = f"{esc}b9{esc}s{esc}(3G{esc}(B" * 1000
+    records.append(_wrapped_length_record(
+        _BIB_LEADER,
+        [
+            m.Field_("001", None, None, content="ks-oversized-collapse"),
+            m.Field_("008", None, None, content="x" * 40),
+            m.Field_("245", "00", [("a", "Oversized note that collapses.")]),
+        ],
+        "505", "8 " + m.SUBFIELD + "a" + wrapped + " -- Last chapter.",
+        [m.Field_("650", " 0", [("a", "Kept after the oversized field.")])],
+    ))
+
+    # truncated_oversized_field: a 505 over 9999 bytes that no escape
+    # collapse can help -- cut at the last " -- " title separator that fits.
+    long_toc = " -- ".join(f"Chapter {i}" for i in range(3000))
+    records.append(_wrapped_length_record(
+        _BIB_LEADER,
+        [
+            m.Field_("001", None, None, content="ks-oversized-truncate"),
+            m.Field_("008", None, None, content="x" * 40),
+            m.Field_("245", "00", [("a", "Oversized note that truncates.")]),
+        ],
+        "505", "8 " + m.SUBFIELD + "a" + long_toc,
+        [m.Field_("650", " 0", [("a", "Kept after the oversized field.")])],
+    ))
 
     return records
 

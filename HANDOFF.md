@@ -8,6 +8,39 @@ current state and open items.
 
 ## Current state
 
+### DONE -- oversized fields are collapsed, then truncated, instead of dropped (2026-10-26, on `main`)
+
+**Status: built, tested (513 pass), committed and pushed.** Not yet re-run
+against the full GTU corpus -- only the isolated record
+(`working/single_1456853630.mrc`, 001 `1456853630` / `.b1929265x`).
+
+Supersedes the old `dropped_oversized_field` behavior (see
+`docs/HANDOFF_HISTORY.md`): a field whose real, delimiter-bounded content is
+over 9999 bytes (recovered by `parse_directory` from a wrapped directory
+length) is now shrunk to fit in `_read_intact_at` via
+`_shrink_oversized_content`, stopping as soon as it fits:
+1. merge redundant `ESC(B` + same-set re-designations (lossless);
+2. strip spurious `ESC b|p <digit> ESC s` pairs (drops a subscript/superscript
+   digit -- a producer artifact), then merge again;
+3. truncate (`_truncate_to_fit`) at the last ` --`, else last subfield
+   delimiter, else a hard cut; never splits a multibyte char or ESC sequence,
+   appends `ESC(B` if the kept text ends in a non-ASCII escape state.
+
+Log categories: `collapsed_oversized_field_escapes` (new, POSSIBLE DATA LOSS,
+FIXED/REQUIRES ATTENTION) and `truncated_oversized_field` (the renamed
+`dropped_oversized_field`, DATA LOSS). `ParsedRecord` carries
+`collapsed_oversized_fields` / `truncated_oversized_fields`.
+
+b1929265x's 505: 10,033 -> 3,672 bytes by collapse alone (947 pairs removed),
+record keeps all 42 fields. Tests: `tests/test_oversized_field.py`; kitchen
+sink gained `ks-oversized-collapse` and `ks-oversized-truncate`
+(`_wrapped_length_record` in `build_kitchen_sink.py` builds the wrapped
+directory length). `kitchen_sink_bib.log` / `_repaired.mrc` were regenerated
+from a plain default run, which also refreshed content that had gone stale.
+Open: the category isn't in `docs/REPAIR_CATEGORIES.md` (the generator never
+listed `dropped_oversized_field` either); run a full GTU re-run to confirm
+nothing else changes.
+
 ### DONE -- log detail text condensed / `=TAG` labels (2026-10-23, on `main`: `68bf938`, `04d91c0`, `f9993f0`)
 
 **Status: built, tested (509 pass), committed and pushed.**

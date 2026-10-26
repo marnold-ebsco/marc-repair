@@ -373,14 +373,19 @@ class ParsedRecord:
     # is so the caller (main()) can log it without the wrapper needing to
     # know anything about logging.
     reattached_orphaned_fields: list[tuple[str, str]] = field(default_factory=list)
-    # (tag, true_length, content_preview) for each field whose real,
-    # delimiter-bounded content turned out longer than ISO 2709's 4-digit
-    # directory length slot can ever declare (max 9999 bytes) -- there is
-    # no valid way to write this field back out either, so `_read_intact_at`
-    # drops it entirely instead of corrupting the directory further.
-    # Carried here the same way indicator_fixes is so the caller can log
-    # it (see dropped_oversized_field).
-    dropped_oversized_fields: list[tuple[str, int, str]] = field(default_factory=list)
+    # Fields whose real, delimiter-bounded content turned out longer than
+    # ISO 2709's 4-digit directory length slot can ever declare (max 9999
+    # bytes) -- there is no valid way to write such a field back out, so
+    # `_read_intact_at` shrinks it, first losslessly/near-losslessly by
+    # collapsing redundant MARC-8 escapes (see `_collapse_oversized_content`)
+    # and, only if that isn't enough, by truncating. Carried here the same
+    # way indicator_fixes is so the caller can log them.
+    # (tag, bytes_before, bytes_after, escape_pairs_stripped, preview)
+    collapsed_oversized_fields: list[tuple[str, int, int, int, str]] = field(
+        default_factory=list
+    )
+    # (tag, bytes_before, bytes_after, dropped_tail_preview)
+    truncated_oversized_fields: list[tuple[str, int, int, str]] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -497,7 +502,7 @@ def parse_directory(rest: str) -> tuple[int, list[DirEntry]]:
                 # much longer, recover its true length instead of
                 # abandoning every entry after it (which otherwise
                 # silently drops the rest of the record -- see
-                # dropped_oversized_field, which is what actually
+                # truncated_oversized_field, which is what actually
                 # discards the one oversized field once a real
                 # delimiter-bounded length confirms it).
                 recovered_length = (
@@ -729,6 +734,84 @@ def _pad_short_indicators(content: str) -> tuple[str, int]:
     return content, 0
 
 
+_MAX_FIELD_BYTES = 9999  # ISO 2709's 4-digit directory length slot, terminator included
+
+# `ESC b <digit> ESC s` (and the superscript `ESC p` form): a one-character
+# subscript/superscript run immediately reset to ASCII. One real GTU export
+# wrapped nearly every character of a Hebrew 505 in a pair like this,
+# bloating it past the 9999-byte limit.
+_SPURIOUS_SCRIPT_PAIR_RE = re.compile(r"\x1b[bp][0-9]\x1bs")
+# A G0 set designation, then the same set designated again right after an
+# ASCII reset with nothing in between -- the reset/re-designation is a no-op.
+_REDUNDANT_G0_RESET_RE = re.compile(r"(\x1b\((.)[^\x1b\x1f\x1e]*)\x1b\(B\x1b\(\2")
+_TRAILING_PARTIAL_ESCAPE_RE = re.compile(r"\x1b[^\x1b\x1f\x1e]{0,2}\Z")
+_ASCII_RESET = "\x1b(B"
+
+
+def _field_byte_length(content: str, encoding: str) -> int:
+    """Directory-slot length of a field: encoded bytes plus its terminator."""
+    return len(content.encode(encoding, errors="surrogateescape")) + 1
+
+
+def _merge_redundant_g0_resets(content: str) -> str:
+    while True:
+        merged = _REDUNDANT_G0_RESET_RE.sub(lambda mo: mo.group(1), content)
+        if merged == content:
+            return content
+        content = merged
+
+
+def _truncate_to_fit(content: str, encoding: str) -> str:
+    """Cut `content` to at most 9998 encoded bytes (leaving room for the
+    terminator), at the nicest boundary available: the last `--` title
+    separator, else the last subfield delimiter, else a hard cut. Never
+    splits a multibyte character or an ESC sequence, and re-asserts ASCII
+    afterward if the kept text ended inside a non-ASCII escape state."""
+    budget = _MAX_FIELD_BYTES - 1 - len(_ASCII_RESET)  # reserve a possible reset
+    raw = content.encode(encoding, errors="surrogateescape")[:budget]
+    cut = None
+    for _ in range(4):
+        try:
+            cut = raw.decode(encoding)
+            break
+        except UnicodeDecodeError:
+            raw = raw[:-1]
+    if cut is None:
+        cut = raw.decode(encoding, errors="surrogateescape")
+    # prefer a clean boundary, but only if it keeps most of what fit
+    floor = len(cut) // 2
+    sep = cut.rfind("--")
+    if sep >= floor:
+        cut = cut[:sep].rstrip() + " --" if cut[:sep].rstrip() else cut
+    else:
+        sub = cut.rfind(SUBFIELD)
+        if sub >= floor:
+            cut = cut[:sub]
+    cut = _TRAILING_PARTIAL_ESCAPE_RE.sub("", cut)
+    last_esc = max(cut.rfind(_ASCII_RESET), cut.rfind("\x1bs"))
+    if ESCAPE in cut and cut.rfind(ESCAPE) > last_esc:
+        cut += _ASCII_RESET
+    return cut
+
+
+def _shrink_oversized_content(content: str, encoding: str) -> tuple[str, int, bool]:
+    """Bring an over-9999-byte field back under the directory limit.
+    Tries, in order, stopping as soon as it fits: merging redundant G0
+    reset/re-designate escapes (lossless), stripping spurious one-character
+    subscript/superscript pairs (technically drops a digit, but is a
+    producer artifact), merging again, and finally truncating. Returns
+    (new_content, escape_pairs_stripped, truncated)."""
+    stripped = 0
+    content = _merge_redundant_g0_resets(content)
+    if _field_byte_length(content, encoding) <= _MAX_FIELD_BYTES:
+        return content, stripped, False
+    stripped = len(_SPURIOUS_SCRIPT_PAIR_RE.findall(content))
+    content = _merge_redundant_g0_resets(_SPURIOUS_SCRIPT_PAIR_RE.sub("", content))
+    if _field_byte_length(content, encoding) <= _MAX_FIELD_BYTES:
+        return content, stripped, False
+    return _truncate_to_fit(content, encoding), stripped, True
+
+
 def _read_intact_at(
     text: str,
     start: int,
@@ -773,24 +856,35 @@ def _read_intact_at(
     pos = term_idx + 1
     fields: list[Field_] = []
     indicator_fixes: list[tuple[str, int, str, str]] = []
-    dropped_oversized_fields: list[tuple[str, int, str]] = []
+    collapsed_oversized_fields: list[tuple[str, int, int, int, str]] = []
+    truncated_oversized_fields: list[tuple[str, int, int, str]] = []
+    encoding = "utf-8" if leader[9:10] == "a" else "latin-1"
     for entry in entries:
         end = text.find(FIELDTERM, pos)
         if end == -1:
             return None
         content = text[pos:end]
-        if entry.length > 9999:
+        if entry.length > _MAX_FIELD_BYTES:
             # A real, uncorrected directory entry can never have a
             # length over 9999 -- ISO 2709's length slot is only 4
             # digits. This only happens when `parse_directory` recovered
             # a field whose real, delimiter-bounded content is itself
             # that long (see its own comment); there's no way to declare
             # that length in a rebuilt directory either, so the field is
-            # dropped here rather than left to desync everything after
-            # it or silently truncated.
-            dropped_oversized_fields.append((entry.tag, len(content), content[:200]))
-            pos = end + 1
-            continue
+            # shrunk to fit (collapsed, else truncated) rather than left
+            # to desync everything after it or break the rebuild.
+            before = _field_byte_length(content, encoding)
+            original = content
+            content, stripped, truncated = _shrink_oversized_content(content, encoding)
+            after = _field_byte_length(content, encoding)
+            if truncated:
+                truncated_oversized_fields.append(
+                    (entry.tag, before, after, original[len(content):][:200])
+                )
+            else:
+                collapsed_oversized_fields.append(
+                    (entry.tag, before, after, stripped, content[:200])
+                )
         # a non-numeric tag (e.g. "24A" from directory corruption) can't
         # be a real control tag -- those are always 001-009 -- so treat
         # it as a data field, the shape real corruption overwhelmingly
@@ -825,7 +919,8 @@ def _read_intact_at(
 
     parsed = ParsedRecord(leader=leader, entries=entries, fields=fields)
     parsed.indicator_fixes = indicator_fixes
-    parsed.dropped_oversized_fields = dropped_oversized_fields
+    parsed.collapsed_oversized_fields = collapsed_oversized_fields
+    parsed.truncated_oversized_fields = truncated_oversized_fields
     return parsed, pos
 
 
@@ -6103,7 +6198,8 @@ _FIXED_REQUIRES_ATTENTION = {
     "fixed_008_length",
     "fixed_holdings_008_length",
     "removed_invalid_subfield",
-    "dropped_oversized_field",
+    "truncated_oversized_field",
+    "collapsed_oversized_field_escapes",
     "field_removed_because_missing_a",
     "added_field",
     "holdings_leader_byte_defaulted",
@@ -6436,11 +6532,19 @@ _CHECK_DESCRIPTIONS: dict[str, str] = {
     "removed.",
     "recoded_852_b_to_i": "852 had a second $b positioned after $h -- recoded to $i (it's the "
     "cutter/copy number that goes with $h, just miscoded).",
-    "dropped_oversized_field": "A field's real, delimiter-bounded content is longer than 9999 bytes -- too "
+    "truncated_oversized_field": "A field's real, delimiter-bounded content is longer than 9999 bytes -- too "
     "long for ISO 2709's 4-digit directory length field to ever declare, so the "
-    "source record's own directory entry for it was already a lie. The field is "
-    "dropped so the rest of the record, including everything after it, still "
+    "source record's own directory entry for it was already a lie. Collapsing "
+    "redundant MARC-8 escapes (see collapsed_oversized_field_escapes) did not "
+    "make it fit, so the field was cut at the last `--` or subfield boundary "
+    "that fits; the rest of the record, including everything after it, still "
     "recovers.",
+    "collapsed_oversized_field_escapes": "A field's real content was longer than 9999 bytes (see "
+    "truncated_oversized_field) but fit once redundant MARC-8 escapes were "
+    "collapsed: adjacent same-set escape reset/re-designations were merged and "
+    "spurious one-character subscript/superscript escape pairs (ESC b/p, digit, "
+    "ESC s) were removed. Nothing else was changed; the field's own text is "
+    "kept in full.",
 }
 
 #: Each category's own data-loss call (DATA LOSS/POSSIBLE DATA LOSS/NO DATA LOSS) -- printed
@@ -6508,7 +6612,8 @@ _CHECK_DATA_LOSS: dict[str, str] = {
     "reattached_orphaned_field": "NO DATA LOSS",
     "removed_empty_852_subfield": "NO DATA LOSS",
     "recoded_852_b_to_i": "NO DATA LOSS",
-    "dropped_oversized_field": "DATA LOSS",
+    "truncated_oversized_field": "DATA LOSS",
+    "collapsed_oversized_field_escapes": "POSSIBLE DATA LOSS",
     "non_standard_marc_fields": "NO DATA LOSS",
 }
 
@@ -6549,7 +6654,8 @@ _ALWAYS_FULL_CATEGORIES = {
     "removed_880_missing_a",
     "removed_invalid_subfield",
     "removed_untranscodable_subfield",
-    "dropped_oversized_field",
+    "truncated_oversized_field",
+    "collapsed_oversized_field_escapes",
     "removed_bad_call_number",
     "removed_extra_852_b",
     "incomplete_852",
@@ -7036,7 +7142,8 @@ _HOLDINGS_ALWAYS_ACTIVE_CATEGORIES = {
     "incomplete_852",
     "split_holdings_multiple_852",
     "oversized_sentinel_fixed",
-    "dropped_oversized_field",
+    "truncated_oversized_field",
+    "collapsed_oversized_field_escapes",
 }
 
 
@@ -7347,13 +7454,22 @@ def repair_holdings_records(
                     f"padded {spaces_added} space(s) into short indicators on ={tag} "
                     f"(was {original_indicators!r}, first subfield {preview!r})",
                 )
-            for tag, true_length, preview in parsed.dropped_oversized_fields:
+            for tag, before, after, stripped, preview in parsed.collapsed_oversized_fields:
                 rec_id = record_identifier(parsed)
                 log(
-                    "dropped_oversized_field", True, i, rec_id,
-                    f"={tag} was {true_length} bytes, over ISO 2709's 9999-byte "
-                    f"directory length limit -- field dropped, rest of the record "
-                    f"recovered (preview: {preview!r})",
+                    "collapsed_oversized_field_escapes", True, i, rec_id,
+                    f"={tag} was {before} bytes, over ISO 2709's 9999-byte "
+                    f"directory length limit -- collapsed to {after} bytes "
+                    f"({stripped} spurious escape pair(s) removed; "
+                    f"preview: {preview!r})",
+                )
+            for tag, before, after, tail in parsed.truncated_oversized_fields:
+                rec_id = record_identifier(parsed)
+                log(
+                    "truncated_oversized_field", True, i, rec_id,
+                    f"={tag} was {before} bytes, over ISO 2709's 9999-byte "
+                    f"directory length limit -- truncated to {after} bytes "
+                    f"(dropped tail starts: {tail!r})",
                 )
             if ESCAPE in rec_text:
                 rec_id = record_identifier(parsed)
@@ -8577,13 +8693,22 @@ def main(argv: list[str] | None = None) -> int:
                 for tag, detail in parsed.reattached_orphaned_fields:
                     rec_id = record_identifier(parsed)
                     log("reattached_orphaned_field", True, i, rec_id, detail)
-                for tag, true_length, preview in parsed.dropped_oversized_fields:
+                for tag, before, after, stripped, preview in parsed.collapsed_oversized_fields:
                     rec_id = record_identifier(parsed)
                     log(
-                        "dropped_oversized_field", True, i, rec_id,
-                        f"={tag} was {true_length} bytes, over ISO 2709's 9999-byte "
-                        f"directory length limit -- field dropped, rest of the record "
-                        f"recovered (preview: {preview!r})",
+                        "collapsed_oversized_field_escapes", True, i, rec_id,
+                        f"={tag} was {before} bytes, over ISO 2709's 9999-byte "
+                        f"directory length limit -- collapsed to {after} bytes "
+                        f"({stripped} spurious escape pair(s) removed; "
+                        f"preview: {preview!r})",
+                    )
+                for tag, before, after, tail in parsed.truncated_oversized_fields:
+                    rec_id = record_identifier(parsed)
+                    log(
+                        "truncated_oversized_field", True, i, rec_id,
+                        f"={tag} was {before} bytes, over ISO 2709's 9999-byte "
+                        f"directory length limit -- truncated to {after} bytes "
+                        f"(dropped tail starts: {tail!r})",
                     )
                 if args.fix_marc8_diacritic_escapes:
                     rec_id = record_identifier(parsed)
@@ -8948,7 +9073,7 @@ def main(argv: list[str] | None = None) -> int:
         "unfixed_non_numeric_tag", "invalid_indicator_value", "invalid_bibliographic_level",
         "leader_entry_map_fixed", "oversized_sentinel_fixed", "duplicate_identifier",
         "removed_null_identifier", "suspect_marc8_escape", "suspect_hex_encoded_marc8",
-        "removed_010_whitespace_a", "removed_880_missing_a", "dropped_oversized_field",
+        "removed_010_whitespace_a", "removed_880_missing_a", "truncated_oversized_field", "collapsed_oversized_field_escapes",
         "bib_856_missing_u",
     }
     if args.fix_bad_indicators:

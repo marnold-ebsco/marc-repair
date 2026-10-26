@@ -1,7 +1,15 @@
-=== RUN: started 2026-10-18T19:34:55Z, finished 2026-10-18T19:34:56Z, elapsed 0.18s ===
-Source filename: kitchen_sink_bib.mrc (51 records)
+=== RUN: started 2026-10-26T13:03:05Z, finished 2026-10-26T13:03:05Z, elapsed 0.48s ===
+Source filename: kitchen_sink_bib.mrc (52 records)
 Repaired filename: _tmp_repaired.mrc (49 records)
-Problem filename: _tmp_repaired_error.mrc (2 records)
+Problem filename: _tmp_repaired_error.mrc (3 records)
+
+=== UNFIXABLE: record_identifier_required ===
+=== Bib record has no identifier for its --source-system: Sierra/iii
+===   migrations require a 907 $a (no fallback to 001), any other system
+===   requires a 001. A record without one cannot be loaded -- written
+===   unchanged to the _error file instead of the main output.
+=== DATA LOSS ===
+=== 0 record(s) ===
 
 === UNFIXABLE: unfixable ===
 === Record has no consistent directory in either parsing mode (or a
@@ -9,11 +17,17 @@ Problem filename: _tmp_repaired_error.mrc (2 records)
 ===   only) could not be structurally parsed at all, or a split copy's
 ===   assembled length can't be represented in ISO 2709's fixed-width
 ===   leader/directory -- written unchanged to the _error file instead of the
-===   main output. These records cannot be loaded.
+===   main output. These records cannot be loaded. By default, also includes a
+===   record whose true length exceeds 99999 bytes (see
+===   oversized_sentinel_fixed): spec-valid MARC21, but known to abort FOLIO
+===   Data Import's entire batch with no job log, so it's diverted here
+===   instead of the main output too, unless --allow-oversized-sentinel is
+===   given.
 === DATA LOSS ===
-=== 2 record(s) ===
-	record 36	written to /home/marnold/scratch/marc_repair/_tmp_repaired_error.mrc unchanged: tag 500: field is 10005 bytes, but the directory's length field is only 4 digits (max 9999) -- can't represent this field in ISO 2709 at all
-	record 50	written to /home/marnold/scratch/marc_repair/_tmp_repaired_error.mrc unchanged: no consistent directory found for this record at all
+=== 3 record(s) ===
+	record 35 (ks-oversized-ok)	record is 108364 bytes, requiring the leader's MARC21 oversized-length sentinel (99999) -- known to make FOLIO Data Import abort the whole job with no log -- written to _tmp_repaired_error.mrc unchanged instead of the main output
+	record 36	written to _tmp_repaired_error.mrc unchanged: =500: field is 10005 bytes, but the directory's length field is only 4 digits (max 9999) -- can't represent this field in ISO 2709 at all
+	record 51	written to _tmp_repaired_error.mrc unchanged: no consistent directory found for this record at all
 
 === FIXED/REQUIRES ATTENTION: added_default_008 ===
 === Record had no 008 -- a fixed generic placeholder was inserted.
@@ -37,6 +51,17 @@ Problem filename: _tmp_repaired_error.mrc (2 records)
 	record 36 (ks-oversized-bad)	added placeholder 245 (was missing): 00 $aNo title
 	record 37 (ks-suspectescape)	added placeholder 245 (was missing): 00 $aNo title (heuristic: looks like an abandoned/test record -- 1 substantive field(s), no author/subject access points)
 
+=== FIXED/REQUIRES ATTENTION: collapsed_oversized_field_escapes ===
+=== A field's real content was longer than 9999 bytes (see
+===   truncated_oversized_field) but fit once redundant MARC-8 escapes were
+===   collapsed: adjacent same-set escape reset/re-designations were merged
+===   and spurious one-character subscript/superscript escape pairs (ESC b/p,
+===   digit, ESC s) were removed. Nothing else was changed; the field's own
+===   text is kept in full.
+=== POSSIBLE DATA LOSS ===
+=== 1 record(s) ===
+	record 49 (ks-oversized-collapse)	=505 was 12022 bytes, over ISO 2709's 9999-byte directory length limit -- collapsed to 1028 bytes (1000 spurious escape pair(s) removed; preview: '8 \x1fa\x1b(3GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG')
+
 === FIXED/REQUIRES ATTENTION: deduped_010_lccn ===
 === A record had more than one 010 (LCCN) field, or a single 010 with more
 ===   than one $a -- merged into exactly one 010. Every $a on the record is
@@ -54,24 +79,12 @@ Problem filename: _tmp_repaired_error.mrc (2 records)
 	record 16 (ks-010dup-a-diff-z-same)	merged 2 =010 field(s) [  $a2018031265$z99999999;   $a2018028463$z99999999] into one (  $a2018031265$z99999999) -- kept $a2018031265, DROPPED $a2018028463 -- DATA LOSS
 	record 20 (ks-010-three-way)	merged 3 =010 field(s) [  $a2018031265;   $a2018028463$z11111111;   $z22222222] into one (  $a2018031265$z11111111$z22222222) -- kept $a2018031265, DROPPED $a2018028463 -- DATA LOSS
 
-=== FIXED/REQUIRES ATTENTION: dropped_oversized_field ===
-=== A field's real, delimiter-bounded content is longer than 9999 bytes --
-===   too long for ISO 2709's 4-digit directory length field to ever declare,
-===   so the source record's own directory entry for it was already a lie. The
-===   field is dropped so the rest of the record, including everything after
-===   it, still recovers.
-=== DATA LOSS ===
-=== 0 record(s) ===
-
 === FIXED/REQUIRES ATTENTION: field_removed_because_missing_a ===
 === A heading/added-entry field (or a holdings caption field) lacked a non-
 ===   empty, non-punctuation-only $a -- the whole field removed.
 === POSSIBLE DATA LOSS ===
-=== 4 record(s) ===
+=== 1 record(s) ===
 	record 10 (ks-missinga)	removed =650   0$zUnited States.	(missing required $a; content discarded)
-	record 47 (u57283)	removed =130  0 $tNew Princeton encyclopedia of poetry and poetics.$kSelections.	(missing required $a; content discarded)
-	record 48 (u581107)	removed =650   7$governors.	(missing required $a; content discarded)
-	record 49 (u581759)	removed =650   0$zUnited States.	(missing required $a; content discarded)
 
 === FIXED/REQUIRES ATTENTION: fixed_008_length ===
 === 008 wasn't exactly 40 characters -- padded (no loss) or truncated
@@ -128,7 +141,19 @@ Problem filename: _tmp_repaired_error.mrc (2 records)
 ===   the record still transcodes normally.
 === DATA LOSS ===
 === 1 record(s) ===
-	record 2 (ks-marc8fail)	tag 500 $a (invalid multibyte character encoding); context: '' >>> 'Truncated escape\x1b' <<< ''; dropped $a and the rest of =500 with it (nothing usable without it)
+	record 2 (ks-marc8fail)	=500 $a (invalid multibyte character encoding); context: '' >>> 'Truncated escape\x1b' <<< ''; dropped $a and the rest of =500 with it (nothing usable without it)
+
+=== FIXED/REQUIRES ATTENTION: truncated_oversized_field ===
+=== A field's real, delimiter-bounded content is longer than 9999 bytes --
+===   too long for ISO 2709's 4-digit directory length field to ever declare,
+===   so the source record's own directory entry for it was already a lie.
+===   Collapsing redundant MARC-8 escapes (see
+===   collapsed_oversized_field_escapes) did not make it fit, so the field was
+===   cut at the last `--` or subfield boundary that fits; the rest of the
+===   record, including everything after it, still recovers.
+=== DATA LOSS ===
+=== 1 record(s) ===
+	record 50 (ks-oversized-truncate)	=505 was 46891 bytes, over ISO 2709's 9999-byte directory length limit -- truncated to 9989 bytes (dropped tail starts: ' Chapter 673 -- Chapter 674 -- Chapter 675 -- Chapter 676 -- Chapter 677 -- Chapter 678 -- Chapter 679 -- Chapter 680 -- Chapter 681 -- Chapter 682 -- Chapter 683 -- Chapter 684 -- Chapter 685 -- Chap')
 
 === NEEDS REVIEW: bib_856_missing_u ===
 === A bib record's 856 (Electronic Location and Access) field has no $u
@@ -143,13 +168,13 @@ Problem filename: _tmp_repaired_error.mrc (2 records)
 ===   source record, not something this migration introduced.
 === NO DATA LOSS ===
 === 1 record(s) ===
-	record 38 (ks-doubledproxy)	tag 856 $u has a literally duplicated proxy prefix: 'https://ezproxy.example.edu/login?url=https://ezproxy.example.edu/login?url=http://vendor.example.com/book/123'
+	record 38 (ks-doubledproxy)	=856 $u has a literally duplicated proxy prefix: 'https://ezproxy.example.edu/login?url=https://ezproxy.example.edu/login?url=http://vendor.example.com/book/123'
 
 === NEEDS REVIEW: invalid_indicator_value ===
 === An indicator held a value outside MARC21's defined set for that field.
 === NO DATA LOSS ===
 === 1 record(s) ===
-	record 39 (ks-badindicatorvalue)	tag 245 indicators 'X0': indicator 1 is 'X', not a digit or blank
+	record 39 (ks-badindicatorvalue)	=245 indicators 'X0': indicator 1 is 'X', not a digit or blank
 
 === NEEDS REVIEW: suspect_hex_encoded_marc8 ===
 === A field (in practice, always an 880) contains one or more "{xxxxxx}"
@@ -158,11 +183,12 @@ Problem filename: _tmp_repaired_error.mrc (2 records)
 ===   wrapped (sometimes twice) in the source records, before this tool ever
 ===   saw them; never auto-fixed, since the decode is boundary-sensitive and
 ===   there's no safe way to guarantee exact byte alignment automatically.
-===   Each finding names whether its own decoded preview looks recoverable or
-===   not -- see each finding's own NO DATA LOSS/POSSIBLE DATA LOSS call.
-===   Detect-only, though, so this tool never makes it worse: it's reporting
-===   damage that already happened upstream, before the file ever reached this
-===   tool.
+===   Each finding says whether its decoded preview looks recovered or shows
+===   POSSIBLE DATA LOSS (doesn't decode to valid MARC-8/text; may be
+===   truncated or boundary-shifted). A recovered preview's byte alignment is
+===   not guaranteed, hence "verify against source". Detect-only, though, so
+===   this tool never makes it worse: it's reporting damage that already
+===   happened upstream, before the file ever reached this tool.
 === POSSIBLE DATA LOSS ===
 === 0 record(s) ===
 
@@ -170,13 +196,14 @@ Problem filename: _tmp_repaired_error.mrc (2 records)
 === A MARC-8 script-switching escape (Hebrew/Arabic/Cyrillic/Greek/CJK)
 ===   produces only a single character, welded directly between two ASCII
 ===   letters with no word boundary -- almost certainly a miskeyed accented
-===   letter already present in the source records, not something this
-===   migration introduced, and not real embedded foreign-script text; never
-===   auto-fixed, since there's no safe way to guess the intended character.
+===   letter (e.g. ö, é, ñ, ü) already present in the source records, not
+===   something this migration introduced, and not real embedded foreign-
+===   script text; never auto-fixed, since there's no safe way to guess the
+===   intended character.
 === NO DATA LOSS ===
 === 1 record(s) ===
-	record 37 (ks-suspectescape)	likely an accented letter and the letter right after it (e.g. ö, é, ñ, ü); verify against another source
-		- tag 880: 'Schr[?]inger'
+	record 37 (ks-suspectescape)	likely an accented letter and the letter right after it; verify against another source
+		- =880: 'Schr[?]inger'
 
 === NEEDS REVIEW: transcode_marc8_failed ===
 === MARC-8-to-UTF-8 transcoding failed for this record's content -- left as
@@ -199,7 +226,8 @@ Problem filename: _tmp_repaired_error.mrc (2 records)
 
 === DUPLICATE RECORDS: duplicate_identifier ===
 === The same identifier (usually 001, or 907 $a for Sierra records) is used
-===   by more than one distinct record in this file.
+===   by more than one distinct record in this file. (Duplicate 001's may be
+===   normal with records from Voyager.)
 === POSSIBLE DATA LOSS ===
 === 2 record(s) ===
 	record 44 (ks-dupe-id)	identifier used on 2 records total (also records [45]); this record's length (LDR 00-04) = 00149
@@ -273,9 +301,12 @@ Problem filename: _tmp_repaired_error.mrc (2 records)
 === INFORMATIONAL: oversized_sentinel_fixed ===
 === A record's true length exceeds ISO 2709's 5-digit field -- leader
 ===   declares the documented 99999 sentinel instead (nothing lost; the real
-===   end is still found from the record terminator).
+===   end is still found from the record terminator). Only happens with
+===   --allow-oversized-sentinel -- by default, a record like this is diverted
+===   to the _error file and logged as unfixable instead (see --allow-
+===   oversized-sentinel's own help).
 === NO DATA LOSS ===
-=== 1 record(s) ===
+=== 0 record(s) ===
 
 === INFORMATIONAL: removed_010_whitespace_a ===
 === A 010 (LCCN) field's $a was present but made up entirely of whitespace
@@ -295,3 +326,19 @@ Problem filename: _tmp_repaired_error.mrc (2 records)
 ===   encoding byte flipped to match.
 === NO DATA LOSS ===
 === 3 record(s) ===
+
+=== INFORMATION ONLY: non_standard_marc_fields ===
+=== A field whose tag isn't in standard_marc_fields.txt (LC's MARC 21
+===   bibliographic field list plus accepted local fields -- edit that file to
+===   add or remove tags) or is listed there as obsolete ([OBSOLETE]). 9XX
+===   fields are never reported. Report only -- nothing is changed or removed.
+===   Each tag is listed separately: its first 5 occurrences in detail, then
+===   "and N more".
+=== NO DATA LOSS ===
+=== 2 instance(s) in 1 record(s), 2 tag(s); first 5 of each tag listed ===
+
+--- 503 [OBSOLETE]: 1 instance(s) in 1 record(s) ---
+	record 35 (ks-oversized-ok)	=503 $a xxxxxxxxxxxxxxxxx...
+
+--- 509: 1 instance(s) in 1 record(s) ---
+	record 35 (ks-oversized-ok)	=509 $a xxxxxxxxxxxxxxxxx...
