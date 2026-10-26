@@ -387,6 +387,22 @@ BIB_ROWS = [
         "**Yes**", "-- (no switch -- genuinely unfixable)",
     ),
     CategoryRow(
+        "Field over 9999 bytes (ISO 2709's directory length limit), shrinks to fit "
+        "once redundant MARC-8 escapes are collapsed",
+        "Merged redundant escape resets and removed spurious one-character "
+        "subscript/superscript escape pairs (`ESC b`/`ESC p`, digit, `ESC s`); "
+        "the field's text is otherwise kept",
+        "Yes, always", "`collapsed_oversized_field_escapes`", "FIXED/REQUIRES ATTENTION",
+        "**Yes**", "-- (no switch)",
+    ),
+    CategoryRow(
+        "Field over 9999 bytes that collapsing escapes can't shrink enough",
+        "Truncated at the last ` --` title separator (else the last subfield "
+        "boundary) that fits; the rest of the record is kept",
+        "Yes, always", "`truncated_oversized_field`", "FIXED/REQUIRES ATTENTION",
+        "**Yes**", "-- (no switch)",
+    ),
+    CategoryRow(
         "Unresolvable record (no consistent directory found by either mode)",
         "Diverted to `<output>_error.mrc`, unchanged",
         "n/a (only if it occurs)",
@@ -764,6 +780,22 @@ HOLDINGS_ROWS = [
         "Diverted to `<output>_error.mrc`, unchanged",
         "n/a (only if it occurs)", "`unfixable`", "UNFIXABLE",
         "**Yes**", "-- (no switch -- genuinely unfixable)",
+    ),
+    CategoryRow(
+        "Field over 9999 bytes (ISO 2709's directory length limit), shrinks to fit "
+        "once redundant MARC-8 escapes are collapsed",
+        "Merged redundant escape resets and removed spurious one-character "
+        "subscript/superscript escape pairs (`ESC b`/`ESC p`, digit, `ESC s`); "
+        "the field's text is otherwise kept",
+        "Yes, always", "`collapsed_oversized_field_escapes`", "FIXED/REQUIRES ATTENTION",
+        "**Yes**", "-- (no switch)",
+    ),
+    CategoryRow(
+        "Field over 9999 bytes that collapsing escapes can't shrink enough",
+        "Truncated at the last ` --` title separator (else the last subfield "
+        "boundary) that fits; the rest of the record is kept",
+        "Yes, always", "`truncated_oversized_field`", "FIXED/REQUIRES ATTENTION",
+        "**Yes**", "-- (no switch)",
     ),
     CategoryRow(
         "Duplicate identifier across records", "Flagged only, no change",
