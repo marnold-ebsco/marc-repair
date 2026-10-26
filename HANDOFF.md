@@ -37,9 +37,8 @@ sink gained `ks-oversized-collapse` and `ks-oversized-truncate`
 (`_wrapped_length_record` in `build_kitchen_sink.py` builds the wrapped
 directory length). `kitchen_sink_bib.log` / `_repaired.mrc` were regenerated
 from a plain default run, which also refreshed content that had gone stale.
-Open: the category isn't in `docs/REPAIR_CATEGORIES.md` (the generator never
-listed `dropped_oversized_field` either); run a full GTU re-run to confirm
-nothing else changes.
+Both categories are in `docs/REPAIR_CATEGORIES.md` (bib and holdings tables).
+Open: run a full GTU re-run to confirm nothing else changes.
 
 ### DONE -- log detail text condensed / `=TAG` labels (2026-10-23, on `main`: `68bf938`, `04d91c0`, `f9993f0`)
 
