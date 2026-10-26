@@ -69,6 +69,19 @@ default on; same flag style as above.
   DATA LOSS: 3 non-agency drops, 2 demotions of `$a` to `$d`), every duplicate
   245/240 handled except `b11571408`.
 
+### DONE -- 003 resolver for duplicate 003s (2026-10-26, on `main`: `e259f80`)
+
+**Status: built, tested (599 pass), flake8 clean, committed and pushed.**
+`_choose_kept_003` (in `_DUPLICATE_FIELD_RESOLVERS`) keeps the 003 that looks like
+an organization code (letters/digits/hyphens, starts with a letter, a capital
+preferred) over junk; falls back to the first. GTU: 11 records had a junk 003
+(an OCLC-style number, `gsto`, a stray note) ahead of the real `OCoLC`, so the old
+first-wins rule kept the junk. The removal count is unchanged (the junk is still the
+one removed, logged POSSIBLE DATA LOSS although the OCLC number is already in each
+record's 035); only which 003 survives changed. Tests: `TestChooseKept003`.
+GTU non-exact duplicate-field removals are now 15 (was 83): 11 x 003, 2 x 008,
+1 x 005, 1 x 240 (`b11571408`).
+
 ### OPEN (minor) -- leftovers after phase 2 (2026-10-26)
 - `b11571408`: both 240s are really frequency statements ("three no. a year", "two no.
   a year from 1998") -> should be a 310/321 and the 240s dropped. Only one record in GTU; the
