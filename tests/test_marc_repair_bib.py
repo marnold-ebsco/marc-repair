@@ -4778,6 +4778,24 @@ class TestNonStandardMarcFields:
         data = out.read_bytes()
         assert data.count(b"Series ") == 8 and b"Methodism" in data
 
+    def test_cli_supplemental_file_lists_every_occurrence(self, tmp_path):
+        recs = [
+            self._rec([m.Field_("241", " 0", [("a", f"Series {n}")])])
+            for n in range(8)
+        ]
+        content, _ = self._run(tmp_path, recs)
+        assert "\tand 3 more 241" in content  # log stays capped
+        files = glob.glob(str(tmp_path / "run_*_non_standard_fields.txt"))
+        assert len(files) == 1
+        sup = open(files[0], encoding="utf-8").read()
+        assert "--- 241 [OBSOLETE]: 8 instance(s) in 8 record(s) ---" in sup
+        assert sup.count("\trecord ") == 8
+        assert "more 241" not in sup
+
+    def test_cli_no_supplemental_file_when_nothing_non_standard(self, tmp_path):
+        self._run(tmp_path, [self._rec([])])
+        assert not glob.glob(str(tmp_path / "*_non_standard_fields.txt"))
+
     def test_cli_nothing_non_standard_gets_zero_header(self, tmp_path):
         content, _ = self._run(tmp_path, [self._rec([])])
         sec = content.split("non_standard_marc_fields")[1]

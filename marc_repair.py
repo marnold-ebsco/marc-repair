@@ -173,9 +173,11 @@ import json
 import os
 import re
 import sys
+import tempfile
 import textwrap
 import time
 import unicodedata
+from array import array
 from contextlib import contextmanager, redirect_stderr
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
@@ -4977,11 +4979,29 @@ class NonStandardFieldTally:
         self.records: dict[str, int] = {}
         self.listed: dict[str, int] = {}
         self.records_with_any = 0
+        #: every occurrence (not just the first `limit`) is streamed to
+        #: one temp file, one line each; `_offsets` holds each tag's
+        #: line start offsets so the supplemental file can be built
+        #: grouped by tag without keeping the text in memory
+        self._spool = tempfile.TemporaryFile("w+", encoding="utf-8", newline="\n")
+        self._offsets: dict[str, array] = {}
 
-    def check(self, parsed: ParsedRecord) -> list[str]:
+    def spooled_lines(self, tag: str) -> Iterator[str]:
+        """Yield tag's spooled "record ...<TAB>detail" lines, in order."""
+        self._spool.flush()
+        for off in self._offsets.get(tag, ()):
+            self._spool.seek(off)
+            yield self._spool.readline().rstrip("\n")
+
+    def close(self) -> None:
+        self._spool.close()
+
+    def check(self, parsed: ParsedRecord, record_idx: int = 0,
+              rec_id: str = "") -> list[str]:
         """Count this record's non-standard fields; returns the detail
         text ("=<tag> <preview>") for those still under the per-tag
-        limit. Never modifies the record."""
+        limit. Every occurrence is also kept in `all_details` for
+        `write_non_standard_supplement`. Never modifies the record."""
         details = []
         tags_seen: set[str] = set()
         for f in parsed.fields:
@@ -4992,12 +5012,41 @@ class NonStandardFieldTally:
             if tag not in tags_seen:
                 tags_seen.add(tag)
                 self.records[tag] = self.records.get(tag, 0) + 1
+            detail = f"={tag} {field_preview(f)}"
+            rec = f"record {record_idx}" + (f" ({rec_id})" if rec_id else "")
+            self._spool.seek(0, os.SEEK_END)
+            self._offsets.setdefault(tag, array("Q")).append(self._spool.tell())
+            self._spool.write(f"{rec}\t{detail}".replace("\n", " ") + "\n")
             if self.listed.get(tag, 0) < self.limit:
                 self.listed[tag] = self.listed.get(tag, 0) + 1
-                details.append(f"={tag} {field_preview(f)}")
+                details.append(detail)
         if tags_seen:
             self.records_with_any += 1
         return details
+
+
+def write_non_standard_supplement(path: str, tally: NonStandardFieldTally) -> bool:
+    """Write every non-standard field occurrence, grouped by tag, in the
+    same layout as the log's non_standard_marc_fields section but with
+    no "and N more" cut-off. Returns False (and writes nothing) if there
+    were none."""
+    if not tally.instances:
+        return False
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(
+            f"=== non_standard_marc_fields: all occurrences ===\n"
+            f"=== {sum(tally.instances.values()):,} instance(s) in "
+            f"{tally.records_with_any:,} record(s), {len(tally.instances)} tag(s) ===\n"
+        )
+        for tag in sorted(tally.instances):
+            obsolete = " [OBSOLETE]" if tag in tally.obsolete else ""
+            fh.write(
+                f"\n--- {tag}{obsolete}: {tally.instances[tag]:,} instance(s) "
+                f"in {tally.records[tag]:,} record(s) ---\n"
+            )
+            for line in tally.spooled_lines(tag):
+                fh.write(f"\t{line}\n")
+    return True
 
 
 def find_853_missing_8(parsed: ParsedRecord) -> list[str]:
@@ -9152,8 +9201,8 @@ def main(argv: list[str] | None = None) -> int:
                     rec_id = record_identifier(parsed)
                     log("bib_856_missing_u", False, i, rec_id, detail)
                 if non_standard_tally is not None:
-                    for detail in non_standard_tally.check(parsed):
-                        rec_id = record_identifier(parsed)
+                    rec_id = record_identifier(parsed)
+                    for detail in non_standard_tally.check(parsed, i, rec_id):
                         log(NON_STANDARD_FIELD_CATEGORY, False, i, rec_id, detail)
                 for category, detail in find_suspicious_fields(parsed):
                     # unfixed_non_numeric_tag is suppressed here when
@@ -9405,6 +9454,14 @@ def main(argv: list[str] | None = None) -> int:
         full_categories=resolved_full_categories,
         non_standard_tally=non_standard_tally,
     )
+    if non_standard_tally is not None:
+        supplement_path = os.path.splitext(log_path)[0] + "_non_standard_fields.txt"
+        if write_non_standard_supplement(supplement_path, non_standard_tally):
+            print(
+                f"all non-standard field occurrences written to {supplement_path}",
+                file=sys.stderr,
+            )
+        non_standard_tally.close()
     n_log_lines = len(log_entries)
     # Based on which section an entry actually lands in, not the raw
     # `fixed` flag -- INFORMATIONAL can now include detect-only findings
