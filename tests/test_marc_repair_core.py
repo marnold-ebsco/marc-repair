@@ -904,7 +904,9 @@ class TestGuaranteeImportable:
 
     #: (record identifier in kitchen_sink_bib.mrc, expected output file)
     _GUARANTEE_IMPORTABLE_CASES = [
-        ("ks-oversized-ok", "error"),  # >99999 bytes -- confirmed kills FOLIO's whole batch
+        ("ks-toobig-trim", "repaired"),  # >99999 bytes, trimmed to fit
+        ("ks-toobig-notrimmable", "error"),  # >99999 bytes, nothing removable
+        ("ks-oversized-ok", "repaired"),  # >99999 bytes, 5xx trimmed to fit
         ("ks-oversized-bad", "error"),  # genuinely unfixable (field >9999) -- also has no
         # 245, so this doubles as a regression test that UNFIXABLE takes priority over
         # missing-245 diversion when a record hits both
@@ -951,7 +953,7 @@ class TestGuaranteeImportable:
         src = tmp_path / "kitchen_sink_bib.mrc"
         src.write_bytes(_read("kitchen_sink_bib.mrc").encode("utf-8"))
         out = tmp_path / "out.mrc"
-        m.main([str(src), "-o", str(out)])
+        m.main([str(src), "-o", str(out), "--no-trim-oversized-record"])
         assert b"ks-oversized-ok" not in out.read_bytes()
         assert b"ks-oversized-ok" in (tmp_path / "out_error.mrc").read_bytes()
 
@@ -962,7 +964,8 @@ class TestGuaranteeImportable:
         src = tmp_path / "kitchen_sink_bib.mrc"
         src.write_bytes(_read("kitchen_sink_bib.mrc").encode("utf-8"))
         out = tmp_path / "out.mrc"
-        m.main([str(src), "-o", str(out), "--allow-oversized-sentinel"])
+        m.main([str(src), "-o", str(out), "--allow-oversized-sentinel",
+                "--no-trim-oversized-record"])
         assert b"ks-oversized-ok" in out.read_bytes()
         error_path = tmp_path / "out_error.mrc"
         if error_path.exists():
@@ -974,7 +977,7 @@ class TestGuaranteeImportable:
         out = tmp_path / "out.mrc"
         log_path = tmp_path / "out.log"
         m.main([str(src), "-o", str(out), "--guarantee-importable", "--log", str(log_path),
-                "--log-zero"])
+                "--log-zero", "--no-trim-oversized-record"])
         log_text = _resolve_log(log_path).read_text(encoding="utf-8")
         assert "ks-oversized-ok" in log_text
         assert re.search(r"=== [^\n]*: unfixable ===", log_text)

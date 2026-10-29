@@ -471,6 +471,15 @@ BIB_ROWS = [
         "**Yes**", "-- (no switch)",
     ),
     CategoryRow(
+        "Record over 99999 bytes",
+        "Whole fields removed until it fits, largest first: 9xx (never a 999 "
+        "with indicators `ff`), then 5xx with their linked 880s, then 6xx with "
+        "theirs; every removed field is listed in the log. If that can't "
+        "make it fit, nothing is removed and the record is diverted as `unfixable`",
+        "Yes, always", "`trimmed_oversized_record`", "FIXED/REQUIRES ATTENTION",
+        "**Yes**", "`--no-trim-oversized-record`",
+    ),
+    CategoryRow(
         "Unresolvable record (no consistent directory found by either mode)",
         "Diverted to `<output>_error.mrc`, unchanged",
         "n/a (only if it occurs)",
@@ -869,6 +878,15 @@ HOLDINGS_ROWS = [
         "boundary) that fits; the rest of the record is kept",
         "Yes, always", "`truncated_oversized_field`", "FIXED/REQUIRES ATTENTION",
         "**Yes**", "-- (no switch)",
+    ),
+    CategoryRow(
+        "Record over 99999 bytes",
+        "Whole fields removed until it fits, largest first: 9xx (never a 999 "
+        "with indicators `ff`), then 5xx with their linked 880s, then 6xx with "
+        "theirs; every removed field is listed in the log. If that can't "
+        "make it fit, nothing is removed and the record is diverted as `unfixable`",
+        "Yes, always", "`trimmed_oversized_record`", "FIXED/REQUIRES ATTENTION",
+        "**Yes**", "`--no-trim-oversized-record`",
     ),
     CategoryRow(
         "Duplicate identifier across records", "Flagged only, no change",

@@ -8,6 +8,105 @@ current state and open items.
 
 ## Current state
 
+### DONE -- trim records over 99999 bytes instead of diverting them (2026-10-29, on `main`)
+
+**Status: built, 616 tests pass, committed and pushed. Not yet run against a real corpus.** Code: `record_exceeds_max_length`,
+`trim_oversized_record` (before `assemble_marc` in `marc_repair.py`), wired into
+bib `main()` and `repair_holdings_records(trim_oversized_record_enabled=)`,
+switch `--trim-oversized-record` / `--no-trim-oversized-record` (BooleanOptionalAction, default on), log category `trimmed_oversized_record`
+(DATA LOSS). Fixtures `ks-toobig-trim` (mid-file, after `ks-oversized-ok`) and
+`ks-toobig-notrimmable`; tests in `tests/test_oversized_record.py`; fixture
+outputs and `docs/REPAIR_CATEGORIES.md` regenerated. The text below is the
+original plan (kept for reference).
+
+**Today:** a bib/holdings record whose assembled size is over 99999 bytes is
+diverted to `_error.mrc` (log category `unfixable`) unless
+`--allow-oversized-sentinel` keeps it with the leader sentinel `99999`
+(`oversized_sentinel_fixed`). Both pipelines do this: bib in `main()`
+(~line 10081) and holdings in `repair_holdings_records()` (~line 8600).
+`assemble_marc()` (~line 1837) only *builds* the record; it never shrinks.
+The existing fixture `ks-oversized-ok` (12 x 9000-byte 5xx) exercises the
+divert path; its test must keep passing under `--no-trim-oversized-record`.
+
+**Goal:** shrink such a record under the limit by removing whole fields,
+log every removal, so it can go to the main output.
+
+**1. Fixture** (`tests/fixtures/build_kitchen_sink.py`, `build_bib_records()`)
+- New record `ks-toobig-trim`, inserted in the *middle* of the list (right
+  after `ks-oversized-ok`, ~line 616), not appended.
+- Contents: 001, 008, 245, a `999 ff $a` (must survive), a 590 (the run's
+  `--ensure-field` target, same reason as `ks-oversized-ok`), and ~12 5xx
+  fields of *different* sizes (e.g. 520 = 9500, 505 = 9000, 500 = 8000,
+  504 = 3000, 586 = 200, ...), total ~110k, so removing the largest few is
+  enough and the *removal order* is observable.
+- Second small record `ks-toobig-notrimmable` (999 ff + non-5xx bulk only,
+  e.g. many 650/700) to exercise the "5xx isn't enough" branch.
+- Regenerate `kitchen_sink_bib.mrc`, `.log`, `_repaired.mrc`; update the
+  id lists in `test_marc_repair_core.py` (`_GUARANTEE_IMPORTABLE_CASES`,
+  ~line 907) and any record-count assertions.
+
+**2. Detection** (test + log, independent of the fix)
+- New helper `record_exceeds_max_length(parsed) -> int | None` (assembled
+  size when over 99999, else None), used by both pipelines in place of the
+  inline `len(assembled) > 99999` checks.
+- `tests/test_oversized_record.py` (new): builds records in memory and
+  asserts the helper flags exactly the over-limit ones (99999 ok, 100000 not).
+- Fixture-level test: the default pipeline run on the kitchen sink logs
+  `ks-toobig-trim` under the new category.
+
+**3. Fix** -- new `trim_oversized_record(parsed, max_bytes=99999)` in
+`marc_repair.py`, called just before assembly in both pipelines (after the
+9999-byte per-field collapse/truncate and after `--ensure-field` and other
+additions, so the measured size is what would actually be written):
+1. Measure the assembled size; if <= 99999 do nothing.
+2. Protected, never removed: leader, 001/003/005/008, 245, and any `999`
+   with indicators `ff` (FOLIO's SRS/instance link; removing it breaks the
+   record). A 999 with other indicators is NOT protected.
+3. Pass A: remove 5xx fields largest first (encoded bytes incl. terminator),
+   ties broken later-in-record first, re-measure after each removal, stop as
+   soon as it fits. A linked 880 (`$6` pointing at the removed 5xx) goes
+   with it so no orphan is left.
+4. Pass B (only if all removable 5xx are gone and it still doesn't fit):
+   remove the largest remaining non-protected fields, same rule.
+5. If still too big (protected fields alone > 99999): leave untouched and
+   fall back to today's behavior (divert to `_error`, `unfixable`).
+6. Log category `trimmed_oversized_record` (DATA LOSS, FIXED/REQUIRES
+   ATTENTION): one entry per record listing each removed field as
+   `=TAG (N bytes) "first 40 chars..."` plus size before -> after. Add a
+   `ParsedRecord.trimmed_oversized_record` list (like
+   `truncated_oversized_fields`) and register the category in
+   `docs/REPAIR_CATEGORIES.md` via `tools/generate_repair_categories_doc.py`
+   (bib and holdings tables).
+7. New flag `--no-trim-oversized-record` restores the divert/sentinel
+   behavior; default is to trim. `--allow-oversized-sentinel` then only
+   matters for records trimming couldn't fix.
+
+**4. Tests** (`tests/test_oversized_record.py`)
+- removes largest 5xx first, in order, stops once under limit (assert exact
+  removed tags and final size <= 99999);
+- `999 ff` survives even when it is the largest field; other 999 can go;
+- Pass B only after 5xx are exhausted; unfixable fallback when protected
+  fields alone are too big;
+- log lists every removed field; nothing logged for a record that fits;
+- holdings pipeline path; `--no-trim-oversized-record` restores diversion;
+- update `TestGuaranteeImportable` expectations for `ks-oversized-ok` (now
+  trimmed into the main output, not `error`) and add the new fixture ids.
+
+**5. Verify:** full pytest, flake8 `--max-line-length=100`, regenerate the
+kitchen-sink outputs, confirm `ks-toobig-trim` repaired size <= 99999 and its
+999 ff is intact.
+
+**As built (user's answers changed the plan):** protected set = 001/003/005/008/245
+(only 9xx/5xx/6xx are ever candidates), linked 880 goes with its 5xx and 6xx,
+default on, `ks-oversized-ok` kept as the divert witness (its tests pass
+`--no-trim-oversized-record`). Removal order is **9xx (not 999 ff) -> 5xx
+(+880) -> 6xx(+880)**, largest first in each group, tie -> later in record
+first; there is no "Pass B" over other tags (7xx etc. never touched). If even
+removing every candidate won't fit, the record is left unchanged and diverted
+as `unfixable`. Note `assemble_marc` also refuses a record whose last field
+*starts* past offset 99999, so the fixtures must keep the last field's start
+below that.
+
 ### DONE -- `dedupe_010_fields` moves different LCCNs to `$z`; valid LCCN always wins `$a` (2026-10-26, uncommitted on `main`)
 
 **Status: built and tested (607 pass), `docs/REPAIR_CATEGORIES.md` regenerated;

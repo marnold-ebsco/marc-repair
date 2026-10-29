@@ -1486,10 +1486,10 @@ class TestRepairHoldingsRecords:
         # round-trip check against kitchen_sink_holdings.mrc, the
         # synthetic one-record-per-category fixture build_kitchen_sink.py
         # generates (see that script for how the counts below arise --
-        # 3 unfixable: an oversized field diverted to the error file, an
-        # oversized-sentinel record ALSO diverted by default (see
-        # --allow-oversized-sentinel), and one unresolvable trailing
-        # record with no parseable directory).
+        # 2 unfixable: an oversized field diverted to the error file and
+        # one unresolvable trailing record with no parseable directory;
+        # the oversized-sentinel record is trimmed under 99999 bytes
+        # instead of diverted -- see --no-trim-oversized-record).
         import tempfile
 
         base = _fixture("kitchen_sink_holdings.mrc")
@@ -1499,6 +1499,12 @@ class TestRepairHoldingsRecords:
             log = os.path.join(tmpdir, "out.log")
             result = m.repair_holdings_records(base, out, log)
             assert result["total"] == n_input == 51
+            assert result["unfixable"] == 2
+            assert result["written"] == 50
+            assert m.count_records(out) == result["written"]
+            out2 = os.path.join(tmpdir, "out2.mrc")
+            result = m.repair_holdings_records(
+                base, out2, log, trim_oversized_record_enabled=False
+            )
             assert result["unfixable"] == 3
             assert result["written"] == 49
-            assert m.count_records(out) == result["written"]

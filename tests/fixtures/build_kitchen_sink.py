@@ -614,6 +614,44 @@ def build_bib_records() -> list[bytes]:
         m.Field_("590", "  ", [("a", "Ensured field")]),
     ] + [m.Field_(f"5{i:02d}", "  ", [("a", "x" * 9000)]) for i in range(12)]))
 
+    # trimmed_oversized_record: over 99999 bytes, but fields can be removed
+    # to fit. Removal order is 9xx (never the 999 ff, even though it is the
+    # biggest 9xx), then 5xx largest first (the 520 goes with its linked
+    # 880), then 6xx. The 7xx fields are never touched. Sized so removing
+    # the 9xx and the 520+880 is enough: the 6xx (and smaller 5xx) survive.
+    records.append(_record(_BIB_LEADER, [
+        m.Field_("001", None, None, content="ks-toobig-trim"),
+        m.Field_("008", None, None, content="x" * 40),
+        m.Field_("245", "00", [("a", "Title.")]),
+        m.Field_("590", "  ", [("a", "Ensured field")]),
+        m.Field_("999", "ff", [("a", "k" * 9500)]),
+        m.Field_("900", "  ", [("a", "n" * 3000)]),
+        m.Field_("901", "  ", [("a", "n" * 2000)]),
+        m.Field_("520", "  ", [("6", "880-01"), ("a", "d" * 9500)]),
+        m.Field_("880", "  ", [("6", "520-01"), ("a", "d" * 3000)]),
+        m.Field_("505", "0 ", [("a", "c" * 9000)]),
+        m.Field_("500", "  ", [("a", "g" * 9000)]),
+        m.Field_("504", "  ", [("a", "b" * 9000)]),
+        m.Field_("586", "  ", [("a", "a" * 200)]),
+        m.Field_("650", " 0", [("a", "s" * 9000)]),
+        m.Field_("651", " 0", [("a", "s" * 9000)]),
+        m.Field_("653", "  ", [("a", "s" * 9000)]),
+        m.Field_("700", "1 ", [("a", "p" * 9000)]),
+        m.Field_("700", "1 ", [("a", "q" * 9000)]),
+        m.Field_("700", "1 ", [("a", "r" * 9000)]),
+    ]))
+
+    # unfixable (trim can't help): over 99999 bytes with only 7xx bulk and
+    # a 999 ff -- nothing removable, so it is still diverted to "_error".
+    records.append(_record(_BIB_LEADER, [
+        m.Field_("001", None, None, content="ks-toobig-notrimmable"),
+        m.Field_("008", None, None, content="x" * 40),
+        m.Field_("245", "00", [("a", "Title.")]),
+        m.Field_("999", "ff", [("a", "k" * 100)]),
+    ] + [m.Field_("700", "1 ", [("a", "p" * 9000)]) for _ in range(11)] + [
+        m.Field_("700", "1 ", [("a", "p" * 9900)]),
+    ]))
+
     # unfixable: a single field over the 9999-byte cap -- nothing this
     # tool can do safely, so it's diverted to the "_error" output file
     # instead of the main one (see reattach_orphaned_trailing_fields for

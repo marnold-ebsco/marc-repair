@@ -1834,6 +1834,91 @@ def repair_text(
 # Assembly: emit real ISO 2709 bytes + mnemonic .mrk text
 # ---------------------------------------------------------------------------
 
+MAX_RECORD_BYTES = 99999  # ISO 2709's 5-digit leader record-length slot
+
+
+def _field_chunk_lengths(parsed: ParsedRecord) -> list[int]:
+    encoding = "utf-8" if parsed.leader[9:10] == "a" else "latin-1"
+    return [
+        len(f.delimited().encode(encoding, errors="surrogateescape")) for f in parsed.fields
+    ]
+
+
+def record_exceeds_max_length(parsed: ParsedRecord) -> int | None:
+    """The record's assembled size in bytes if it is over MAX_RECORD_BYTES
+    (what `assemble_marc` would produce), else None."""
+    # leader + 12-byte directory entry per field + directory terminator +
+    # field data + record terminator
+    total = 24 + 12 * len(parsed.fields) + 1 + sum(_field_chunk_lengths(parsed)) + 1
+    return total if total > MAX_RECORD_BYTES else None
+
+
+def _linked_880s(parsed: ParsedRecord, field_: Field_) -> list[Field_]:
+    """The 880 field(s) whose $6 points back at `field_` (its own $6 is
+    "880-NN"; theirs is "<tag>-NN")."""
+    if field_.is_control():
+        return []
+    for code, data in field_.subfields:
+        if code == "6" and data.startswith("880-"):
+            occurrence = data[4:6]
+            wanted = f"{field_.tag}-{occurrence}"
+            return [
+                f for f in parsed.fields
+                if f.tag == "880" and not f.is_control()
+                and any(c == "6" and d.startswith(wanted) for c, d in f.subfields)
+            ]
+    return []
+
+
+def trim_oversized_record(parsed: ParsedRecord) -> str | None:
+    """Remove whole fields until a record over MAX_RECORD_BYTES fits.
+
+    Removal order, largest field first within each group: 9xx (except a
+    999 with indicators "ff", which FOLIO needs), then 5xx (each with its
+    linked 880), then 6xx (likewise). Nothing else is ever removed, so
+    leader, 001/003/005/008, 245, 1xx, 7xx, etc. are never touched. If
+    even removing every candidate would not get the record under the
+    limit, the record is left unchanged and None is returned (the
+    caller then diverts it as before). Returns the log detail, or None
+    when nothing was removed."""
+    if record_exceeds_max_length(parsed) is None:
+        return None
+    lengths = {id(f): n for f, n in zip(parsed.fields, _field_chunk_lengths(parsed))}
+    position = {id(f): i for i, f in enumerate(parsed.fields)}
+    size = 24 + 12 * len(parsed.fields) + 1 + sum(lengths.values()) + 1
+    before = size
+    removals: list[list[Field_]] = []
+    taken: set[int] = set()
+    for group in ("9", "5", "6"):
+        units = []
+        for f in parsed.fields:
+            if not f.tag.startswith(group) or id(f) in taken:
+                continue
+            if f.tag == "999" and f.indicators == "ff":
+                continue
+            unit = [f] + [x for x in _linked_880s(parsed, f) if id(x) not in taken]
+            units.append(unit)
+        units.sort(key=lambda u: (-sum(lengths[id(x)] for x in u), -position[id(u[0])]))
+        for unit in units:
+            if size <= MAX_RECORD_BYTES:
+                break
+            removals.append(unit)
+            taken.update(id(x) for x in unit)
+            size -= sum(lengths[id(x)] + 12 for x in unit)
+    if size > MAX_RECORD_BYTES:
+        return None
+    parts = []
+    for unit in removals:
+        for f in unit:
+            preview = "".join(d for c, d in f.subfields if c != "6")[:40]
+            parts.append(f"={f.tag} ({lengths[id(f)]} bytes, {preview!r})")
+    parsed.fields = [f for f in parsed.fields if id(f) not in taken]
+    return (
+        f"record was {before} bytes, over the {MAX_RECORD_BYTES}-byte limit -- "
+        f"removed {len(parts)} field(s), now {size} bytes: " + "; ".join(parts)
+    )
+
+
 def assemble_marc(parsed: ParsedRecord) -> bytes:
     if parsed.unresolved:
         raise RepairError(
@@ -7126,6 +7211,7 @@ _FIXED_REQUIRES_ATTENTION = {
     "fixed_holdings_008_length",
     "removed_invalid_subfield",
     "truncated_oversized_field",
+    "trimmed_oversized_record",
     "collapsed_oversized_field_escapes",
     "field_removed_because_missing_a",
     "recoded_title_only_7xx_to_730",
@@ -7450,6 +7536,12 @@ _CHECK_DESCRIPTIONS: dict[str, str] = {
     "for the same defect's unconfirmed payloads, left for a human to review.",
     "remapped_999_to_945": 'A 999 field was retagged to 945 (indicators forced to "ff") -- only with '
     "--remap-999-to-945.",
+    "trimmed_oversized_record": "A record was over 99999 bytes (the most ISO 2709's leader can "
+    "declare) -- whole fields were removed, largest first, until it fit: 9xx "
+    "(never a 999 with indicators ff), then 5xx with their linked 880s, then "
+    "6xx with theirs. The log lists every removed field. If that still would not "
+    "fit, nothing is removed and the record is diverted as unfixable. Disable "
+    "with --no-trim-oversized-record.",
     "oversized_sentinel_fixed": "A record's true length exceeds ISO 2709's 5-digit field -- leader declares "
     "the documented 99999 sentinel instead (nothing lost; the real end is still "
     "found from the record terminator). Only happens with --allow-oversized-"
@@ -7568,6 +7660,7 @@ _CHECK_DATA_LOSS: dict[str, str] = {
     "merged_duplicate_040": "POSSIBLE DATA LOSS",
     "recoded_6xx_b_to_a": "NO DATA LOSS",
     "truncated_oversized_field": "DATA LOSS",
+    "trimmed_oversized_record": "DATA LOSS",
     "collapsed_oversized_field_escapes": "POSSIBLE DATA LOSS",
     "non_standard_marc_fields": "NO DATA LOSS",
 }
@@ -7614,6 +7707,7 @@ _ALWAYS_FULL_CATEGORIES = {
     "removed_invalid_subfield",
     "removed_untranscodable_subfield",
     "truncated_oversized_field",
+    "trimmed_oversized_record",
     "collapsed_oversized_field_escapes",
     "removed_bad_call_number",
     "removed_extra_852_b",
@@ -8149,6 +8243,7 @@ _HOLDINGS_ALWAYS_ACTIVE_CATEGORIES = {
     "split_holdings_multiple_852",
     "oversized_sentinel_fixed",
     "truncated_oversized_field",
+    "trimmed_oversized_record",
     "collapsed_oversized_field_escapes",
 }
 
@@ -8160,6 +8255,7 @@ def repair_holdings_records(
     fix_missing_852c: bool = True,
     allow_single_digit_852b: bool = False,
     allow_oversized_sentinel: bool = False,
+    trim_oversized_record_enabled: bool = True,
     full_categories: set[str] | None = None,
     on_progress: Callable[[int], None] | None = None,
     on_record: Callable[[int], None] | None = None,
@@ -8576,6 +8672,11 @@ def repair_holdings_records(
                     )
             records_to_write = resolved_records
 
+            if trim_oversized_record_enabled:
+                for rec in records_to_write:
+                    trim_detail = trim_oversized_record(rec)
+                    if trim_detail:
+                        log("trimmed_oversized_record", True, i, rec_id, trim_detail)
             try:
                 assembled_records = [assemble_marc(rec) for rec in records_to_write]
                 additional_004_assembled = [
@@ -9269,6 +9370,18 @@ def main(argv: list[str] | None = None) -> int:
         "correctly and specifically want the record kept instead",
     )
     parser.add_argument(
+        "--trim-oversized-record",
+        dest="trim_oversized_record",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="shrink a record over 99999 bytes by removing whole fields "
+        "until it fits: 9xx (never 999 ff) first, then 5xx with their "
+        "linked 880s, then 6xx, largest first; logged as "
+        "trimmed_oversized_record. On by default; --no-trim-oversized-record "
+        "instead diverts such a record to the _error file (or keeps it with "
+        "the sentinel, see --allow-oversized-sentinel)",
+    )
+    parser.add_argument(
         "--source-system",
         choices=SOURCE_SYSTEMS,
         default=None,
@@ -9422,6 +9535,7 @@ def main(argv: list[str] | None = None) -> int:
                 fix_missing_852c=args.fix_missing_852c,
                 allow_single_digit_852b=args.allow_single_digit_852b,
                 allow_oversized_sentinel=args.allow_oversized_sentinel,
+                trim_oversized_record_enabled=args.trim_oversized_record,
                 full_categories=set(args.log_full),
                 include_zero=args.log_zero,
                 on_progress=holdings_progress.on_progress,
@@ -9483,6 +9597,7 @@ def main(argv: list[str] | None = None) -> int:
             fix_missing_852c=args.fix_missing_852c,
             allow_single_digit_852b=args.allow_single_digit_852b,
             allow_oversized_sentinel=args.allow_oversized_sentinel,
+            trim_oversized_record_enabled=args.trim_oversized_record,
             full_categories=set(args.log_full),
             include_zero=args.log_zero,
             on_progress=progress.on_progress,
@@ -10053,6 +10168,11 @@ def main(argv: list[str] | None = None) -> int:
                         f"leader bytes 20-23 were {parsed.leader[20:24]!r}, always "
                         "a fixed constant in MARC21; corrected to '4500'",
                     )
+                if args.trim_oversized_record:
+                    trim_detail = trim_oversized_record(parsed)
+                    if trim_detail:
+                        rec_id = record_identifier(parsed)
+                        log("trimmed_oversized_record", True, i, rec_id, trim_detail)
                 try:
                     assembled = assemble_marc(parsed)
                 except RepairError as exc:
@@ -10211,7 +10331,7 @@ def main(argv: list[str] | None = None) -> int:
         "leader_entry_map_fixed", "oversized_sentinel_fixed", "duplicate_identifier",
         "removed_null_identifier", "suspect_marc8_escape", "suspect_hex_encoded_marc8",
         "removed_010_whitespace_a", "removed_880_missing_a", "truncated_oversized_field", "collapsed_oversized_field_escapes",
-        "bib_856_missing_u",
+        "trimmed_oversized_record", "bib_856_missing_u",
     }
     if args.fix_bad_indicators:
         active_categories.add("padded_indicators")
