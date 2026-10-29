@@ -27,6 +27,8 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import marc_repair as m  # noqa: E402
+import marc_repair_cli  # noqa: E402
+import marc_repair_core  # noqa: E402
 
 FIXTURES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures")
 
@@ -2951,7 +2953,8 @@ class TestLeaderEntryMapCorrection:
         # itself, not the probe heuristic. A tiny chunk_size forces the bad
         # byte into a chunk of its own, exercising the decoder the same way
         # a real 32MB chunk boundary did in production.
-        monkeypatch.setattr(m, "detect_encoding", lambda path: "utf-8")
+        monkeypatch.setattr(marc_repair_core, "detect_encoding", lambda path: "utf-8")
+        monkeypatch.setattr(marc_repair_cli, "detect_encoding", lambda path: "utf-8")
         src = tmp_path / "badmap_invalid_utf8.mrc"
         src.write_bytes(self._corrupted_entry_map_bytes_invalid_utf8())
         records = list(m.iter_repair_stream(str(src), chunk_size=5))
@@ -2960,7 +2963,8 @@ class TestLeaderEntryMapCorrection:
         assert m.assemble_marc(parsed)[20:24] == b"4500"
 
     def test_invalid_utf8_byte_in_entry_map_fixed_via_cli(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(m, "detect_encoding", lambda path: "utf-8")
+        monkeypatch.setattr(marc_repair_core, "detect_encoding", lambda path: "utf-8")
+        monkeypatch.setattr(marc_repair_cli, "detect_encoding", lambda path: "utf-8")
         src = tmp_path / "badmap_invalid_utf8.mrc"
         src.write_bytes(self._corrupted_entry_map_bytes_invalid_utf8())
         out = tmp_path / "out.mrc"

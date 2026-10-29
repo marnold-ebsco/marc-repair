@@ -348,7 +348,7 @@ cd marc_repair
 
 ### Quick install (no full clone)
 
-`install.sh` fetches only the files needed to run the tool (the script,
+`install.sh` fetches only the files needed to run the tool (the script and its modules,
 `pyproject.toml`, `requirements.txt`, the two tag files, and the docs)
 pinned to one commit, and builds a ready-to-use venv with the `marc_repair`
 command installed into it — no `git clone`, no repo history, no test
@@ -694,7 +694,8 @@ marc_repair --list-profiles
 
 | File | Purpose |
 |---|---|
-| `marc_repair.py` | The tool |
+| `marc_repair.py` | The tool's entry point (run this); re-exports the four modules below |
+| `marc_repair_common.py`, `marc_repair_core.py`, `marc_repair_patching.py`, `marc_repair_cli.py` | The implementation, layered in that order (constants and types, detection/reconstruction/streaming/QA, required-field patching, CLI/logging/profiles). Must sit beside `marc_repair.py` |
 | `marc_repair_profile.py` | Creates run profiles (`init` wizard, `save` from switches); see [Using profiles](#using-profiles) |
 | `profiles/` | Profile directory searched by `marc_repair`; `profiles/examples/` holds sample profiles (inactive until copied up) |
 | `pyproject.toml` | Packaging metadata — `pip install .` installs the `pymarc` dependency (deliberately no console-script entry point; see its comment, and `install.sh`'s wrapper, for why) |

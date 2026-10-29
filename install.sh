@@ -36,6 +36,10 @@ DIR_EXPLICIT=0
 # in the repo for what those are.
 FILES=(
   "marc_repair.py"
+  "marc_repair_common.py"
+  "marc_repair_core.py"
+  "marc_repair_patching.py"
+  "marc_repair_cli.py"
   "marc_repair_profile.py"
   "profiles/mark-bib.json"
   "profiles/mark-holdings.json"

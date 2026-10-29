@@ -10,6 +10,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
 import marc_repair as m  # noqa: E402
+import marc_repair_cli  # noqa: E402
 import marc_repair_profile as tool  # noqa: E402
 
 FIXTURE = os.path.join(
@@ -99,10 +100,10 @@ def test_discover_skips_invalid_with_warning(tmp_path, parser, capsys):
 
 
 def test_missing_profile_dir_falls_back_with_warning(tmp_path, capsys):
-    assert m.resolve_profile_dir(str(tmp_path / "nope")) == m.DEFAULT_PROFILE_DIR
+    assert m.resolve_profile_dir(str(tmp_path / "nope")) == marc_repair_cli.DEFAULT_PROFILE_DIR
     assert "not a readable directory" in capsys.readouterr().err
     assert m.resolve_profile_dir(str(tmp_path)) == str(tmp_path)
-    assert m.resolve_profile_dir(None) == m.DEFAULT_PROFILE_DIR
+    assert m.resolve_profile_dir(None) == marc_repair_cli.DEFAULT_PROFILE_DIR
 
 
 # --- selection --------------------------------------------------------------
@@ -205,7 +206,7 @@ def test_split_forwards_profile_to_bib_repair_without_reselecting(tmp_path, monk
         calls.append(args)
         return real_run(parser, args)
 
-    monkeypatch.setattr(m, "run", spy)
+    monkeypatch.setattr(marc_repair_cli, "run", spy)
     rc = m.main([str(src), "--profile-dir", str(pdir), "--source-system", "other",
                  "--log", str(tmp_path / "shared.log"), "--mrk"])
     assert rc == 0

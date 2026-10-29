@@ -19,7 +19,9 @@ curl -fsSL https://raw.githubusercontent.com/marnold-ebsco/marc-repair/main/inst
 
 ## Notes
 
-- It re-downloads `marc_repair.py`, `marc_repair_profile.py`, `pyproject.toml`,
+- It re-downloads `marc_repair.py`, its four modules (`marc_repair_common.py`,
+  `marc_repair_core.py`, `marc_repair_patching.py`, `marc_repair_cli.py`),
+  `marc_repair_profile.py`, `pyproject.toml`,
   `requirements.txt`, the tag lists, the profiles (`profiles/mark-*.json` and
   `profiles/examples/`) and the docs, pinned to one commit SHA. Local edits to
   those files are overwritten, so change profiles in the repo, not on the box.

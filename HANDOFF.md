@@ -117,15 +117,34 @@ branch (no feature work mixed in). Pure moves only: no logic edits.
 | Phase | What | Status |
 |---|---|---|
 | 0 Recon | dependency map, split plan | DONE 2026-10-29 (findings below) |
-| 1 Constants / shared types | header constants + record types (+ `LogEntry`) -> `marc_repair_common.py` | split run, **verifying** |
-| (added) core module | detection/reconstruct/streaming/assembly/QA -> `marc_repair_core.py` (needed for an acyclic import graph, see Design) | split run, **verifying** |
-| 3 Bib patching rules | -> `marc_repair_patching.py` | split run, **verifying** |
-| 4+5+6 Holdings, reporting/log, `run`/`build_parser`/`main` | -> `marc_repair_cli.py` (+ `check_holdings_records` moved up) | split run, **verifying** |
-| 7 Closeout | tests, flake8, installer, docs, before/after output comparison, commit, push | TODO |
+| 1 Constants / shared types | header constants + record types (+ `LogEntry`) -> `marc_repair_common.py` | DONE 2026-10-29 |
+| (added) core module | detection/reconstruct/streaming/assembly/QA -> `marc_repair_core.py` (needed for an acyclic import graph, see Design) | DONE 2026-10-29 |
+| 3 Bib patching rules | -> `marc_repair_patching.py` | DONE 2026-10-29 |
+| 4+5+6 Holdings, reporting/log, `run`/`build_parser`/`main` | -> `marc_repair_cli.py` (+ `check_holdings_records` moved up) | DONE 2026-10-29 |
+| 7 Closeout | tests, flake8, installer, docs, before/after output comparison, commit, push | DONE 2026-10-29 (results below); real EC2 data check still TODO |
 | 2, 5, split of QA out of core | NOT in this branch (future, see end) | FUTURE |
 
-"Split run" = the mechanical split was generated in one pass; a phase turns
-DONE only after the full suite and the before/after comparison pass.
+The split was generated in one mechanical pass, so phases 1/core/3/4-6 landed
+together; each was marked DONE only after the full suite and the before/after
+comparison passed.
+
+**Result (2026-10-29):** `marc_repair.py` 10,774 -> 188 lines (docstring + facade).
+New modules: common 249, core 3,721, patching 3,020, cli 3,905 lines. 659/659
+tests pass; `flake8 --select=F,E9` clean (style count unchanged apart from a
+few E501 in the new module docstrings). Before/after comparison: all `.mrc`,
+`.mrk`, logs and stdout byte-identical across 21 runs once timestamps/timings
+are normalised, with one expected difference: a fixture that crashes with an
+uncaught `RepairError` both before and after now shows new module paths in the
+traceback and `marc_repair_common.RepairError` instead of `RepairError`.
+Tests retargeted (setup only): `conftest.py` and `test_profiles.py` patch
+`marc_repair_cli` (`DEFAULT_PROFILE_DIR`, `run`); two bib tests patch
+`detect_encoding` in both `marc_repair_core` and `marc_repair_cli`.
+`install.sh` `FILES`, README file table and `docs/EC2_UPDATE.md` list the new
+modules.
+
+**Not yet done:** run on real EC2 data (the installer is untested against a
+real pinned install: after merging, update the EC2 box with the installer and
+confirm a run matches the previous output). Merge to `main` is the user's call.
 
 **Recon findings (Phase 0)**
 - File was 10,774 lines, ~196 top-level defs, ~134 module constants scattered
