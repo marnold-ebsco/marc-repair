@@ -1,0 +1,7 @@
+{
+  "name": "mark-holdings",
+  "description": "Standard defaults for holdings records (repair a holdings-only file)",
+  "options": {
+    "repair_holdings": true
+  }
+}

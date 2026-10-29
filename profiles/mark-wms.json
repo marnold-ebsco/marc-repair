@@ -1,0 +1,7 @@
+{
+  "name": "mark-wms",
+  "description": "Split a mixed file into bibs and holdings, then repair both parts",
+  "options": {
+    "split_bib_holdings": true
+  }
+}

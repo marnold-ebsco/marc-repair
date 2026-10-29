@@ -84,7 +84,7 @@ def test_excluded_dests_cover_only_real_options(parser):
 
 
 def test_example_profiles_are_valid(parser):
-    found = m.discover_profiles(os.path.join(m.DEFAULT_PROFILE_DIR, "examples"), parser)
+    found = m.discover_profiles(os.path.join(ROOT, "profiles", "examples"), parser)
     assert {p["name"] for p in found} >= {"conservative", "full", "sierra"}
 
 
