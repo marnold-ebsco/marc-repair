@@ -1,0 +1,10 @@
+{
+  "name": "full",
+  "description": "Every default repair, plus the optional checks, zero-count log headers, and importable-only output",
+  "options": {
+    "check_isbn_issn_checksum": true,
+    "check_dangling_880_links": true,
+    "guarantee_importable": true,
+    "log_zero": true
+  }
+}

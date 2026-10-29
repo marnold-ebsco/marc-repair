@@ -8811,7 +8811,192 @@ def repair_holdings_records(
     }
 
 
-def main(argv: list[str] | None = None) -> int:
+# ---------------------------------------------------------------------------
+# Run profiles: named sets of switches kept as JSON files (see profiles/)
+# ---------------------------------------------------------------------------
+
+DEFAULT_PROFILE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "profiles")
+
+# Per-run paths, one-shot modes, and the profile options themselves never go
+# in a profile.
+PROFILE_EXCLUDED_DESTS = frozenset({
+    "help", "input", "out", "log", "count", "mrk", "overrides",
+    "sample_problems", "sample_log",
+    "profile", "profile_dir", "no_profile", "list_profiles",
+})
+_PROFILE_TOP_LEVEL_KEYS = frozenset({"name", "description", "options"})
+
+
+class ProfileError(Exception):
+    """A profile file is unreadable or holds options that don't validate."""
+
+
+def profile_option_actions(parser: argparse.ArgumentParser) -> dict:
+    """dest -> argparse action, for every option a profile may set."""
+    return {
+        a.dest: a for a in parser._actions
+        if a.option_strings and a.dest not in PROFILE_EXCLUDED_DESTS
+    }
+
+
+def profile_value_kind(action: argparse.Action) -> str:
+    """'bool', 'list', 'int' or 'str' -- the JSON type a profile must use for this option."""
+    if isinstance(action, (
+        argparse._StoreTrueAction, argparse._StoreFalseAction, argparse.BooleanOptionalAction,
+    )):
+        return "bool"
+    if isinstance(action, argparse._AppendAction):
+        return "list"
+    if action.type is int:
+        return "int"
+    return "str"
+
+
+def validate_profile_options(parser: argparse.ArgumentParser, options: dict, source: str) -> dict:
+    """Check a profile's options against the real parser; raise ProfileError on the first one."""
+    actions = profile_option_actions(parser)
+    unknown = sorted(set(options) - set(actions))
+    if unknown:
+        raise ProfileError(
+            f"{source}: unknown option(s) {', '.join(unknown)} -- keys are the long option "
+            f"names without dashes, e.g. \"fix_mojibake\" (see --help)"
+        )
+    for dest, value in options.items():
+        action = actions[dest]
+        kind = profile_value_kind(action)
+        ok = {
+            "bool": isinstance(value, bool),
+            "list": isinstance(value, list) and all(isinstance(v, str) for v in value),
+            "int": isinstance(value, int) and not isinstance(value, bool),
+            "str": value is None or isinstance(value, str),
+        }[kind]
+        if not ok:
+            raise ProfileError(f"{source}: option {dest!r} must be a {kind}, got {value!r}")
+        if action.choices and value is not None and kind == "str" and value not in action.choices:
+            raise ProfileError(
+                f"{source}: option {dest!r} must be one of {', '.join(map(str, action.choices))}, "
+                f"got {value!r}"
+            )
+    return dict(options)
+
+
+def load_profile_file(path: str, parser: argparse.ArgumentParser) -> dict:
+    """Read and validate one profile file: {"name", "description", "path", "options"}."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError) as exc:
+        raise ProfileError(f"{path}: {exc}") from exc
+    if not isinstance(data, dict) or not isinstance(data.get("options"), dict):
+        raise ProfileError(f"{path}: expected a JSON object with an \"options\" object")
+    extra = sorted(set(data) - _PROFILE_TOP_LEVEL_KEYS)
+    if extra:
+        raise ProfileError(f"{path}: unknown top-level key(s) {', '.join(extra)}")
+    name = data.get("name") or os.path.splitext(os.path.basename(path))[0]
+    description = data.get("description") or ""
+    if not isinstance(name, str) or not isinstance(description, str):
+        raise ProfileError(f"{path}: \"name\" and \"description\" must be strings")
+    return {
+        "name": name,
+        "description": description,
+        "path": path,
+        "options": validate_profile_options(parser, data["options"], path),
+    }
+
+
+def resolve_profile_dir(requested: str | None) -> str:
+    """--profile-dir if it is a readable directory, else the profiles/ dir next to the script."""
+    if requested:
+        if os.path.isdir(requested) and os.access(requested, os.R_OK):
+            return requested
+        print(
+            f"warning: --profile-dir {requested!r} is not a readable directory; "
+            f"using {DEFAULT_PROFILE_DIR}",
+            file=sys.stderr,
+        )
+    return DEFAULT_PROFILE_DIR
+
+
+def discover_profiles(directory: str, parser: argparse.ArgumentParser) -> list[dict]:
+    """Every valid *.json profile in directory, sorted by file name; invalid ones are
+    skipped with a warning on stderr."""
+    if not os.path.isdir(directory):
+        return []
+    profiles = []
+    for filename in sorted(os.listdir(directory)):
+        if not filename.lower().endswith(".json"):
+            continue
+        try:
+            profiles.append(load_profile_file(os.path.join(directory, filename), parser))
+        except ProfileError as exc:
+            print(f"warning: skipping invalid profile -- {exc}", file=sys.stderr)
+    return profiles
+
+
+def _choose_profile_interactively(profiles: list[dict], parser: argparse.ArgumentParser):
+    print("Multiple profiles found:")
+    for i, p in enumerate(profiles, 1):
+        print(f"  {i}. {p['name']}" + (f" -- {p['description']}" if p["description"] else ""))
+    print("  0. none (use the built-in defaults)")
+    while True:
+        try:
+            answer = input(f"Which profile? [0-{len(profiles)}]: ").strip()
+        except EOFError:
+            parser.error("no profile chosen")
+        if answer == "0":
+            return None
+        if answer.isdigit() and 1 <= int(answer) <= len(profiles):
+            return profiles[int(answer) - 1]
+        for p in profiles:
+            if answer and answer.lower() == p["name"].lower():
+                return p
+        print(f"{answer!r} is not a choice -- try again, or Ctrl-C to quit", file=sys.stderr)
+
+
+def select_profile(parser: argparse.ArgumentParser, args: argparse.Namespace) -> dict | None:
+    """The profile to run with, or None. --no-profile: none. --profile NAME|PATH: that one.
+    Otherwise discover: none found -> None, one -> it, several -> ask (error if not a terminal)."""
+    if args.no_profile:
+        return None
+    if args.profile and os.path.isfile(args.profile):
+        try:
+            return load_profile_file(args.profile, parser)
+        except ProfileError as exc:
+            parser.error(str(exc))
+    profiles = discover_profiles(resolve_profile_dir(args.profile_dir), parser)
+    if args.profile:
+        for p in profiles:
+            stem = os.path.splitext(os.path.basename(p["path"]))[0]
+            if args.profile.lower() in (p["name"].lower(), stem.lower()):
+                return p
+        found = ", ".join(p["name"] for p in profiles) or "none"
+        parser.error(f"no profile {args.profile!r} found (available: {found})")
+    if not profiles:
+        return None
+    if len(profiles) == 1:
+        return profiles[0]
+    if not sys.stdin.isatty():
+        parser.error(
+            "multiple profiles found and stdin is not a terminal -- pass --profile NAME "
+            "or --no-profile (found: " + ", ".join(p["name"] for p in profiles) + ")"
+        )
+    return _choose_profile_interactively(profiles, parser)
+
+
+def list_profiles_command(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
+    directory = resolve_profile_dir(args.profile_dir)
+    profiles = discover_profiles(directory, parser)
+    if not profiles:
+        print(f"no profiles found in {directory}")
+        return 0
+    print(f"{len(profiles)} profile(s) in {directory}:")
+    for p in profiles:
+        print(f"  {p['name']} ({os.path.basename(p['path'])})"
+              + (f" -- {p['description']}" if p["description"] else ""))
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
@@ -9460,6 +9645,46 @@ def main(argv: list[str] | None = None) -> int:
         "this tool's normal streaming pass -- pass this flag to skip "
         "that and keep the generic hint for every finding instead",
     )
+    parser.add_argument(
+        "--profile",
+        metavar="NAME|PATH",
+        help="run with a saved profile -- a JSON file of options (see profiles/examples/ and "
+        "marc_repair_profile.py) -- instead of choosing one. NAME is matched against the "
+        "profiles in the profile directory; PATH is a profile file. Without this flag the "
+        "profile directory is searched: one profile is used automatically (its name is "
+        "printed), several are offered as a menu, none leaves the built-in defaults. "
+        "Switches given on the command line override the profile (a repeatable switch such "
+        "as --log-full adds to the profile's list)",
+    )
+    parser.add_argument(
+        "--profile-dir",
+        metavar="DIR",
+        help=f"directory to search for profiles (default: {DEFAULT_PROFILE_DIR}); if DIR "
+        "is not a readable directory a warning is printed and the default is used",
+    )
+    parser.add_argument(
+        "--no-profile",
+        action="store_true",
+        help="ignore all profiles and run with the built-in defaults plus the switches given",
+    )
+    parser.add_argument(
+        "--list-profiles",
+        action="store_true",
+        help="list the profiles found in the profile directory and exit",
+    )
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args, _ = parser.parse_known_args(argv)
+    if args.list_profiles:
+        return list_profiles_command(parser, args)
+    if not (args.count or args.sample_log is not None):
+        profile = select_profile(parser, args)
+        if profile:
+            print(f"Using profile: {profile['name']} ({profile['path']})")
+            parser.set_defaults(**profile["options"])
     args = parser.parse_args(argv)
 
     if args.sample_log is not None:

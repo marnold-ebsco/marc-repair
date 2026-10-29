@@ -36,6 +36,10 @@ DIR_EXPLICIT=0
 # in the repo for what those are.
 FILES=(
   "marc_repair.py"
+  "marc_repair_profile.py"
+  "profiles/examples/conservative.json"
+  "profiles/examples/full.json"
+  "profiles/examples/sierra.json"
   "pyproject.toml"
   "requirements.txt"
   "required_a_tags.txt"

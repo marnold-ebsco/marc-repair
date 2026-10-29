@@ -8,9 +8,20 @@ current state and open items.
 
 ## Current state
 
-### IN PROGRESS -- run profiles (2026-10-29, branch `feature/profiles`)
+### DONE -- run profiles (2026-10-29, branch `feature/profiles`, not merged to `main`)
 
-Goal: let users keep named sets of switches ("profiles") so the ~60 options do
+**Status: built, 647 tests pass (31 new in `tests/test_profiles.py`), flake8
+(`--max-line-length=100`) clean on the new files; `marc_repair.py` still has its
+51 pre-existing warnings, none new. Not yet tried on EC2 / real data.** Code:
+`# Run profiles` section + `build_parser()` in `marc_repair.py`;
+`marc_repair_profile.py`; samples in `profiles/examples/` (deliberately NOT in
+`profiles/` itself -- shipped there they would trigger the multi-profile menu,
+or the non-TTY error, for every existing user and test run); README section
+"Using profiles"; `install.sh` now fetches the tool and the 3 samples.
+Notes: `profiles/*.json` are user data (consider gitignoring if personal);
+the wizard asks every option (q ends early).
+
+Original goal: let users keep named sets of switches ("profiles") so the ~60 options do
 not have to be retyped, since people use the tool with different philosophies.
 
 Decisions (agreed with the user):

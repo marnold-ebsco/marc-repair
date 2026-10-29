@@ -584,11 +584,106 @@ Both indices are 0-based, in the order records/fields appear. Run once
 without `--overrides` first, then fill this in from the stderr output and
 re-run with `--overrides overrides.json`.
 
+## Using profiles
+
+`marc_repair` has about 60 switches, and different shops want different
+combinations (a cautious "flag, don't fix" run, a Sierra migration, a
+fix-everything run). A **profile** is a named, saved set of switches, so you
+choose a philosophy once instead of retyping it on every run.
+
+### What a profile is
+
+A profile is a small JSON file. Its keys are the long option names without the
+dashes, using the *positive* meaning — so `--no-fix-mojibake` is
+`"fix_mojibake": false`:
+
+```json
+{
+  "name": "sierra",
+  "description": "Sierra-sourced bibs: require a 907 $a identifier and retag 999 to 945",
+  "options": {
+    "source_system": "sierra",
+    "remap_999_to_945": true
+  }
+}
+```
+
+- Only list what differs from the built-in defaults; anything omitted keeps its
+  default (including any default that changes in a later version).
+- Booleans are `true`/`false`; repeatable switches (`--log-full`,
+  `--ensure-field`) are lists; `--sample-limit` is a number; the rest are strings.
+- Per-run options are never stored in a profile: the input file, `-o/--out`,
+  `--log`, `--mrk`, `--overrides`, `--sample-problems`, `--sample-log`, `--count`.
+- A typo in an option name, or a value of the wrong type, is an error that names
+  the problem, not something silently ignored.
+
+### Where profiles live and which one runs
+
+Profiles are the `*.json` files in the **profile directory**: `profiles/` next
+to `marc_repair.py`, or the directory given with `--profile-dir DIR` (if `DIR`
+isn't a readable directory you get a warning and the default is used).
+
+| Profiles found | What happens |
+|---|---|
+| none | runs exactly as before — built-in defaults |
+| one | used automatically; the run prints `Using profile: NAME (path)` and continues |
+| several | a numbered menu is shown (each name with its description); `0` picks none |
+
+Related switches: `--profile NAME|PATH` skips the menu (NAME matches a profile's
+name or file name; PATH is any profile file), `--no-profile` ignores profiles,
+and `--list-profiles` lists what was found and exits. With several profiles and
+no terminal (a script, cron), the run stops with an error instead of guessing —
+pass `--profile NAME` or `--no-profile`. `--count` and `--sample-log` never
+load a profile.
+
+**Precedence:** built-in defaults, then the profile, then switches on the
+command line — so an explicit switch always wins (`--profile sierra
+--sample-limit 5`). A repeatable switch such as `--log-full` *adds* to the
+profile's list rather than replacing it.
+
+### Creating a profile
+
+Use the separate `marc_repair_profile.py` script. It reads the same option
+list as `marc_repair`, so it can't drift out of date. Profiles are written to
+the profile directory (`--profile-dir` to choose another); an existing profile
+is only overwritten after you confirm, or with `--force`.
+
+```bash
+# Interactive: walks through every option the profile can hold, showing its
+# help text. Enter keeps the default, q finishes early, then it asks for a
+# one-line description.
+python marc_repair_profile.py init cautious
+
+# From switches: stores whatever you pass that differs from the defaults.
+python marc_repair_profile.py save sierra --description "Sierra bibs" \
+    --source-system sierra --remap-999-to-945
+```
+
+### Example profiles
+
+`profiles/examples/` ships three ready-made profiles. They are *not* active
+where they are, so they don't change anything until you copy the ones you want
+up into `profiles/` (or point `--profile-dir` at the examples):
+
+| Profile | Intent |
+|---|---|
+| `conservative` | structural repairs only; turns off the recoding and removal of content |
+| `full` | every default repair plus the optional checks, zero-count log headers, and `--guarantee-importable` |
+| `sierra` | Sierra-sourced bibs: `--source-system sierra`, `--remap-999-to-945` |
+
+```bash
+cp profiles/examples/conservative.json profiles/
+marc_repair export.mrc          # one profile -> used automatically
+marc_repair --list-profiles
+```
+
 ## Files
 
 | File | Purpose |
 |---|---|
 | `marc_repair.py` | The tool |
+| `marc_repair_profile.py` | Creates run profiles (`init` wizard, `save` from switches); see [Using profiles](#using-profiles) |
+| `profiles/` | Profile directory searched by `marc_repair`; `profiles/examples/` holds sample profiles (inactive until copied up) |
 | `pyproject.toml` | Packaging metadata — `pip install .` installs the `pymarc` dependency (deliberately no console-script entry point; see its comment, and `install.sh`'s wrapper, for why) |
 | `required_a_tags.txt` | Editable tag list for `--strip-missing-required-a` — deliberately external, since which fields truly require `$a` is a cataloging-practice judgment call, not something to hardcode |
 | `non_repeatable_tags.txt` | Editable tag list for `--strip-duplicate-non-repeatable-fields` — deliberately conservative (only tags whose Not-Repeatable status is well-established); extend it if you find more in your own data |
