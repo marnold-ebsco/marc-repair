@@ -107,19 +107,80 @@ win there would need much more careful, higher-risk work than this fix.
 Not investigated further: whether the "everything else" 43% has more
 redundant-work patterns like the one just fixed.
 
-### FUTURE WORK -- refactor `marc_repair.py` (decided 2026-10-29: not before profiles)
+### IN PROGRESS -- split `marc_repair.py` into modules ("cheap option"), branch `refactor/split-marc-repair` (started 2026-10-29)
 
-`marc_repair.py` is ~10.5k lines in one file. We deliberately did NOT refactor
-before adding profiles: a full refactor would touch the repair logic, be far
-costlier than the feature (est. 500k+ tokens), and the fixtures give limited
-cover for every switch combination. Profile code therefore goes in the same
-file. When the major refactor happens:
-- Split by concern (parser/CLI + profiles, per-field-group repairs, MARC
-  parse/assemble I/O, logging) and move profile code into its own module.
-- Update `install.sh` (it fetches/pins individual files) and
-  `docs/EC2_UPDATE.md` for any new files or package layout.
-- Land it as its own branch, with the profile tests and the kitchen-sink
-  fixtures as the safety net; do not mix it with feature work.
+Profiles are done, so the refactor deferred earlier is under way, as its own
+branch (no feature work mixed in). Pure moves only: no logic edits.
+
+**Status (update this block as each phase finishes):**
+
+| Phase | What | Status |
+|---|---|---|
+| 0 Recon | dependency map, split plan | DONE 2026-10-29 (findings below) |
+| 1 Constants / shared types | header constants + record types (+ `LogEntry`) -> `marc_repair_common.py` | split run, **verifying** |
+| (added) core module | detection/reconstruct/streaming/assembly/QA -> `marc_repair_core.py` (needed for an acyclic import graph, see Design) | split run, **verifying** |
+| 3 Bib patching rules | -> `marc_repair_patching.py` | split run, **verifying** |
+| 4+5+6 Holdings, reporting/log, `run`/`build_parser`/`main` | -> `marc_repair_cli.py` (+ `check_holdings_records` moved up) | split run, **verifying** |
+| 7 Closeout | tests, flake8, installer, docs, before/after output comparison, commit, push | TODO |
+| 2, 5, split of QA out of core | NOT in this branch (future, see end) | FUTURE |
+
+"Split run" = the mechanical split was generated in one pass; a phase turns
+DONE only after the full suite and the before/after comparison pass.
+
+**Recon findings (Phase 0)**
+- File was 10,774 lines, ~196 top-level defs, ~134 module constants scattered
+  through every section (only 7 in the header). No `global` statements. The
+  `# ----` section banners mislead: the "Run profiles" banner is really
+  `run()` (1,010 lines) + `build_parser()` (680 lines) + `main`; the "CLI"
+  banner holds `repair_holdings_records`, `write_log`, `ProgressReporter`;
+  "Content patching" is the 78-def bib-rules block.
+- Layering is clean: common <- core <- patching <- cli. Only two real
+  back-edges: `LogEntry` (a dataclass in the CLI section) is used by core and
+  patching -> moved DOWN into common; `check_holdings_records` (core/streaming
+  section) calls `write_log` -> moved UP into cli. Other reported back-edges
+  were a local variable named `run`.
+- Module-level code that must travel with its block: the for-loops/`del _cat`
+  that fill `_DEDICATED_SECTIONS` (with the log code, cli).
+- Data files are located via `__file__`; every new module is a sibling of
+  them, so those paths are unchanged.
+
+**Design**
+- Why `core` is its own module: with only patching and cli extracted, they
+  would have to `import marc_repair` while `marc_repair.py` re-exports them (a
+  cycle), and running `python marc_repair.py` loads it as `__main__`, so the
+  import would load a *second copy* (duplicate classes). So `marc_repair.py`
+  is now a thin entry point/facade and all code is in sibling modules that
+  never import it.
+- `marc_repair.py` keeps the module docstring (HOW TO USE), imports `main`,
+  re-exports every public and private name of the four modules (a loop over
+  `vars()`), and keeps the `__main__` guard. `import marc_repair as m`,
+  `python marc_repair.py`, the venv wrapper and the EC2 install all still work.
+- Test consequence: `monkeypatch.setattr(m, "X", ...)` on the facade no longer
+  reaches code in another module. Three tests patch names (`m.detect_encoding`
+  x2, `m.run`); retarget them to the module that uses the name (`main` and
+  `run` live in `marc_repair_cli`). Test-setup change only.
+- `install.sh` `FILES` and the file lists in README / `docs/EC2_UPDATE.md` /
+  this file must gain the four new modules, or an installed copy breaks.
+
+**Safety net**
+- Baseline before the refactor: 659 tests pass; `flake8 --select=F,E9` clean
+  (the ~655 style warnings are pre-existing).
+- Before/after output comparison: `/tmp/cmp.sh DIR` (WSL) runs the tool over 7
+  fixtures x {plain, `--split-bib-holdings`, `--repair-holdings`} with
+  `--no-profile --source-system other`, normalising timestamps; baseline output
+  of the original code is in `/tmp/base` (regenerate from `main` if /tmp was
+  cleared). Compare `out.mrc`, `out.mrk`, `stdout.txt`, logs byte for byte.
+- Generation scripts (recon, dependency, split) were throwaway; the split is
+  reproducible from the rules above (AST statement chunks, per-block import
+  lists derived from pyflakes undefined-name reports).
+
+**Estimates:** the full split was ~500-750k tokens over 7 phases; this "cheap
+option" ~250-400k. Doing the rest later costs ~10-15% more than one pass.
+
+**Future (not in this branch):** Phase 2 (pure helpers out of core), Phase 5
+(reporting/log module split from cli), and splitting QA out of core
+(~1,270 lines). Independent of each other; do them soon after, while this
+layout is fresh, and keep each as pure-move commits.
 
 ### DONE -- trim records over 99999 bytes instead of diverting them (2026-10-29, on `main`)
 
