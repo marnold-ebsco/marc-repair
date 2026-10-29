@@ -8,6 +8,39 @@ current state and open items.
 
 ## Current state
 
+### IN PROGRESS -- run profiles (2026-10-29, branch `feature/profiles`)
+
+Goal: let users keep named sets of switches ("profiles") so the ~60 options do
+not have to be retyped, since people use the tool with different philosophies.
+
+Decisions (agreed with the user):
+- JSON profiles; keys are long option names without dashes, using the positive
+  meaning (`--no-fix-mojibake` -> `"fix_mojibake": false`). Input/output paths
+  are never in a profile.
+- Search `--profile-dir` if given and usable, else only `profiles/` next to the
+  script. 0 profiles: behave as before. 1: print `Using profile: <name>` and
+  continue. N: numbered interactive menu. Not a TTY: error unless `--profile`.
+- Precedence: defaults < profile < explicit switches (`parser.set_defaults`).
+  Unknown keys / wrong types are hard errors.
+- Loading and selection live in `marc_repair.py` (argparse setup is pulled
+  out of `main()` into `build_parser()`). Creating profiles (`init` wizard and
+  `save` from switches) is a separate script, `marc_repair_profile.py`, that
+  reuses `build_parser()`. Sample profiles ship in `profiles/`.
+
+### FUTURE WORK -- refactor `marc_repair.py` (decided 2026-10-29: not before profiles)
+
+`marc_repair.py` is ~10.5k lines in one file. We deliberately did NOT refactor
+before adding profiles: a full refactor would touch the repair logic, be far
+costlier than the feature (est. 500k+ tokens), and the fixtures give limited
+cover for every switch combination. Profile code therefore goes in the same
+file. When the major refactor happens:
+- Split by concern (parser/CLI + profiles, per-field-group repairs, MARC
+  parse/assemble I/O, logging) and move profile code into its own module.
+- Update `install.sh` (it fetches/pins individual files) and
+  `docs/EC2_UPDATE.md` for any new files or package layout.
+- Land it as its own branch, with the profile tests and the kitchen-sink
+  fixtures as the safety net; do not mix it with feature work.
+
 ### DONE -- trim records over 99999 bytes instead of diverting them (2026-10-29, on `main`)
 
 **Status: built, 616 tests pass, committed and pushed. Not yet run against a real corpus.** Code: `record_exceeds_max_length`,
