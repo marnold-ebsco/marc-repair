@@ -241,25 +241,35 @@ def test_missing_input_path_prompts_on_a_terminal(tmp_path, monkeypatch, capsys)
 
 def test_source_system_is_asked_then_displayed_once(monkeypatch, capsys):
     monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
-    answers = iter(["bogus", "3", "0", "1"])
+    answers = iter(["bogus", "4", "0", "1"])
     monkeypatch.setattr("builtins.input", lambda _p: next(answers))
     args = m.build_parser().parse_args([])
     m.resolve_source_system(args)
     out = capsys.readouterr()
     assert args.source_system == "sierra"
-    assert "1. sierra (907 $a required)" in out.out and "2. other (001 required)" in out.out
+    assert "1. sierra (907 $a required)" in out.out and "2. wms (001 required)" in out.out
+    assert "3. other (001 required)" in out.out
     assert "Source system: sierra" in out.out
-    assert out.err.count("please enter a number from 1 to 2") == 3
+    assert out.err.count("please enter a number from 1 to 3") == 3
     m.resolve_source_system(args)  # once per invocation
     assert capsys.readouterr().out == ""
 
 
-def test_source_system_number_two_is_other(monkeypatch):
+@pytest.mark.parametrize("answer, expected", [("2", "wms"), ("3", "other")])
+def test_source_system_numbers_two_and_three(monkeypatch, answer, expected):
     monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
-    monkeypatch.setattr("builtins.input", lambda _p: "2")
+    monkeypatch.setattr("builtins.input", lambda _p: answer)
     args = m.build_parser().parse_args([])
     m.resolve_source_system(args)
-    assert args.source_system == "other"
+    assert args.source_system == expected
+
+
+def test_wms_only_standard_tags(tmp_path):
+    p = tmp_path / "f.txt"
+    p.write_text("[standard]\n245 | T\n[wms]\n539 | X\n[obsolete]\n009 | O\n")
+    assert m.load_standard_marc_fields(str(p)) == ({"245"}, {"009"})
+    assert m.load_standard_marc_fields(str(p), "other") == ({"245"}, {"009"})
+    assert m.load_standard_marc_fields(str(p), "wms") == ({"245", "539"}, {"009"})
 
 
 def test_source_system_given_is_displayed_without_asking(monkeypatch, capsys):

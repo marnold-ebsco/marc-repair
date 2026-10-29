@@ -4011,8 +4011,8 @@ def record_identifier(parsed: ParsedRecord) -> str:
     return value_907 or ""
 
 
-SOURCE_SYSTEMS = ("sierra", "other")
-_SOURCE_SYSTEM_IDENTIFIER = {"sierra": "907 $a", "other": "001"}
+SOURCE_SYSTEMS = ("sierra", "wms", "other")
+_SOURCE_SYSTEM_IDENTIFIER = {"sierra": "907 $a", "wms": "001", "other": "001"}
 
 
 def missing_identifier_reason(parsed: ParsedRecord, source_system: str | None) -> str | None:
@@ -4029,7 +4029,7 @@ def missing_identifier_reason(parsed: ParsedRecord, source_system: str | None) -
         )
         if not value.strip():
             return "907 $a is missing, although it is required for Sierra/iii migrations"
-    elif source_system == "other":
+    elif source_system in ("wms", "other"):
         field_001 = next((f for f in parsed.fields if f.tag == "001"), None)
         if field_001 is None or not (field_001.content or "").strip():
             return "001 is missing, although it is required for non-Sierra migrations"
@@ -5030,25 +5030,32 @@ NON_STANDARD_FIELD_DETAIL_LIMIT = 5
 _NON_STANDARD_PREVIEW_CHARS = 20
 
 
-def load_standard_marc_fields(path: str) -> tuple[set[str], set[str]]:
+def load_standard_marc_fields(
+    path: str, source_system: str | None = None
+) -> tuple[set[str], set[str]]:
     """Load standard_marc_fields.txt: returns (standard, obsolete) tag
-    sets. One `TAG | TITLE` per line under a `[standard]` or `[obsolete]`
-    heading; blank lines and lines starting with # are ignored. A tag in
-    neither section is non-standard."""
-    sections: dict[str, set[str]] = {"standard": set(), "obsolete": set()}
+    sets. One `TAG | TITLE` per line under a `[standard]`, `[obsolete]` or
+    `[wms]` heading; blank lines and lines starting with # are ignored.
+    The `[wms]` tags (standard in OCLC WMS only) count as standard only
+    when `source_system` is "wms". A tag in no standard section is
+    non-standard."""
+    sections: dict[str, set[str]] = {"standard": set(), "obsolete": set(), "wms": set()}
     current = None
     with open(path, encoding="utf-8") as fh:
         for line in fh:
             line = line.strip()
             if not line or line.startswith("#"):
                 continue
-            if line in ("[standard]", "[obsolete]"):
+            if line in ("[standard]", "[obsolete]", "[wms]"):
                 current = line[1:-1]
                 continue
             if current is None:
                 raise ValueError(f"{path}: tag {line!r} appears before a [section] heading")
             sections[current].add(line.split("|", 1)[0].strip())
-    return sections["standard"], sections["obsolete"]
+    standard = sections["standard"]
+    if source_system == "wms":
+        standard = standard | sections["wms"]
+    return standard, sections["obsolete"]
 
 
 def field_preview(f: Field_, max_chars: int = _NON_STANDARD_PREVIEW_CHARS) -> str:
@@ -5127,6 +5134,15 @@ class NonStandardFieldTally:
         return details
 
 
+def write_non_standard_toc(fh, tally: NonStandardFieldTally) -> None:
+    """A "table of contents" line per tag (with its instance count), in
+    tag order, for the top of the non-standard-fields report."""
+    fh.write("\nTags found:\n")
+    for tag in sorted(tally.instances):
+        obsolete = " [OBSOLETE]" if tag in tally.obsolete else ""
+        fh.write(f"\t{tag}{obsolete}: {tally.instances[tag]:,} instance(s)\n")
+
+
 def write_non_standard_supplement(path: str, tally: NonStandardFieldTally) -> bool:
     """Write every non-standard field occurrence, grouped by tag, in the
     same layout as the log's non_standard_marc_fields section but with
@@ -5140,6 +5156,7 @@ def write_non_standard_supplement(path: str, tally: NonStandardFieldTally) -> bo
             f"=== {sum(tally.instances.values()):,} instance(s) in "
             f"{tally.records_with_any:,} record(s), {len(tally.instances)} tag(s) ===\n"
         )
+        write_non_standard_toc(fh, tally)
         for tag in sorted(tally.instances):
             obsolete = " [OBSOLETE]" if tag in tally.obsolete else ""
             fh.write(
@@ -8055,6 +8072,7 @@ def write_log(
                 count_line += f" - {count_note}"
             fh.write(f"=== {count_line} ===\n")
             if tally is not None:
+                write_non_standard_toc(fh, tally)
                 _write_non_standard_blocks(fh, group, tally)
             elif category in full_categories and label != "INFORMATIONAL":
                 if category in _ID_LIST_ONLY_CATEGORIES:
@@ -9588,7 +9606,9 @@ def build_parser() -> argparse.ArgumentParser:
         choices=SOURCE_SYSTEMS,
         default=None,
         help="source system of the bib records: 'sierra' requires a 907 $a on "
-        "every record (no fallback to 001), 'other' requires a 001; a record "
+        "every record (no fallback to 001), 'wms' and 'other' require a 001 "
+        "('wms' also treats the [wms] tags in standard_marc_fields.txt as "
+        "standard); a record "
         "without one is UNFIXABLE (diverted to the _error file). Asked for "
         "interactively when not given; skipped when stdin isn't a terminal.",
     )
@@ -9727,12 +9747,14 @@ def resolve_source_system(args: argparse.Namespace) -> None:
                 print(f"please enter a number from 1 to {len(SOURCE_SYSTEMS)}", file=sys.stderr)
     if args.source_system == "sierra":
         print("Source system: sierra (every bib record needs a 907 $a)")
+    elif args.source_system == "wms":
+        print("Source system: wms (every bib record needs a 001)")
     elif args.source_system == "other":
         print("Source system: other (every bib record needs a 001)")
     else:
         print(
             "Source system: NOT SET -- the required-identifier check is skipped "
-            "(pass --source-system sierra|other, or run from a terminal to be asked)"
+            "(pass --source-system sierra|wms|other, or run from a terminal to be asked)"
         )
 
 
@@ -10027,7 +10049,9 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
         else set()
     )
     non_standard_tally = (
-        NonStandardFieldTally(*load_standard_marc_fields(args.standard_marc_fields_file))
+        NonStandardFieldTally(
+            *load_standard_marc_fields(args.standard_marc_fields_file, args.source_system)
+        )
         if args.check_non_standard_fields
         else None
     )

@@ -17,6 +17,7 @@ from pathlib import Path
 URL = "https://www.loc.gov/marc/bibliographic/ecbdlist.html"
 OUT = Path(__file__).resolve().parent.parent / "standard_marc_fields.txt"
 LOCAL_STANDARD = {
+    "012": "COPY AND VERSION IDENTIFICATION NUMBER (accepted)",
     "019": "LOCAL FIELD (local field, accepted)",
     "029": "LOCAL FIELD (local field, accepted)",
     "049": "LOCAL HOLDINGS (local field, accepted)",
@@ -32,7 +33,15 @@ LOCAL_STANDARD = {
     "690": "LOCAL SUBJECT ADDED ENTRY (local field, accepted)",
     "799": "LOCAL ADDED ENTRY (local field, accepted)",
 }
-FIELD_RE = re.compile(r"^(\d{3}) - (.+?)\s*$")
+# standard only for --source-system wms (OCLC); written as a [wms] section
+WMS_STANDARD = {
+    "539": "FIXED-LENGTH DATA ELEMENTS OF REPRODUCTION NOTE",
+    "790": "LOCAL ADDED ENTRY--PERSONAL NAME",
+    "793": "LOCAL ADDED ENTRY--UNIFORM TITLE",
+    "851": "PHYSICAL LOCATION",
+    "891": "PUBLICATION PATTERN DATA",
+}
+FIELD_RE =re.compile(r"^(\d{3}) - (.+?)\s*$")
 # trailing (R)/(NR), format codes like (BK AM CF), [OBSOLETE]/[LOCAL], "-"
 TRAIL_RE = re.compile(
     r"\s*(\[[A-Z-]+\]|-|\((?:NR|R)\)|\((?:[A-Z]{2}\s?)+\))\s*$")
@@ -49,6 +58,7 @@ HEADER = """\
 # are non-standard and reported as obsolete. 9XX tags are never reported
 # (handled by the checker, not this file).
 #
+# 012 is accepted although LC's field list doesn't include it.
 # 019, 029, 049, 069, 090, 092, 096, 099, 590, 599, 690 and 799 are accepted
 # local fields, and 265 and 440 are obsolete in MARC but accepted anyway
 # (none are reported as obsolete); other 59X/69X are non-standard.
@@ -86,6 +96,9 @@ def render(fields):
         obs.pop(tag, None)
     out = [HEADER, "[standard]"]
     out += [f"{t} | {std[t]}" for t in sorted(std)]
+    out += ["", "# Standard only when the source system is wms (OCLC); hand-maintained.",
+            "[wms]"]
+    out += [f"{t} | {WMS_STANDARD[t]}" for t in sorted(WMS_STANDARD)]
     out += ["", "[obsolete]"]
     out += [f"{t} | {obs[t]}" for t in sorted(obs)]
     return "\n".join(out) + "\n"
