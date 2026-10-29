@@ -3997,6 +3997,7 @@ def record_identifier(parsed: ParsedRecord) -> str:
 
 
 SOURCE_SYSTEMS = ("sierra", "other")
+_SOURCE_SYSTEM_IDENTIFIER = {"sierra": "907 $a", "other": "001"}
 
 
 def missing_identifier_reason(parsed: ParsedRecord, source_system: str | None) -> str | None:
@@ -9698,15 +9699,17 @@ def resolve_source_system(args: argparse.Namespace) -> None:
         return
     args._source_system_resolved = True
     if args.source_system is None and sys.stdin.isatty():
+        print("Source system of these records:")
+        for i, name in enumerate(SOURCE_SYSTEMS, 1):
+            print(f"  {i}. {name} ({_SOURCE_SYSTEM_IDENTIFIER[name]} required)")
         while args.source_system is None:
-            answer = input(
-                "Source system of these records -- 'sierra' (907 $a required) "
-                "or 'other' (001 required): "
-            ).strip().lower()
-            if answer in SOURCE_SYSTEMS:
+            answer = input(f"Which source system? [1-{len(SOURCE_SYSTEMS)}]: ").strip().lower()
+            if answer.isdigit() and 1 <= int(answer) <= len(SOURCE_SYSTEMS):
+                args.source_system = SOURCE_SYSTEMS[int(answer) - 1]
+            elif answer in SOURCE_SYSTEMS:
                 args.source_system = answer
             else:
-                print("please answer 'sierra' or 'other'", file=sys.stderr)
+                print(f"please enter a number from 1 to {len(SOURCE_SYSTEMS)}", file=sys.stderr)
     if args.source_system == "sierra":
         print("Source system: sierra (every bib record needs a 907 $a)")
     elif args.source_system == "other":

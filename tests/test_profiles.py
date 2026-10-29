@@ -241,15 +241,25 @@ def test_missing_input_path_prompts_on_a_terminal(tmp_path, monkeypatch, capsys)
 
 def test_source_system_is_asked_then_displayed_once(monkeypatch, capsys):
     monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
-    answers = iter(["bogus", "sierra"])
+    answers = iter(["bogus", "3", "0", "1"])
     monkeypatch.setattr("builtins.input", lambda _p: next(answers))
     args = m.build_parser().parse_args([])
     m.resolve_source_system(args)
     out = capsys.readouterr()
     assert args.source_system == "sierra"
-    assert "Source system: sierra" in out.out and "please answer" in out.err
-    m.resolve_source_system(args)
+    assert "1. sierra (907 $a required)" in out.out and "2. other (001 required)" in out.out
+    assert "Source system: sierra" in out.out
+    assert out.err.count("please enter a number from 1 to 2") == 3
+    m.resolve_source_system(args)  # once per invocation
     assert capsys.readouterr().out == ""
+
+
+def test_source_system_number_two_is_other(monkeypatch):
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda _p: "2")
+    args = m.build_parser().parse_args([])
+    m.resolve_source_system(args)
+    assert args.source_system == "other"
 
 
 def test_source_system_given_is_displayed_without_asking(monkeypatch, capsys):
@@ -274,9 +284,9 @@ def test_split_asks_for_source_system_once_before_splitting(tmp_path, monkeypatc
     shutil.copy(os.path.join(ROOT, "tests", "fixtures", "kitchen_sink_mixed.mrc"), src)
     monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
     prompts = []
-    monkeypatch.setattr("builtins.input", lambda p: prompts.append(p) or "sierra")
+    monkeypatch.setattr("builtins.input", lambda p: prompts.append(p) or "1")
     assert m.main([str(src), "--no-profile", "--split-bib-holdings"]) == 0
-    assert len(prompts) == 1 and "Source system" in prompts[0]
+    assert len(prompts) == 1 and "Which source system?" in prompts[0]
     out = capsys.readouterr().out
     assert out.count("Source system: sierra") == 1
     assert out.index("Source system: sierra") < out.index("bib record(s) written")
