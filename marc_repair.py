@@ -9690,6 +9690,34 @@ def main(argv: list[str] | None = None) -> int:
     return run(parser, args)
 
 
+def resolve_source_system(args: argparse.Namespace) -> None:
+    """Ask for the source system if none was given (terminal only), then always say what
+    this run will use, so it is never a silent default. Runs once per invocation: the bib
+    half of --split-bib-holdings inherits the answer."""
+    if getattr(args, "_source_system_resolved", False):
+        return
+    args._source_system_resolved = True
+    if args.source_system is None and sys.stdin.isatty():
+        while args.source_system is None:
+            answer = input(
+                "Source system of these records -- 'sierra' (907 $a required) "
+                "or 'other' (001 required): "
+            ).strip().lower()
+            if answer in SOURCE_SYSTEMS:
+                args.source_system = answer
+            else:
+                print("please answer 'sierra' or 'other'", file=sys.stderr)
+    if args.source_system == "sierra":
+        print("Source system: sierra (every bib record needs a 907 $a)")
+    elif args.source_system == "other":
+        print("Source system: other (every bib record needs a 001)")
+    else:
+        print(
+            "Source system: NOT SET -- the required-identifier check is skipped "
+            "(pass --source-system sierra|other, or run from a terminal to be asked)"
+        )
+
+
 def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
     """Everything main() does once the arguments (command line plus any profile) are final."""
     if args.sample_log is not None:
@@ -9736,6 +9764,7 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
         return 0
 
     if args.split_bib_holdings:
+        resolve_source_system(args)  # asked before the long split, used by the bib half
         base, ext = os.path.splitext(args.input)
         bib_path = f"{base}_bib{ext}"
         holdings_path = f"{base}_holdings{ext}"
@@ -9907,6 +9936,8 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
         )
         return 2
 
+    resolve_source_system(args)
+
     if args.transcode_marc8:
         try:
             import pymarc.marc8  # noqa: F401
@@ -10042,24 +10073,8 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
     n_total = 0
     n_unfixable = 0
     n_diverted_review = 0
+    resolve_source_system(args)  # normally already done up front; a no-op then
     source_system = args.source_system
-    if source_system is None:
-        if sys.stdin.isatty():
-            while source_system is None:
-                answer = input(
-                    "Source system of these records -- 'sierra' (907 $a required) "
-                    "or 'other' (001 required): "
-                ).strip().lower()
-                if answer in SOURCE_SYSTEMS:
-                    source_system = answer
-                else:
-                    print("please answer 'sierra' or 'other'", file=sys.stderr)
-        else:
-            print(
-                "warning: --source-system not given and stdin is not interactive -- "
-                "skipping the required-identifier check",
-                file=sys.stderr,
-            )
     error_path = _error_output_path(out_path)
     review_path = _needs_review_output_path(out_path)
     # Only accumulated until the one-time early estimate fires (see

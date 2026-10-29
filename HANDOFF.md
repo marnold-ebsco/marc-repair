@@ -18,7 +18,15 @@ appear, and `nohup` runs need `--profile NAME`. Also unproven: the
 Decided: with several profiles and no TTY the run errors (kept deliberately;
 no fallback profile).
 
-**Status: built, 648 tests pass (32 new in `tests/test_profiles.py`), flake8
+**First EC2 run (bucknell, 1.47M records) found two things, both fixed:**
+`install.sh` never shipped `holdings_required_a_tags.txt` (holdings repair
+crashed with FileNotFoundError; a test now checks every data file the code
+loads is in `FILES`), and the source-system question came late and silently
+skipped without a TTY. `resolve_source_system()` now asks up front (before a
+split too), always prints `Source system: ...` (or `NOT SET`), and the bib half
+inherits the answer. A missing input path also gets a clean error/prompt.
+
+**Status: built, 655 tests pass (39 in `tests/test_profiles.py`), flake8
 (`--max-line-length=100`) clean on the new files; `marc_repair.py` still has its
 51 pre-existing warnings, none new. Not yet tried on EC2 / real data.** Code:
 `# Run profiles` section + `build_parser()` in `marc_repair.py`;

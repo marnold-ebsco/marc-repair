@@ -237,6 +237,60 @@ def test_missing_input_path_prompts_on_a_terminal(tmp_path, monkeypatch, capsys)
     assert "is not a file -- enter another path" in capsys.readouterr().err
 
 
+# --- source system: asked up front, always displayed -----------------------------
+
+def test_source_system_is_asked_then_displayed_once(monkeypatch, capsys):
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+    answers = iter(["bogus", "sierra"])
+    monkeypatch.setattr("builtins.input", lambda _p: next(answers))
+    args = m.build_parser().parse_args([])
+    m.resolve_source_system(args)
+    out = capsys.readouterr()
+    assert args.source_system == "sierra"
+    assert "Source system: sierra" in out.out and "please answer" in out.err
+    m.resolve_source_system(args)
+    assert capsys.readouterr().out == ""
+
+
+def test_source_system_given_is_displayed_without_asking(monkeypatch, capsys):
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda _p: pytest.fail("must not ask"))
+    args = m.build_parser().parse_args(["--source-system", "other"])
+    m.resolve_source_system(args)
+    assert "Source system: other" in capsys.readouterr().out
+
+
+def test_source_system_not_set_without_a_terminal_is_stated(monkeypatch, capsys):
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
+    args = m.build_parser().parse_args([])
+    m.resolve_source_system(args)
+    assert args.source_system is None
+    assert "NOT SET" in capsys.readouterr().out
+
+
+def test_split_asks_for_source_system_once_before_splitting(tmp_path, monkeypatch, capsys):
+    import shutil
+    src = tmp_path / "mixed.mrc"
+    shutil.copy(os.path.join(ROOT, "tests", "fixtures", "kitchen_sink_mixed.mrc"), src)
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+    prompts = []
+    monkeypatch.setattr("builtins.input", lambda p: prompts.append(p) or "sierra")
+    assert m.main([str(src), "--no-profile", "--split-bib-holdings"]) == 0
+    assert len(prompts) == 1 and "Source system" in prompts[0]
+    out = capsys.readouterr().out
+    assert out.count("Source system: sierra") == 1
+    assert out.index("Source system: sierra") < out.index("bib record(s) written")
+
+
+def test_install_sh_ships_every_data_file_the_code_loads():
+    with open(os.path.join(ROOT, "install.sh"), encoding="utf-8") as f:
+        text = f.read()
+    for const in ("DEFAULT_REQUIRED_A_TAGS_FILE", "DEFAULT_NON_REPEATABLE_TAGS_FILE",
+                  "DEFAULT_HOLDINGS_REQUIRED_A_TAGS_FILE", "DEFAULT_STANDARD_MARC_FIELDS_FILE"):
+        name = os.path.basename(getattr(m, const))
+        assert f'"{name}"' in text, f"install.sh FILES is missing {name}"
+
+
 # --- marc_repair_profile.py -------------------------------------------------
 
 def test_save_stores_only_non_defaults(tmp_path, capsys):

@@ -46,6 +46,7 @@ FILES=(
   "pyproject.toml"
   "requirements.txt"
   "required_a_tags.txt"
+  "holdings_required_a_tags.txt"
   "non_repeatable_tags.txt"
   "standard_marc_fields.txt"
   "README.md"
