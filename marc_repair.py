@@ -1849,7 +1849,22 @@ def record_exceeds_max_length(parsed: ParsedRecord) -> int | None:
     (what `assemble_marc` would produce), else None."""
     # leader + 12-byte directory entry per field + directory terminator +
     # field data + record terminator
-    total = 24 + 12 * len(parsed.fields) + 1 + sum(_field_chunk_lengths(parsed)) + 1
+    overhead = 24 + 12 * len(parsed.fields) + 1 + 1
+    # Cheap pass first: a char count from the field structure directly,
+    # without building delimited() strings or encode()-ing anything. Every
+    # char is at most 4 UTF-8 bytes (1 for latin-1, where char count IS the
+    # byte count), so if even that pessimistic bound fits, the real,
+    # encoded total can only be smaller -- skip the expensive exact pass
+    # that almost every record (never near MAX_RECORD_BYTES) doesn't need.
+    char_total = sum(
+        len(f.content or "") + 1 if f.is_control()
+        else len(f.indicators) + sum(2 + len(data) for _code, data in f.subfields) + 1
+        for f in parsed.fields
+    )
+    bytes_per_char = 1 if parsed.leader[9:10] != "a" else 4
+    if overhead + bytes_per_char * char_total <= MAX_RECORD_BYTES:
+        return None
+    total = overhead + sum(_field_chunk_lengths(parsed))
     return total if total > MAX_RECORD_BYTES else None
 
 

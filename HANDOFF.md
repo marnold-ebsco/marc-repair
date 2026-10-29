@@ -540,12 +540,14 @@ instances/50 tags, Bucknell 5,021/4 tags, WTS 18,853/19 tags, UBahamas
 Possible follow-ups (none requested): a third `[ignore]`-style section for tags
 counted but never listed; holdings-record equivalent (the list is bib-only).
 
-### OPEN -- import-safety defaults + `--guarantee-importable`, branch `guarantee-importable` (2026-10-19)
+### DONE -- import-safety defaults + `--guarantee-importable` (2026-10-19, merged to `main`: `4f41993`..`919747c`; branch deleted 2026-10-29)
 
 **Status: implemented, tested, and empirically verified end-to-end against
-live FOLIO Data Import. Pushed to origin as branch `guarantee-importable`,
-NOT yet merged to `main`. The only remaining open item is the merge
-decision itself -- see bottom.**
+live FOLIO Data Import. Already merged to `main` (confirmed 2026-10-29 --
+the branch no longer existed locally or on origin; the `pre-guarantee-importable`
+tag marks the point before this work landed, and all 6 commits are reachable
+from `main`). This entry was previously stale, marking it OPEN after the
+merge had already happened.**
 
 **Background:** testing a FOLIO Data Import run of
 `tests/fixtures/kitchen_sink_bib.mrc` through the UI (bisecting record-by-
@@ -603,13 +605,10 @@ from this tool's own "data loss" labels:
   so neither needed any new handling.
 
 Full suite (492 tests) and flake8 (`--max-line-length=100`) both clean
-as of the last commit on this branch.
+as of the last commit of this work.
 
 **Where to pick this up:**
-1. Decide whether to merge `guarantee-importable` into `main`. Nothing
-   else is blocking it -- this is now just a judgment call on timing/
-   review, not unfinished work.
-2. If a future FOLIO test ever turns up another category that genuinely
+1. If a future FOLIO test ever turns up another category that genuinely
    needs diverting (same rigor as above: verify against a real job log,
    not by reading this tool's own DATA LOSS labels), add it where
    `diverted_for_review` is raised in `marc_repair.py`, extend
