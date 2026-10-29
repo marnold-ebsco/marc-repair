@@ -37,6 +37,9 @@ DIR_EXPLICIT=0
 FILES=(
   "marc_repair.py"
   "marc_repair_profile.py"
+  "profiles/mark-bib.json"
+  "profiles/mark-holdings.json"
+  "profiles/mark-wms.json"
   "profiles/examples/conservative.json"
   "profiles/examples/full.json"
   "profiles/examples/sierra.json"
