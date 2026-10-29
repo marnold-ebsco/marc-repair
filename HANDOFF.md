@@ -8,15 +8,21 @@ current state and open items.
 
 ## Current state
 
-### DONE (needs real-world test on EC2) -- run profiles (2026-10-29, merged to `main` and pushed; branch `feature/profiles` kept)
+### DONE -- run profiles, verified on real EC2 data (2026-10-29, merged to `main` and pushed; branch `feature/profiles` deleted 2026-10-29, fully merged)
 
-**Next step: update EC2 with `install.sh` (see `docs/EC2_UPDATE.md`) and try
-`--list-profiles`, then `--profile mark-wms` on a real mixed file** -- check
-the bib half honours the profile's switches, both `_repaired` files and logs
-appear, and `nohup` runs need `--profile NAME`. Also unproven: the
-`mark-*` profiles hold no switches beyond the mode flag (`mark-bib` is empty).
-Decided: with several profiles and no TTY the run errors (kept deliberately;
-no fallback profile).
+**Verified on EC2 against a real mixed file:** `--profile mark-wms` run
+against `working/bucknell_marc.mrc` (large real Sierra export, now on this
+machine too) split and repaired both halves correctly -- bib half honoured
+the profile's switches, both `_repaired` files and logs appeared as
+expected. First run (before the parsing-overhead fix below) took 776.36s
+start to finish; second run (after) took 722.49s. Still unproven: the
+`mark-bib` / `mark-holdings` profiles (no switches beyond the mode flag).
+
+**Next step (if wanted): try `--list-profiles` and `--profile mark-bib` /
+`mark-holdings`** on already-split files, and a `nohup ... &` run with
+`--profile NAME` to confirm that path end-to-end. Decided: with several
+profiles and no TTY the run errors (kept deliberately; no fallback
+profile).
 
 **First EC2 run (bucknell, 1.47M records) found two things, both fixed:**
 `install.sh` never shipped `holdings_required_a_tags.txt` (holdings repair
@@ -62,6 +68,44 @@ Decisions (agreed with the user):
   out of `main()` into `build_parser()`). Creating profiles (`init` wizard and
   `save` from switches) is a separate script, `marc_repair_profile.py`, that
   reuses `build_parser()`. Sample profiles ship in `profiles/`.
+
+### DONE -- skip the exact oversized-record byte check for records that obviously fit (2026-10-29, on `main`: `49bbcc3`)
+
+**Status: built, 656 tests pass, flake8 unchanged (51 pre-existing warnings,
+none new), output confirmed byte-identical before/after. Small real-world
+win (see profiling below), not the large one hoped for.**
+
+Prompted by "script run time has increased" -- traced to
+`record_exceeds_max_length()` (added by the trim-oversized-record work,
+2026-10-29) re-encoding every field of every record to bytes just to check
+a 99999-byte limit almost no record is near, duplicating work
+`assemble_marc()` does right after. Fixed with a cheap char-count upper
+bound computed straight from field structure (no `delimited()` string
+build, no `encode()`) -- `len(f.content)` for control fields,
+`len(indicators) + sum(2 + len(data) for subfields)` otherwise (2 =
+subfield delimiter + code byte). 1 char is at most 4 UTF-8 bytes (latin-1:
+exactly 1), so if that pessimistic bound already fits under
+`MAX_RECORD_BYTES`, the real encoded total can only be smaller and the
+exact per-field encode pass is skipped entirely. Only records that could
+plausibly exceed the limit fall through to it. Code:
+`record_exceeds_max_length` in `marc_repair.py` (~line 1847).
+
+**Profiled against a real 20k-record sample of `working/bucknell_marc.mrc`
+through `--profile mark-wms`** to see why the EC2 before/after times (776s
+-> 722s, ~7%) were far short of expectations: the size check was only ever
+~1% of total runtime. Core MARC parsing (`_read_intact_at` +
+`parse_directory`, `marc_repair.py` ~line 818/447) is ~56% of total time
+(38.6% self-time alone) -- the dominant cost by far, and it long predates
+this session's work (corruption-recovery parsing: finds real `0x1E`
+terminators rather than trusting the directory). All the repair passes
+combined (mojibake fix, smart-character normalization, duplicate-field
+handling, 010 dedupe, non-standard-field tally, assembly, etc.) are the
+remaining ~43%. **Decided (2026-10-29): leave parsing alone for now** --
+`_read_intact_at`/`parse_directory` are the most correctness-sensitive code
+in the tool (handle corrupted directories, wrapped lengths) and a bigger
+win there would need much more careful, higher-risk work than this fix.
+Not investigated further: whether the "everything else" 43% has more
+redundant-work patterns like the one just fixed.
 
 ### FUTURE WORK -- refactor `marc_repair.py` (decided 2026-10-29: not before profiles)
 
