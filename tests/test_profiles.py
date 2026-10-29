@@ -189,6 +189,37 @@ def test_main_reports_profile_used(tmp_path, capsys):
     assert "Using profile: only" in capsys.readouterr().out
 
 
+def test_split_forwards_profile_to_bib_repair_without_reselecting(tmp_path, monkeypatch, capsys):
+    """A profile that sets split_bib_holdings must not make the bib half split (or pick a
+    profile) again, and the bib half must run with the profile's other switches."""
+    import shutil
+    src = tmp_path / "mixed.mrc"
+    shutil.copy(os.path.join(ROOT, "tests", "fixtures", "kitchen_sink_mixed.mrc"), src)
+    pdir = tmp_path / "profiles"
+    pdir.mkdir()
+    _write(pdir, "wms.json", {"split_bib_holdings": True, "fix_mojibake": False}, "wms")
+    calls = []
+    real_run = m.run
+
+    def spy(parser, args):
+        calls.append(args)
+        return real_run(parser, args)
+
+    monkeypatch.setattr(m, "run", spy)
+    rc = m.main([str(src), "--profile-dir", str(pdir), "--source-system", "other",
+                 "--log", str(tmp_path / "shared.log"), "--mrk"])
+    assert rc == 0
+    assert capsys.readouterr().out.count("Using profile: wms") == 1
+    assert len(calls) == 2
+    top, bib = calls
+    assert top.split_bib_holdings is True
+    assert bib.split_bib_holdings is False and bib.fix_mojibake is False
+    assert bib.input == str(tmp_path / "mixed_bib.mrc")
+    assert bib.out == str(tmp_path / "mixed_bib_repaired.mrc")
+    assert bib.log is None and bib.mrk == ""
+    assert (tmp_path / "mixed_bib_repaired.mrc").exists()
+
+
 # --- marc_repair_profile.py -------------------------------------------------
 
 def test_save_stores_only_non_defaults(tmp_path, capsys):

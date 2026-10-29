@@ -641,6 +641,17 @@ command line — so an explicit switch always wins (`--profile sierra
 --sample-limit 5`). A repeatable switch such as `--log-full` *adds* to the
 profile's list rather than replacing it.
 
+### Profiles and `--split-bib-holdings`
+
+A profile that sets `split_bib_holdings` splits the file and repairs both
+halves in one run. The bib half runs with the same profile and switches as the
+run itself (its output and log names are derived from the bib file, so `-o` and
+`--log` are not shared). The holdings half honours the holdings-relevant subset
+(`fix_missing_852c`, `allow_single_digit_852b`, `allow_oversized_sentinel`,
+`trim_oversized_record`, `log_full`, `log_zero`). So a `mark-wms`-style profile
+can carry your bib preferences too; there is no need to run a bib profile
+afterwards.
+
 ### Creating a profile
 
 Use the separate `marc_repair_profile.py` script. It reads the same option

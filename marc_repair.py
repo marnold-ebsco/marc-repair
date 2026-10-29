@@ -9039,9 +9039,10 @@ def build_parser() -> argparse.ArgumentParser:
         "also --no-fix-missing-852c to disable the one holdings-"
         "specific content fix) -- output INPUT_holdings_repaired.EXT, "
         "logged to INPUT_holdings_log_TIMESTAMP.log; bib records via "
-        "this same default pipeline, as if separately run as "
-        "`marc_repair.py INPUT_bib.EXT` (only -o is forwarded, not "
-        "this invocation's other flags) -- output "
+        "this same pipeline, as if separately run as "
+        "`marc_repair.py INPUT_bib.EXT` with this invocation's other "
+        "switches and profile (except -o, --log, which are derived "
+        "from the bib output) -- output "
         "INPUT_bib_repaired.EXT, logged to "
         "INPUT_bib_repaired_log_TIMESTAMP.log. Either side's own "
         "unfixable records are diverted, byte-for-byte unchanged, to a "
@@ -9686,7 +9687,11 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Using profile: {profile['name']} ({profile['path']})")
             parser.set_defaults(**profile["options"])
     args = parser.parse_args(argv)
+    return run(parser, args)
 
+
+def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
+    """Everything main() does once the arguments (command line plus any profile) are final."""
     if args.sample_log is not None:
         run_ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         log_path = (
@@ -9792,15 +9797,25 @@ def main(argv: list[str] | None = None) -> int:
                 )
         if counts["bib"]:
             bib_repaired_path = f"{base}_bib_repaired.mrc"
-            # Recurses into this same function for the bib side, exactly
-            # as if the user separately ran `marc_repair.py bib_path -o
-            # bib_repaired_path` -- reuses the whole default bib pipeline
-            # below rather than duplicating it, at the cost of only
-            # forwarding -o here (not every other CLI flag from this
-            # invocation) -- the same tradeoff the holdings repair call
-            # above already makes (it only forwards a curated few of its
-            # own flags, not the full set either).
-            main([bib_path, "-o", bib_repaired_path])
+            # Re-enters run() for the bib side with this invocation's own
+            # resolved arguments (command line + profile), as if the user
+            # separately ran `marc_repair.py bib_path -o bib_repaired_path`
+            # with the same switches -- reuses the whole bib pipeline below
+            # rather than duplicating it. It must not go back through
+            # main(): that would select a profile again, and a profile that
+            # sets split_bib_holdings would split the bib file forever.
+            # Per-run output paths are not shared with the holdings side:
+            # --log is left to its default (derived from the bib output),
+            # and a bare --mrk / --sample-problems is kept bare so each
+            # derives its path from the bib output.
+            bib_args = argparse.Namespace(**vars(args))
+            bib_args.input = bib_path
+            bib_args.out = bib_repaired_path
+            bib_args.split_bib_holdings = False
+            bib_args.log = None
+            bib_args.mrk = None if args.mrk is None else ""
+            bib_args.sample_problems = None if args.sample_problems is None else ""
+            run(parser, bib_args)
         elapsed = time.perf_counter() - split_start
         print(f"done in {elapsed:.2f}s")
         return 0

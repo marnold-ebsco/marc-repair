@@ -21,6 +21,15 @@ or the non-TTY error, for every existing user and test run); README section
 Notes: `profiles/*.json` are user data (consider gitignoring if personal);
 the wizard asks every option (q ends early).
 
+**Split + profiles (fixed 2026-10-29):** `--split-bib-holdings` used to
+recurse via `main([bib_path, "-o", ...])`, which only forwarded `-o` and would
+have re-selected a profile and re-split forever under a profile that sets
+`split_bib_holdings`. `main()` is now parse + profile selection, then
+`run(parser, args)`; the bib half calls `run()` with a copy of the resolved
+args (`split_bib_holdings` off, `log` reset, bare `--mrk`/`--sample-problems`).
+Holdings half still forwards only its curated few switches -- extending it is
+open if wanted.
+
 Original goal: let users keep named sets of switches ("profiles") so the ~60 options do
 not have to be retyped, since people use the tool with different philosophies.
 
