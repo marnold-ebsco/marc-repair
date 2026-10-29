@@ -8,9 +8,17 @@ current state and open items.
 
 ## Current state
 
-### DONE -- run profiles (2026-10-29, branch `feature/profiles`, not merged to `main`)
+### DONE (needs real-world test on EC2) -- run profiles (2026-10-29, merged to `main` and pushed; branch `feature/profiles` kept)
 
-**Status: built, 647 tests pass (31 new in `tests/test_profiles.py`), flake8
+**Next step: update EC2 with `install.sh` (see `docs/EC2_UPDATE.md`) and try
+`--list-profiles`, then `--profile mark-wms` on a real mixed file** -- check
+the bib half honours the profile's switches, both `_repaired` files and logs
+appear, and `nohup` runs need `--profile NAME`. Also unproven: the
+`mark-*` profiles hold no switches beyond the mode flag (`mark-bib` is empty).
+Decided: with several profiles and no TTY the run errors (kept deliberately;
+no fallback profile).
+
+**Status: built, 648 tests pass (32 new in `tests/test_profiles.py`), flake8
 (`--max-line-length=100`) clean on the new files; `marc_repair.py` still has its
 51 pre-existing warnings, none new. Not yet tried on EC2 / real data.** Code:
 `# Run profiles` section + `build_parser()` in `marc_repair.py`;

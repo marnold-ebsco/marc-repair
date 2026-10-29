@@ -632,8 +632,10 @@ isn't a readable directory you get a warning and the default is used).
 Related switches: `--profile NAME|PATH` skips the menu (NAME matches a profile's
 name or file name; PATH is any profile file), `--no-profile` ignores profiles,
 and `--list-profiles` lists what was found and exits. With several profiles and
-no terminal (a script, cron), the run stops with an error instead of guessing —
-pass `--profile NAME` or `--no-profile`. `--count` and `--sample-log` never
+no terminal (cron, piped input, or `nohup ... &`, which detaches stdin), the run
+stops with an error instead of guessing — pass `--profile NAME` or
+`--no-profile`. From a terminal (including `screen`/`tmux`) it never errors; you
+get the menu. `--count` and `--sample-log` never
 load a profile.
 
 **Precedence:** built-in defaults, then the profile, then switches on the
