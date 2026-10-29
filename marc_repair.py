@@ -9712,6 +9712,13 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
         )
         return 0
 
+    if args.input and not os.path.isfile(args.input):
+        # a path given on the command line gets the same check as a typed one
+        if not sys.stdin.isatty():
+            parser.error(f"input file {args.input!r} is not a file")
+        print(f"{args.input!r} is not a file -- enter another path", file=sys.stderr)
+        args.input = None
+
     while not args.input:
         try:
             args.input = input("Input MARC file: ").strip()

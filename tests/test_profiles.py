@@ -220,6 +220,23 @@ def test_split_forwards_profile_to_bib_repair_without_reselecting(tmp_path, monk
     assert (tmp_path / "mixed_bib_repaired.mrc").exists()
 
 
+def test_missing_input_path_errors_without_a_terminal(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
+    with pytest.raises(SystemExit):
+        m.main([str(tmp_path / "nope.mrc"), "--no-profile"])
+    assert "is not a file" in capsys.readouterr().err
+
+
+def test_missing_input_path_prompts_on_a_terminal(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+    prompts = []
+    monkeypatch.setattr("builtins.input", lambda p: prompts.append(p) or FIXTURE)
+    rc = m.main([str(tmp_path / "nope.mrc"), "--no-profile", "--source-system", "other",
+                 "-o", str(tmp_path / "out.mrc"), "--log", str(tmp_path / "x.log")])
+    assert rc == 0 and prompts == ["Input MARC file: "]
+    assert "is not a file -- enter another path" in capsys.readouterr().err
+
+
 # --- marc_repair_profile.py -------------------------------------------------
 
 def test_save_stores_only_non_defaults(tmp_path, capsys):
