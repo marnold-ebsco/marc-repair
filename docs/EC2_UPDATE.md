@@ -31,6 +31,14 @@ curl -fsSL https://raw.githubusercontent.com/marnold-ebsco/marc-repair/main/inst
   `marc_repair_marc8.py`, `marc_repair_patching.py`, `marc_repair_report.py`,
   `marc_repair_cli.py`) behind in the install directory. Nothing imports them
   any more, so they are harmless, but they can be deleted.
+- Every run's log starts with a `Script version:` line (commit SHA, the
+  commit's UTC date and the ref), so you can tell which version made it:
+  `Script version: 1125957abc12 (committed 2026-10-30T12:00:00Z, ref main)`.
+  On EC2 it comes from `.marc_repair_install_info`, written by `install.sh`
+  (compare the date with the latest commit on GitHub). An install made by an
+  older installer has only the SHA marker, so its logs show the SHA and
+  "commit date unknown" until the next update. In a git checkout it is read
+  from git and gains ` + uncommitted changes` when tracked files are modified.
 - The existing venv is left alone unless the interpreter changes.
 - Other flags: `--ref <branch|tag>`, `--recreate-venv`,
   `--interpreter cpython|pypy`.

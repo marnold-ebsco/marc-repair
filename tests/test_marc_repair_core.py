@@ -536,6 +536,58 @@ class TestWriteRunTimingHeader:
         assert "Problem filename: problem.mrc\n" in content
 
 
+class TestScriptVersion:
+    def test_header_has_a_script_version_line_after_the_filenames(self, tmp_path):
+        log_path = tmp_path / "run.log"
+        now = m.datetime.now(m.timezone.utc)
+        m._write_run_timing_header(
+            str(log_path), now, now, "source.mrc", "repaired.mrc", "problem.mrc",
+        )
+        lines = log_path.read_text(encoding="utf-8").splitlines()
+        assert lines[1].startswith("Source filename:")
+        assert lines[2].startswith("Repaired filename:")
+        assert lines[3].startswith("Problem filename:")
+        assert lines[4].startswith("Script version: ")
+
+    def test_install_info_file_gives_sha_date_and_ref(self, tmp_path):
+        (tmp_path / ".marc_repair_install_info").write_text(
+            "sha=0123456789abcdef0123\ndate=2026-10-30T12:34:56Z\nref=main\n", encoding="utf-8"
+        )
+        assert m.script_version(str(tmp_path)) == (
+            "0123456789ab (committed 2026-10-30T12:34:56Z, ref main)"
+        )
+
+    def test_old_sha_only_marker_has_no_date(self, tmp_path):
+        (tmp_path / ".marc_repair_install_version").write_text("fedcba9876543210\n", encoding="utf-8")
+        out = m.script_version(str(tmp_path))
+        assert out.startswith("fedcba987654 (commit date unknown")
+
+    def test_nothing_to_go_on_says_unknown(self, tmp_path):
+        assert m.script_version(str(tmp_path)).startswith("unknown")
+
+    def test_git_checkout_reports_commit_date_in_utc_and_flags_edits(self, tmp_path):
+        import subprocess
+
+        def git(*args):
+            subprocess.run(
+                ["git", "-C", str(tmp_path), *args], check=True, capture_output=True,
+                env={**os.environ, "GIT_COMMITTER_DATE": "2026-10-30T08:00:00-04:00",
+                     "GIT_AUTHOR_DATE": "2026-10-30T08:00:00-04:00"},
+            )
+
+        git("init", "-q", "-b", "work")
+        git("config", "user.email", "t@example.com")
+        git("config", "user.name", "t")
+        (tmp_path / "f.txt").write_text("one\n", encoding="utf-8")
+        git("add", "f.txt")
+        git("commit", "-q", "-m", "first")
+        clean = m.script_version(str(tmp_path))
+        assert "(committed 2026-10-30T12:00:00Z, ref work)" in clean
+        assert "uncommitted" not in clean
+        (tmp_path / "f.txt").write_text("two\n", encoding="utf-8")
+        assert m.script_version(str(tmp_path)).endswith(" + uncommitted changes")
+
+
 class TestWriteLog:
     def test_groups_by_fixed_then_category_with_headers(self, tmp_path):
         entries = [

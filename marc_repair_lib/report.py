@@ -5,10 +5,11 @@ from __future__ import annotations
 
 import os
 import re
+import subprocess
 import sys
 import textwrap
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 
 from .common import (
     LogEntry,
@@ -656,6 +657,77 @@ def _timestamped_log_path(path: str, run_ts: str) -> str:
     return f"{base}_{run_ts}{ext}"
 
 
+#: Written by install.sh next to marc_repair.py: `sha=`, `date=` (the commit's
+#: committer date) and `ref=` lines. `.marc_repair_install_version` is the older,
+#: SHA-only marker the installer has always written.
+INSTALL_INFO_FILE = ".marc_repair_install_info"
+INSTALL_VERSION_FILE = ".marc_repair_install_version"
+
+
+def _utc_iso(stamp: str) -> str:
+    """A git/GitHub ISO-8601 timestamp (any UTC offset) as `YYYY-MM-DDTHH:MM:SSZ`;
+    returned unchanged when it doesn't parse."""
+    try:
+        return datetime.fromisoformat(stamp.strip()).astimezone(timezone.utc).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        )
+    except ValueError:
+        return stamp.strip()
+
+
+def _git(base_dir: str, *args: str) -> str | None:
+    try:
+        done = subprocess.run(
+            ["git", "-C", base_dir, *args], capture_output=True, text=True, timeout=5
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return done.stdout.strip() if done.returncode == 0 else None
+
+
+def script_version(base_dir: str | None = None) -> str:
+    """One line saying which commit of the script this run used, so a log shows
+    whether the run was made with an up-to-date copy: `<sha> (committed <UTC
+    time>, ref <ref>)`.
+
+    A git checkout is asked directly (and flagged `+ uncommitted changes` when
+    tracked files differ from that commit). An install.sh install has no `.git`,
+    so it reads the info file the installer wrote, or failing that the older
+    SHA-only marker (no date). `base_dir` is the folder holding marc_repair.py."""
+    if base_dir is None:
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if os.path.exists(os.path.join(base_dir, ".git")):
+        head = _git(base_dir, "log", "-1", "--format=%H%n%cI")
+        if head and "\n" in head:
+            sha, stamp = head.split("\n", 1)
+            ref = _git(base_dir, "rev-parse", "--abbrev-ref", "HEAD") or "?"
+            dirty = " + uncommitted changes" if _git(
+                base_dir, "status", "--porcelain", "--untracked-files=no"
+            ) else ""
+            return f"{sha[:12]} (committed {_utc_iso(stamp)}, ref {ref}){dirty}"
+    info: dict[str, str] = {}
+    try:
+        with open(os.path.join(base_dir, INSTALL_INFO_FILE), encoding="utf-8") as fh:
+            for line in fh:
+                key, sep, value = line.partition("=")
+                if sep:
+                    info[key.strip()] = value.strip()
+    except OSError:
+        pass
+    if info.get("sha"):
+        when = f"committed {_utc_iso(info['date'])}" if info.get("date") else "commit date unknown"
+        ref = f", ref {info['ref']}" if info.get("ref") else ""
+        return f"{info['sha'][:12]} ({when}{ref})"
+    try:
+        with open(os.path.join(base_dir, INSTALL_VERSION_FILE), encoding="utf-8") as fh:
+            sha = fh.read().strip()
+    except OSError:
+        sha = ""
+    if sha:
+        return f"{sha[:12]} (commit date unknown: re-run install.sh to record it)"
+    return "unknown (not a git checkout and no install.sh record found)"
+
+
 def _write_run_timing_header(
     log_path: str,
     started: datetime,
@@ -712,6 +784,7 @@ def _write_run_timing_header(
             fh.write(f"Problem filename: {_named(problem_path, problem_count)}\n")
         if review_path is not None:
             fh.write(f"Needs-review filename: {_named(review_path, review_count)}\n")
+        fh.write(f"Script version: {script_version()}\n")
         fh.write("\n")
 
 

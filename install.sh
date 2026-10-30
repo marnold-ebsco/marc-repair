@@ -121,14 +121,17 @@ need() {
 need curl
 need python3
 
-resolve_sha() {
+# Prints "<sha> <committer date>" for REF (the date goes into the install info
+# file below, so a run's log can say when its commit was made).
+resolve_commit() {
   curl -fsSL "https://api.github.com/repos/${REPO}/commits/${REF}" \
-    | python3 -c "import json,sys; print(json.load(sys.stdin)['sha'])"
+    | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['sha'], d['commit']['committer']['date'])"
 }
 
 echo "Resolving latest commit for ${REPO}@${REF}..."
-REMOTE_SHA="$(resolve_sha)"
-echo "Latest commit: ${REMOTE_SHA}"
+COMMIT_INFO="$(resolve_commit)"
+read -r REMOTE_SHA REMOTE_DATE <<< "$COMMIT_INFO"
+echo "Latest commit: ${REMOTE_SHA} (committed ${REMOTE_DATE})"
 
 # install.sh isn't in FILES below -- it can't safely rewrite itself
 # mid-loop the way those files get rewritten -- so a stale local copy
@@ -182,6 +185,10 @@ for f in "${FILES[@]}"; do
 done
 
 echo "${REMOTE_SHA}" > "${INSTALL_DIR}/${VERSION_MARKER}"
+# Read by marc_repair's log header ("Script version:"); the marker above stays
+# SHA-only because the up-to-date check compares it to the resolved SHA.
+printf 'sha=%s\ndate=%s\nref=%s\n' "${REMOTE_SHA}" "${REMOTE_DATE}" "${REF}" \
+  > "${INSTALL_DIR}/.marc_repair_install_info"
 
 VENV_DIR="${INSTALL_DIR}/venv"
 INTERPRETER_MARKER="${INSTALL_DIR}/.marc_repair_interpreter"

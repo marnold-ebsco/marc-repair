@@ -199,8 +199,13 @@ behind (fast-forwardable), pushed, tree clean. The only unverified part is
    SHA, so it can fetch these files without merging first). Confirm
    `marc_repair_lib/` (`__init__.py` + 7 modules) is created in the install dir.
 2. Run one real file with the venv wrapper and compare to a previous run's
-   output (`.mrc` byte-identical expected; log differs only in timestamps and
-   filenames).
+   output (`.mrc` byte-identical expected; log differs only in timestamps,
+   filenames and the new `Script version:` line). That line (added after the
+   refactor, as a separate non-move commit: `report.script_version()`,
+   `install.sh` writes `.marc_repair_install_info`) should show the branch tip's
+   SHA and commit date -- if it says "commit date unknown" the box was last
+   installed by the old installer; if the SHA is older than the tip, the update
+   did not take.
 3. If it works: merge `refactor/split-marc-repair` into `main` (fast-forward)
    and push. If `install.sh` misses a file, fix `FILES` and re-test.
 4. Optionally delete the old flat `marc_repair_*.py` files an existing install
