@@ -566,7 +566,7 @@ BIB_ROWS = [
         "Non-standard MARC field (tag not in standard_marc_fields.txt)",
         "Flagged only, no change", "**Yes**",
         "`non_standard_marc_fields`", "INFORMATION ONLY",
-        "**Yes** -- first 5 of each tag in detail, then \"and N more\"",
+        "No -- every occurrence goes to the separate `<log>_non_standard_fields.txt` report",
         "`--no-check-non-standard-fields` (list: "
         "`--standard-marc-fields-file`)",
     ),

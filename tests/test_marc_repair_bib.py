@@ -4867,16 +4867,11 @@ class TestNonStandardMarcFields:
             for n in range(8)
         ]
         content, out = self._run(tmp_path, recs)
-        assert "=== INFORMATION ONLY: non_standard_marc_fields ===" in content
-        assert "=== NO DATA LOSS ===" in content
-        assert "=== 9 instance(s) in 8 record(s), 2 tag(s); first 5 of each tag listed ===" in content
-        assert content.index("--- 241 [OBSOLETE]: 8 instance(s) in 8 record(s) ---") < \
-            content.index("--- 605: 1 instance(s) in 1 record(s) ---")
-        sec = content.split("--- 241")[1]
-        assert sec.count("\trecord ") == 6  # 5 x 241 + the 605 below it
-        assert "\tand 3 more 241" in content
-        assert "more 605" not in content
-        assert re.search(r"\trecord \d+ \(nsf\d+\)\t=241 \$a Series 0\n", content)
+        # the main log no longer carries this block; it has its own report
+        assert "non_standard_marc_fields" not in content
+        sup = open(glob.glob(str(tmp_path / "run_*_non_standard_fields.txt"))[0],
+                   encoding="utf-8").read()
+        assert sup.index("--- 241 [OBSOLETE]: 8 instance(s) in 8 record(s) ---") <             sup.index("--- 605: 1 instance(s) in 1 record(s) ---")
         # report only: output still has the fields
         data = out.read_bytes()
         assert data.count(b"Series ") == 8 and b"Methodism" in data
@@ -4887,7 +4882,7 @@ class TestNonStandardMarcFields:
             for n in range(8)
         ]
         content, _ = self._run(tmp_path, recs)
-        assert "\tand 3 more 241" in content  # log stays capped
+        assert "non_standard_marc_fields" not in content  # kept out of the log
         files = glob.glob(str(tmp_path / "run_*_non_standard_fields.txt"))
         assert len(files) == 1
         sup = open(files[0], encoding="utf-8").read()
@@ -4901,8 +4896,7 @@ class TestNonStandardMarcFields:
 
     def test_cli_nothing_non_standard_gets_zero_header(self, tmp_path):
         content, _ = self._run(tmp_path, [self._rec([])], "--log-zero")
-        sec = content.split("non_standard_marc_fields")[1]
-        assert "=== 0 record(s) ===" in sec and "--- " not in sec
+        assert "non_standard_marc_fields" not in content
 
     def test_cli_opt_out_flag(self, tmp_path):
         content, _ = self._run(

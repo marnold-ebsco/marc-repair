@@ -1,0 +1,1 @@
+E       assert '\tand 3 more 241' in "=== RUN: started 2026-10-30T21:11:35Z, finished 2026-10-30T21:11:35Z, elapsed 0.12s ===\nSource filename: in.mrc (8 r...coded_marc8 -- A MARC-8/ANSEL-encoded record was converted to UTF-8 and the leader's encoding byte flipped to match.\n"

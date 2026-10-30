@@ -17,8 +17,6 @@ from .common import (
 from .patching import (
     DEFAULT_852_LOCATION_CONTENT,
     NON_STANDARD_FIELD_CATEGORY,
-    NonStandardFieldTally,
-    write_non_standard_toc,
 )
 
 
@@ -282,8 +280,7 @@ _CHECK_DESCRIPTIONS: dict[str, str] = {
     "doubled_proxy_url": "A URL subfield (e.g. 856 $u) has a literally duplicated proxy prefix (e.g. "
     "an ezproxy wrapper repeated twice) -- a pre-existing error in the source "
     "record, not something this migration introduced.",
-    "non_standard_marc_fields": "A field whose tag isn't in standard_marc_fields.txt (LC's MARC 21 "
-    "bibliographic field list plus accepted local fields -- edit that file to add or remove tags) "
+    "non_standard_marc_fields": "A field whose tag isn't in standard_marc_fields.txt "
     "or is listed there as obsolete ([OBSOLETE]). 9XX fields are never reported. Report only -- "
     "nothing is changed or removed. Each tag is listed separately: its first 5 occurrences in "
     "detail, then \"and N more\".",
@@ -545,7 +542,6 @@ _CATEGORY_DISPLAY_NOTE: dict[str, str] = {
 #: unlikely to ever be individually fixed (dangling_880_link,
 #: invalid_isbn_issn_checksum) -- on request.
 _ALWAYS_FULL_CATEGORIES = {
-    "non_standard_marc_fields",
     "unfixable",
     "record_identifier_required",
     "diverted_for_review",
@@ -611,6 +607,11 @@ _SUMMARIZE_NO_DATA_LOSS_ENTRIES = {
 #: record -- see `write_log`. recoded_title_only_7xx_to_730 used to be
 #: the only member; it now gets a normal indented detail line per record.
 _ID_LIST_ONLY_CATEGORIES: set[str] = set()
+
+
+#: Categories whose log section puts a blank line between the
+#: (POSSIBLE) DATA LOSS entries and the NO DATA LOSS ones.
+_BLANK_LINE_BETWEEN_LOSS_GROUPS = {"bib_856_missing_u"}
 
 
 #: Where each 852 (Location)-related category sits within its own
@@ -817,30 +818,12 @@ def _write_description_header(fh, description: str) -> None:
         fh.write(f"{prefix}{line}\n")
 
 
-def _write_non_standard_blocks(fh, group: list[LogEntry], tally: NonStandardFieldTally) -> None:
-    """One block per tag, in tag order: a heading with that tag's own
-    counts (and [OBSOLETE] if it is), its detail entries, then an "and N
-    more <tag>" line if the tally counted more than were listed."""
-    by_tag: dict[str, list[LogEntry]] = {}
-    for e in group:
-        by_tag.setdefault(e.detail[1:4], []).append(e)  # detail is "=TAG ..."
-    for tag in sorted(tally.instances):
-        n_inst, n_rec = tally.instances[tag], tally.records[tag]
-        obsolete = " [OBSOLETE]" if tag in tally.obsolete else ""
-        fh.write(f"\n--- {tag}{obsolete}: {n_inst:,} instance(s) in {n_rec:,} record(s) ---\n")
-        for e in by_tag.get(tag, []):
-            fh.write(e.render() + "\n")
-        if n_inst > tally.listed.get(tag, 0):
-            fh.write(f"\tand {n_inst - tally.listed[tag]:,} more {tag}\n")
-
-
 def write_log(
     path: str,
     entries: list[LogEntry],
     active_categories: set[str] = frozenset(),
     full_categories: set[str] | None = None,
     count_notes: dict[str, str] | None = None,
-    non_standard_tally: NonStandardFieldTally | None = None,
     include_zero: bool = False,
 ) -> None:
     """Write `entries` grouped into sections -- NOT FIXED, then FIXED/
@@ -908,6 +891,10 @@ def write_log(
     by name with a one-line description, in a closing "CHECKS PERFORMED
     WITH NO FINDINGS" block -- so the log stays trim but still shows the
     full scope of what was tested."""
+    # non_standard_marc_fields has its own report (the *_non_standard_fields.txt
+    # supplement, see `write_non_standard_supplement`), so it is kept out of the log.
+    entries = [e for e in entries if e.category != NON_STANDARD_FIELD_CATEGORY]
+    active_categories = set(active_categories) - {NON_STANDARD_FIELD_CATEGORY}
     if full_categories is None:
         full_categories = _ALWAYS_FULL_CATEGORIES
     groups: dict[tuple[int, str, str], list[LogEntry]] = {}
@@ -953,25 +940,10 @@ def write_log(
                 count_line = f"{n_instances} record(s)"
             else:
                 count_line = f"{n_instances} instance(s) in {n_records} record(s)"
-            tally = (
-                non_standard_tally
-                if category == NON_STANDARD_FIELD_CATEGORY and non_standard_tally is not None
-                and non_standard_tally.instances
-                else None
-            )
-            if tally is not None:
-                count_line = (
-                    f"{sum(tally.instances.values()):,} instance(s) in "
-                    f"{tally.records_with_any:,} record(s), {len(tally.instances)} tag(s); "
-                    f"first {tally.limit} of each tag listed"
-                )
             if count_note:
                 count_line += f" - {count_note}"
             fh.write(f"=== {count_line} ===\n")
-            if tally is not None:
-                write_non_standard_toc(fh, tally)
-                _write_non_standard_blocks(fh, group, tally)
-            elif category in full_categories and label != "INFORMATIONAL":
+            if category in full_categories and label != "INFORMATIONAL":
                 if category in _ID_LIST_ONLY_CATEGORIES:
                     ids = dict.fromkeys(
                         e.record_id or f"record {e.record_idx}" for e in group
@@ -989,7 +961,14 @@ def write_log(
                             fh.write(e.render() + "\n")
                 else:
                     # DATA LOSS entries first, NO DATA LOSS last (stable)
+                    prev_no_loss = None
                     for e in sorted(group, key=_data_loss_rank):
+                        no_loss = _data_loss_rank(e) == 2
+                        if (category in _BLANK_LINE_BETWEEN_LOSS_GROUPS
+                                and prev_no_loss is not None
+                                and no_loss != prev_no_loss):
+                            fh.write("\n")
+                        prev_no_loss = no_loss
                         fh.write(e.render() + "\n")
         if skipped:
             if ordered:

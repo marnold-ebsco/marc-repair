@@ -72,7 +72,6 @@ from .patching import (
     HOLDINGS_CAPTION_PATTERN_TAGS,
     HOLDINGS_CAPTION_PATTERN_VALID_CODES,
     NON_STANDARD_FIELD_CATEGORY,
-    NON_STANDARD_FIELD_DETAIL_LIMIT,
     NonStandardFieldTally,
     _rewrite_stripping_invalid_tags,
     add_default_008,
@@ -1709,10 +1708,9 @@ def build_parser() -> argparse.ArgumentParser:
         default=True,
         help="do NOT report fields whose tag isn't in "
         "--standard-marc-fields-file. By default this report-only check "
-        "runs (bib records only; 9XX never reported) and logs the first "
-        f"{NON_STANDARD_FIELD_DETAIL_LIMIT} occurrences of each such tag "
-        "under INFORMATION ONLY as non_standard_marc_fields; nothing is "
-        "changed or removed",
+        "runs (bib records only; 9XX never reported) and writes every "
+        "occurrence to a separate <log>_non_standard_fields.txt report "
+        "(not the main log); nothing is changed or removed",
     )
     parser.add_argument(
         "--standard-marc-fields-file",
@@ -2887,7 +2885,6 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
     write_log(
         log_path, log_entries, active_categories=active_categories,
         full_categories=resolved_full_categories,
-        non_standard_tally=non_standard_tally,
         include_zero=args.log_zero,
     )
     if non_standard_tally is not None:
