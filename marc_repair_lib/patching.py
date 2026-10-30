@@ -2511,7 +2511,8 @@ def recode_title_only_7xx_to_730(parsed: ParsedRecord) -> list[str]:
     The new 730 is placed after any existing 730s, ahead of the next
     higher tag, the converted fields keeping their relative order.
 
-    Returns a list of detail strings, one per field recoded (category
+    Returns at most one detail string per record: the first field
+    recoded, plus " and N more" when there were others (category
     "recoded_title_only_7xx_to_730" -- see `main`)."""
     english = any(
         f.tag == "008" and f.is_control() and (f.content or "")[35:38] == "eng"
@@ -2539,12 +2540,14 @@ def recode_title_only_7xx_to_730(parsed: ParsedRecord) -> list[str]:
         )
         converted.append(new)
         details.append(
-            f"recoded ={f.tag}  {f.indicators}{_subfield_preview(subs)} to "
-            f"={new.tag}  {new.indicators}{_subfield_preview(new_subs)}"
+            f"={f.tag}  {f.indicators}: {_subfield_preview(subs)} recoded to "
+            f"={new.tag}  {new.indicators}: {_subfield_preview(new_subs)}"
         )
     if converted:
         at = next((i for i, f in enumerate(kept) if f.tag > "730"), len(kept))
         parsed.fields = kept[:at] + converted + kept[at:]
+    if len(details) > 1:
+        details = [f"{details[0]} and {len(details) - 1} more"]
     return details
 
 

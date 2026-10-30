@@ -271,7 +271,7 @@ BIB_ROWS = [
         "so the title is kept instead of lost",
         "Yes (`--no-recode-title-only-7xx`)",
         "`recoded_title_only_7xx_to_730`", "FIXED/REQUIRES ATTENTION",
-        "**Yes** (one comma-delimited line of record identifiers)",
+        "**Yes** (first field recoded per record, plus 'and N more')",
         "`--no-recode-title-only-7xx`",
     ),
     CategoryRow(

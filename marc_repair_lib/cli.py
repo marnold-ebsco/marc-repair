@@ -1309,8 +1309,8 @@ def build_parser() -> argparse.ArgumentParser:
         "$a). By default this runs BEFORE --strip-missing-required-a, "
         "so the title is kept instead of the field being removed; pass "
         "this flag to leave such fields for that removal instead. The "
-        "--log lists the recoded records' identifiers as one "
-        "comma-delimited line",
+        "--log gives one detail line per record: the first field "
+        "recoded, plus 'and N more' if there were others",
     )
     parser.add_argument(
         "--no-recode-6xx-b-to-a",

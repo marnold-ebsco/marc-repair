@@ -604,13 +604,13 @@ _SUMMARIZE_NO_DATA_LOSS_ENTRIES = {
 }
 
 
-#: Categories listed in full as just one comma-delimited line of record
+#: DEAD (currently empty, kept for possible future use): categories
+#: listed in full as just one comma-delimited line of record
 #: identifiers (bib numbers; "record N" for one with no identifier),
 #: de-duplicated and in file order, instead of one detail line per
-#: record -- see `write_log`.
-_ID_LIST_ONLY_CATEGORIES = {
-    "recoded_title_only_7xx_to_730",
-}
+#: record -- see `write_log`. recoded_title_only_7xx_to_730 used to be
+#: the only member; it now gets a normal indented detail line per record.
+_ID_LIST_ONLY_CATEGORIES: set[str] = set()
 
 
 #: Where each 852 (Location)-related category sits within its own

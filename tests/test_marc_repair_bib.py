@@ -5500,7 +5500,7 @@ class TestRecodePipeline:
         assert self._count(content, "recoded_6xx_b_to_a") == 1
         assert self._count(content, "field_removed_because_missing_a") == 0
         assert "$b recoded to $a -- " in content  # per-record detail, no --log-full
-        assert "\n997\n" in content  # 7xx->730: bare comma-delimited id list
+        assert "(997)\t=700  1 :" in content  # 7xx->730: indented per-record detail
         tags = [f.tag for f in out.fields]
         assert "730" in tags and "700" not in tags
         assert [f for f in out.fields if f.tag == "650"][0].subfields[0] == (
