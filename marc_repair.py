@@ -172,16 +172,18 @@ thing that needs a look before the run's output is usable at all.
 #   marc_repair_core     detection, reconstruction, streaming, assembly
 #   marc_repair_marc8    MARC-8 (ANSEL) repair and transcoding to UTF-8
 #   marc_repair_patching required-field patching, dedupe, recode
-#   marc_repair_cli      logging, profiles, run orchestration, argument parsing
+#   marc_repair_report   log file writing and the progress reporter
+#   marc_repair_cli      holdings repair, profiles, run orchestration, argument parsing
 import marc_repair_cli as _cli
 import marc_repair_common as _common
 import marc_repair_core as _core
 import marc_repair_marc8 as _marc8
 import marc_repair_patching as _patching
 import marc_repair_qa as _qa
+import marc_repair_report as _report
 from marc_repair_cli import main
 
-for _mod in (_common, _qa, _core, _marc8, _patching, _cli):
+for _mod in (_common, _qa, _core, _marc8, _patching, _report, _cli):
     for _name, _value in vars(_mod).items():
         if not _name.startswith("__"):
             globals()[_name] = _value

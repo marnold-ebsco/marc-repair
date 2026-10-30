@@ -41,6 +41,7 @@ FILES=(
   "marc_repair_core.py"
   "marc_repair_marc8.py"
   "marc_repair_patching.py"
+  "marc_repair_report.py"
   "marc_repair_cli.py"
   "marc_repair_profile.py"
   "profiles/mark-bib.json"
