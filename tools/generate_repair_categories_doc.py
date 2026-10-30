@@ -579,9 +579,9 @@ BIB_ROWS = [
         "856 (Electronic Location and Access) missing $u (URI) -- same "
         "real-world FOLIO/transform validation as holdings' "
         "`holdings_856_missing_u`",
-        "$a/$z recoded to $u when the URL is unambiguous: a lost 'u' code "
+        "A subfield recoded to $u when the URL is unambiguous: a lost 'u' code "
         "(`$a` \"u http://...\", `$a` \"u\" + `$h` \"ttps://...\") or a lone "
-        "`$a`/`$z` that is only an http(s) URL or a `www.` address (`https://` "
+        "subfield (any code) that is only an http(s) URL or a `www.` address (`https://` "
         "is added and the log entry says so). Anything else (URL embedded in "
         "text, no URL) is flagged only, no change",
         "Yes, always (recode); detect-only otherwise",

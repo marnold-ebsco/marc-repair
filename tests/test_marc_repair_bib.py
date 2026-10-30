@@ -4686,6 +4686,14 @@ class TestDetectOnlyChecks:
             "u", "http://x.org/a")
         assert self._recode([("z", "http://x.org/a")])[1] == [("u", "http://x.org/a")]
 
+    def test_recodes_bare_url_in_h(self):
+        assert self._recode([("h", "http://x.org/a")])[1] == [("u", "http://x.org/a")]
+
+    def test_recodes_bare_url_in_any_subfield(self):
+        for code in ("y", "3", "x", "q", "2"):
+            assert self._recode([(code, "http://x.org/a")])[1] == [
+                ("u", "http://x.org/a")]
+
     def test_adds_https_to_www(self):
         details, subs = self._recode([("a", "www.x.org")])
         assert subs == [("u", "https://www.x.org")]

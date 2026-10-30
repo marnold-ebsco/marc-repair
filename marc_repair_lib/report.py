@@ -469,7 +469,7 @@ _CHECK_DATA_LOSS: dict[str, str] = {
     "holdings_852_b_suspect_content": "POSSIBLE DATA LOSS",
     "holdings_853_missing_8": "POSSIBLE DATA LOSS",
     "holdings_856_missing_u": "NO DATA LOSS",
-    "bib_856_missing_u": "NO DATA LOSS",
+    "bib_856_missing_u": "POSSIBLE DATA LOSS",
     "split_holdings_multiple_852": "NO DATA LOSS",
     "unfixed_non_numeric_tag": "POSSIBLE DATA LOSS",
     "dangling_880_link": "NO DATA LOSS",
@@ -988,7 +988,8 @@ def write_log(
                         if "NO DATA LOSS" not in e.detail:
                             fh.write(e.render() + "\n")
                 else:
-                    for e in group:
+                    # DATA LOSS entries first, NO DATA LOSS last (stable)
+                    for e in sorted(group, key=_data_loss_rank):
                         fh.write(e.render() + "\n")
         if skipped:
             if ordered:
@@ -997,6 +998,16 @@ def write_log(
             for label, category in skipped:
                 description = _CHECK_DESCRIPTIONS.get(category, "(no description available)")
                 fh.write(f"{label}: {category} -- {_first_sentence(description)}\n")
+
+
+def _data_loss_rank(entry) -> int:
+    """Sort key: 0 = DATA LOSS, 1 = unmarked/POSSIBLE DATA LOSS,
+    2 = NO DATA LOSS."""
+    if "NO DATA LOSS" in entry.detail:
+        return 2
+    if "POSSIBLE DATA LOSS" in entry.detail:
+        return 1
+    return 0 if "DATA LOSS" in entry.detail else 1
 
 
 def _first_sentence(text: str) -> str:

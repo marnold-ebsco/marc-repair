@@ -2614,10 +2614,12 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
                 if args.fix_856_missing_u:
                     for detail in recode_856_missing_u(parsed):
                         rec_id = record_identifier(parsed)
-                        log("bib_856_missing_u", True, i, rec_id, detail)
+                        log("bib_856_missing_u", True, i, rec_id,
+                            f"{detail} -- NO DATA LOSS")
                     for detail in find_856_missing_u(parsed):
                         rec_id = record_identifier(parsed)
-                        log("bib_856_missing_u", False, i, rec_id, detail)
+                        log("bib_856_missing_u", False, i, rec_id,
+                            f"{detail} -- DATA LOSS")
                 if non_standard_tally is not None:
                     rec_id = record_identifier(parsed)
                     for detail in non_standard_tally.check(parsed, i, rec_id):

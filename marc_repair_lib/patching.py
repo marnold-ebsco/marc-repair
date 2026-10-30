@@ -1215,7 +1215,7 @@ def recode_856_missing_u(parsed: ParsedRecord) -> list[str]:
     unambiguous: (1) the "u" subfield code was lost into another
     subfield's data -- `$a` "u http://..." / "$u http://...", or `$a` "u"
     followed by `$h` "ttps://..." (the code and first letter shifted) --
-    or (2) exactly one $a or $z holds nothing but a bare http(s) URL,
+    or (2) exactly one subfield (any code) holds nothing but a bare http(s) URL,
     or a scheme-less "www...." address (https:// is added, and the log
     detail says so). Text with a URL embedded in it is left alone for
     `find_856_missing_u` to flag. Returns one detail
@@ -1244,7 +1244,7 @@ def recode_856_missing_u(parsed: ParsedRecord) -> list[str]:
         if what is None:
             urls = [
                 n for n, (code, data) in enumerate(subs)
-                if code in ("a", "z") and _BARE_URL_RE.fullmatch(data)
+                if _BARE_URL_RE.fullmatch(data)
             ]
             if len(urls) != 1:
                 continue
