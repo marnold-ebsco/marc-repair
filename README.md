@@ -695,7 +695,7 @@ marc_repair --list-profiles
 | File | Purpose |
 |---|---|
 | `marc_repair.py` | The tool's entry point (run this); re-exports the four modules below |
-| `marc_repair_common.py`, `marc_repair_qa.py`, `marc_repair_core.py`, `marc_repair_patching.py`, `marc_repair_cli.py` | The implementation, layered in that order (constants and types, QA checks and identifier helpers, detection/reconstruction/streaming/assembly/MARC-8, required-field patching, CLI/logging/profiles). Must sit beside `marc_repair.py` |
+| `marc_repair_common.py`, `marc_repair_qa.py`, `marc_repair_core.py`, `marc_repair_marc8.py`, `marc_repair_patching.py`, `marc_repair_cli.py` | The implementation, layered in that order (constants and types, QA checks and identifier helpers, detection/reconstruction/streaming/assembly, MARC-8 repair and transcoding, required-field patching, CLI/logging/profiles). Must sit beside `marc_repair.py` |
 | `marc_repair_profile.py` | Creates run profiles (`init` wizard, `save` from switches); see [Using profiles](#using-profiles) |
 | `profiles/` | Profile directory searched by `marc_repair`; `profiles/examples/` holds sample profiles (inactive until copied up) |
 | `pyproject.toml` | Packaging metadata — `pip install .` installs the `pymarc` dependency (deliberately no console-script entry point; see its comment, and `install.sh`'s wrapper, for why) |

@@ -35,27 +35,29 @@ from marc_repair_qa import (
     record_identifier,
 )
 from marc_repair_core import (
-    DEFAULT_B2_LEXICON_PATH,
     ESCAPE,
     _find_004_issues,
     _sniff_record_types,
     assemble_marc,
-    build_marc8_corpus_index,
     check_holdings_record,
     count_records,
     detect_encoding,
-    find_suspect_hex_encoded_marc8,
-    find_suspect_marc8_escapes,
-    fix_marc8_b2_umlaut,
-    fix_marc8_diacritic_escapes,
     iter_repair_stream,
-    load_b2_lexicon,
     read_intact_record,
     reattach_orphaned_trailing_fields,
     split_bib_holdings,
     to_mrk,
-    transcode_marc8_to_utf8,
     trim_oversized_record,
+)
+from marc_repair_marc8 import (
+    DEFAULT_B2_LEXICON_PATH,
+    build_marc8_corpus_index,
+    find_suspect_hex_encoded_marc8,
+    find_suspect_marc8_escapes,
+    fix_marc8_b2_umlaut,
+    fix_marc8_diacritic_escapes,
+    load_b2_lexicon,
+    transcode_marc8_to_utf8,
 )
 from marc_repair_patching import (
     DEFAULT_852_C_CONTENT,

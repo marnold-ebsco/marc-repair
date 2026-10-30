@@ -1,6 +1,6 @@
 """QA checks for marc_repair: flag suspicious content, identifier helpers and the
-duplicate-identifier check. Imports only marc_repair_common (it sits below core, which
-uses its identifier helpers)."""
+duplicate-identifier check. Imports only marc_repair_common (it sits below marc8,
+which uses its identifier helpers)."""
 
 from __future__ import annotations
 

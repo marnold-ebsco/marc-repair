@@ -24,9 +24,11 @@ from marc_repair_qa import (
     record_identifier,
 )
 from marc_repair_core import (
-    UNICODE_ENCODING_BYTE,
     assemble_marc,
     read_intact_record,
+)
+from marc_repair_marc8 import (
+    UNICODE_ENCODING_BYTE,
 )
 
 

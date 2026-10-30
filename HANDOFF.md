@@ -123,7 +123,7 @@ branch (no feature work mixed in). Pure moves only: no logic edits.
 | 4+5+6 Holdings, reporting/log, `run`/`build_parser`/`main` | -> `marc_repair_cli.py` (+ `check_holdings_records` moved up) | DONE 2026-10-29 |
 | 7 Closeout | tests, flake8, installer, docs, before/after output comparison, commit, push | DONE 2026-10-29 (results below); real EC2 data check still TODO |
 | QA split | QA checks + identifier helpers + duplicate-identifier check out of core -> `marc_repair_qa.py` (sits BELOW core: core's MARC-8 code uses `_record_lccn`/`_record_oclc`) | DONE 2026-10-29: core 3,721 -> 3,272, qa 464; 659 tests, flake8, 244-file output comparison identical |
-| 2 Pure helpers | MARC-8 fixers/transcoder out of core -> `marc_repair_marc8.py` | TODO (next) |
+| 2 Pure helpers | MARC-8 fixers/transcoder out of core -> `marc_repair_marc8.py` | DONE 2026-10-29: core 3,272 -> 1,635, marc8 1,648; same checks identical |
 | 5 Reporting/log | log tables, `write_log`, `ProgressReporter` out of cli -> `marc_repair_report.py` | TODO |
 | 8 Package folder | move the modules into a folder (user approved 2026-10-29, 4th commit) | TODO |
 
