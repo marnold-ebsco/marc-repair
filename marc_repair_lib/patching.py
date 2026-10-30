@@ -2340,22 +2340,36 @@ def dedupe_010_fields(parsed: ParsedRecord) -> list[str]:
     return [detail]
 
 
-#: 880 (Alternate Graphic Representation) run of `strip_missing_required_a`
-#: on its own (unlike 010 above, this one still uses the general
-#: missing/punctuation-only-$a rule -- an 880 has no $z-style fallback
-#: content worth preserving) -- see `main`, which logs it under its own
-#: category ("removed_880_missing_a") rather
-#: than the shared "field_removed_because_missing_a" one. An 880 exists
-#: solely to carry a linked vernacular/alternate-script representation of
-#: another field; its only other subfields ($6 linking data, $0-$8
-#: control subfields) never carry the actual heading content itself, so a
-#: blank/punctuation-only $a here means the vernacular text was never
-#: populated at all -- confirmed in real production data (WTS_bibs
-#: 2026-10-01): two records each had an 880 linked to their 100 and
-#: explicitly flagged as Greek script (066/$6 both say so), with $a
-#: containing nothing but whitespace. Definite DATA LOSS, not just
-#: POSSIBLE.
-_880_REQUIRED_A_TAGS = frozenset({"880"})
+def strip_880_missing_6(parsed: ParsedRecord) -> list[str]:
+    """Remove every 880 (Alternate Graphic Representation) with no usable
+    $6. The $6 is the only subfield an 880 requires: it carries the
+    linking data (tag-occurrence/script) tying the 880 to the field it
+    represents, so an 880 without one is orphaned and cannot be used.
+    $a is NOT required (an 880 mirrors whatever subfields its linked
+    field has). A $6 that is empty or whitespace-only counts as missing.
+
+    A field with no non-empty subfield at all is removed silently;
+    otherwise a line describing what was discarded is returned (category
+    "removed_880_missing_6" -- see `main`) so it can be logged before the
+    content is gone. Definite DATA LOSS: the vernacular text is discarded.
+    """
+    details = []
+    kept = []
+    for f in parsed.fields:
+        if f.is_control() or f.tag != "880":
+            kept.append(f)
+            continue
+        if any(code == "6" and data.strip() for code, data in f.subfields):
+            kept.append(f)
+            continue
+        if any(data for code, data in f.subfields):
+            body = _log_preview("".join(f"${code}{data}" for code, data in f.subfields))
+            details.append(
+                f"removed =880  {f.indicators}{body}	(missing required $6; "
+                "content discarded)"
+            )
+    parsed.fields = kept
+    return details
 
 
 #: Longest run of a field's own text a log line may quote before it is
@@ -2406,12 +2420,8 @@ def strip_missing_required_a(
     "field_removed_because_missing_a" -- see `main`) so the caller can log it before the
     content is gone for good.
 
-    For an 880 specifically, the logged line only shows $6 and $a (the
-    subfields that actually matter for diagnosing a missing/punctuation-only
-    $a) plus 20 characters of whatever else the field held, not the full
-    (sometimes very long) vernacular-script body. For every tag, the
-    quoted field text is cut to its first 40 characters (see
-    `_log_preview`).
+    The quoted field text in the log line is cut to its first 40
+    characters (see `_log_preview`).
     """
     details = []
     kept = []
@@ -2427,20 +2437,7 @@ def strip_missing_required_a(
             kept.append(f)
             continue
         if any(data for code, data in f.subfields):
-            if f.tag == "880":
-                body = "".join(
-                    f"${code}{data}" for code, data in f.subfields if code in ("6", "a")
-                )
-                rest = "".join(
-                    f"${code}{data}"
-                    for code, data in f.subfields
-                    if code not in ("6", "a")
-                )
-                if rest:
-                    ellipsis = "..." if len(rest) > 20 else ""
-                    body += f" [{rest[:20]}{ellipsis}]"
-            else:
-                body = "".join(f"${code}{data}" for code, data in f.subfields)
+            body = "".join(f"${code}{data}" for code, data in f.subfields)
             body = _log_preview(body)
             reason = (
                 f"{code_label} is punctuation only"

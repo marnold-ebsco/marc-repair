@@ -74,7 +74,6 @@ from .patching import (
     NON_STANDARD_FIELD_CATEGORY,
     NON_STANDARD_FIELD_DETAIL_LIMIT,
     NonStandardFieldTally,
-    _880_REQUIRED_A_TAGS,
     _rewrite_stripping_invalid_tags,
     add_default_008,
     add_default_245,
@@ -116,6 +115,7 @@ from .patching import (
     strip_invalid_subfield_codes,
     strip_missing_required_a,
     strip_null_identifiers,
+    strip_880_missing_6,
     strip_whitespace_only_010_a,
     write_non_standard_supplement,
 )
@@ -2483,10 +2483,10 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
                     rec_id = record_identifier(parsed)
                     for detail in dedupe_010_fields(parsed):
                         log("deduped_010_lccn", True, i, rec_id, detail)
-                if args.remove_880_missing_a:
+                if args.remove_880_missing_6:
                     rec_id = record_identifier(parsed)
-                    for detail in strip_missing_required_a(parsed, _880_REQUIRED_A_TAGS):
-                        log("removed_880_missing_a", True, i, rec_id, detail)
+                    for detail in strip_880_missing_6(parsed):
+                        log("removed_880_missing_6", True, i, rec_id, detail)
                 if args.strip_empty_fields:
                     strip_empty_fields(parsed)
                 if args.merge_duplicate_040:
@@ -2804,7 +2804,7 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
         "unfixed_non_numeric_tag", "invalid_indicator_value", "invalid_bibliographic_level",
         "leader_entry_map_fixed", "oversized_sentinel_fixed", "duplicate_identifier",
         "removed_null_identifier", "suspect_marc8_escape", "suspect_hex_encoded_marc8",
-        "removed_010_whitespace_a", "removed_880_missing_a", "truncated_oversized_field", "collapsed_oversized_field_escapes",
+        "removed_010_whitespace_a", "removed_880_missing_6", "truncated_oversized_field", "collapsed_oversized_field_escapes",
         "trimmed_oversized_record", "bib_856_missing_u",
     }
     if args.fix_bad_indicators:

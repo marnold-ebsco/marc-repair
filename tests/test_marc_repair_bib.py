@@ -2364,45 +2364,60 @@ class TestDedupe010Fields:
 
 
 # ---------------------------------------------------------------------------
-# 880 (Alternate Graphic Representation) missing/effectively-empty $a --
-# reuses strip_missing_required_a under its own category
-# (removed_880_missing_a), since an 880's other subfields ($6 linking data,
-# etc.) never carry the vernacular heading content itself (real shape seen
-# in WTS_bibs_2026-10-01_repaired.mrc: $a all spaces or spaces+period, $6
-# linking back to a Greek-flagged 100).
+# 880 (Alternate Graphic Representation) with no $6 -- strip_880_missing_6,
+# category removed_880_missing_6. $6 is the only required subfield; $a is not.
 # ---------------------------------------------------------------------------
 
-class TestStrip880MissingA:
-    def test_space_only_a_with_6_is_removed_and_logged_with_full_field(self):
-        parsed = m.ParsedRecord(
-            leader="0" * 24,
-            entries=[],
-            fields=[m.Field_("880", "0 ", [("6", "100-01/(S"), ("a", "          ")])],
-        )
-        details = m.strip_missing_required_a(parsed, m._880_REQUIRED_A_TAGS)
+def _rec880(*fields):
+    return m.ParsedRecord(leader="0" * 24, entries=[], fields=list(fields))
+
+
+class TestStrip880Missing6:
+    def test_no_6_is_removed_and_logged(self):
+        parsed = _rec880(m.Field_("880", "0 ", [("a", "Αἰσχύλος.")]))
+        details = m.strip_880_missing_6(parsed)
         assert parsed.fields == []
         assert len(details) == 1
         assert "880" in details[0]
-        assert "100-01/(S" in details[0]
+        assert "missing required $6" in details[0]
 
-    def test_valid_a_is_kept(self):
-        parsed = m.ParsedRecord(
-            leader="0" * 24,
-            entries=[],
-            fields=[m.Field_("880", "0 ", [("6", "100-01/(S"), ("a", "Αἰσχύλος.")])],
+    def test_empty_or_whitespace_6_counts_as_missing(self):
+        parsed = _rec880(
+            m.Field_("880", "0 ", [("6", "  "), ("a", "x")]),
+            m.Field_("880", "0 ", [("6", ""), ("a", "y")]),
         )
-        details = m.strip_missing_required_a(parsed, m._880_REQUIRED_A_TAGS)
-        assert len(parsed.fields) == 1
-        assert details == []
+        assert len(m.strip_880_missing_6(parsed)) == 2
+        assert parsed.fields == []
 
-    def test_bib_pipeline_logs_under_own_category_unconditionally(self, tmp_path):
+    def test_6_without_a_is_kept(self):
+        parsed = _rec880(m.Field_("880", "0 ", [("6", "100-01/(S")]))
+        assert m.strip_880_missing_6(parsed) == []
+        assert len(parsed.fields) == 1
+
+    def test_6_with_blank_a_is_kept(self):
+        parsed = _rec880(m.Field_("880", "0 ", [("6", "100-01/(S"), ("a", "      ")]))
+        assert m.strip_880_missing_6(parsed) == []
+        assert len(parsed.fields) == 1
+
+    def test_entirely_empty_880_removed_silently(self):
+        parsed = _rec880(m.Field_("880", "  ", [("a", "")]))
+        assert m.strip_880_missing_6(parsed) == []
+        assert parsed.fields == []
+
+    def test_other_tags_untouched(self):
+        parsed = _rec880(m.Field_("245", "00", [("b", "no a, no 6")]))
+        assert m.strip_880_missing_6(parsed) == []
+        assert len(parsed.fields) == 1
+
+    def _run(self, tmp_path, extra_args=()):
         parsed = m.ParsedRecord(
             leader=_VALID_LEADER,
             entries=[],
             fields=[
                 m.Field_("001", None, None, content="997"),
                 m.Field_("008", None, None, content="x" * 40),
-                m.Field_("880", "0 ", [("6", "100-01/(S"), ("a", "          ")]),
+                m.Field_("880", "0 ", [("a", "orphan vernacular")]),
+                m.Field_("880", "0 ", [("6", "245-00/(S")]),
                 m.Field_("245", "00", [("a", "Some title.")]),
             ],
         )
@@ -2410,15 +2425,25 @@ class TestStrip880MissingA:
         src.write_bytes(m.assemble_marc(parsed))
         out = tmp_path / "out.mrc"
         log = tmp_path / "run.log"
-        rc = m.main([str(src), "-o", str(out), "--log", str(log)])
+        rc = m.main([str(src), "-o", str(out), "--log", str(log), *extra_args])
         assert rc == 0
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert "=== FIXED/REQUIRES ATTENTION: removed_880_missing_a ===" in content
+        return content, m.read_intact_record(out.read_bytes().decode("utf-8"))
+
+    def test_bib_pipeline_logs_under_own_category(self, tmp_path):
+        content, out_parsed = self._run(tmp_path)
+        assert "=== FIXED/REQUIRES ATTENTION: removed_880_missing_6 ===" in content
         assert "DATA LOSS" in content
-        assert _detail_line_marker("removed_880_missing_a").search(content)
-        assert "100-01/(S" in content
-        out_parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
-        assert not any(f.tag == "880" for f in out_parsed.fields)
+        assert _detail_line_marker("removed_880_missing_6").search(content)
+        assert "orphan vernacular" in content
+        remaining = [f for f in out_parsed.fields if f.tag == "880"]
+        assert [f.subfields for f in remaining] == [[("6", "245-00/(S")]]
+
+    def test_switch_off_keeps_orphan_880(self, tmp_path):
+        content, out_parsed = self._run(tmp_path, ["--no-remove-880-missing-6"])
+        assert "=== FIXED/REQUIRES ATTENTION: removed_880_missing_6 ===" not in content
+        assert not _detail_line_marker("removed_880_missing_6").search(content)
+        assert len([f for f in out_parsed.fields if f.tag == "880"]) == 2
 
 
 # ---------------------------------------------------------------------------

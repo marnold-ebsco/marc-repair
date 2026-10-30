@@ -60,7 +60,7 @@ checking the per-record job log, not by guessing from this tool's own
   * 010 (LCCN) whitespace-only `$a` stripped, or duplicate 010s merged
     (`removed_010_whitespace_a`, `deduped_010_lccn`)
   * a 6xx/7xx (or other required-`$a`) field removed for lacking `$a`
-    (`field_removed_because_missing_a`, `removed_880_missing_a`)
+    (`field_removed_because_missing_a`, `removed_880_missing_6`)
 If a future FOLIO test turns up a category that genuinely does need
 diverting, add it to the curated set wherever `diverted_for_review` is
 raised in `marc_repair.py` and document it in this section too -- don't
@@ -90,7 +90,7 @@ infer it from a category's DATA LOSS/POSSIBLE DATA LOSS label alone.
 | Missing-required-$a field removal (also treats a punctuation-only $a, e.g. "." or "--", as missing) | Removed field | Yes (`--no-strip-missing-required-a`) | `field_removed_because_missing_a` | FIXED/REQUIRES ATTENTION | **Yes** | `--no-strip-missing-required-a`; `--required-a-tags-file`. The logged content is cut to its first 40 characters |
 | 010 (LCCN) $a present but made up entirely of whitespace (e.g. a single space) | Removed only the $a subfield (any $b or $z is retained; the field itself is dropped only if nothing but that $a was there) | Yes, always | `removed_010_whitespace_a` | INFORMATIONAL | No -- INFORMATIONAL categories are never listed in full, not even via --log-full | -- (no switch -- always runs and always logged) |
 | 010 (LCCN) deduplication -- a record with more than one 010, or a single 010 with more than one $a, is merged into exactly one. Every $a is compared with its whitespace stripped: if they all normalize the same, the stripped value survives and nothing is lost; if two or more normalize to genuinely different values, the best one is kept as $a (a value that is a valid LCCN under LC's structure rules, loc.gov/marc/lccn_structure.html, always beats one that is not; among valid LCCNs the newest year wins, then the highest serial) and the rest are moved to $z (nothing is lost, but treating them as Canceled/Invalid LCCNs is a guess that should be verified). Every $z (Canceled/Invalid LCCN) and $b (NUCMC control number -- rare, treated the same as $z) from every original 010 survives onto the merged field, de-duplicated -- except a $z that normalizes to the same value as the surviving $a, which is dropped as a contradiction ($b is kept even if it matches $a). Runs after the whitespace-only-$a removal above and before the generic duplicate-non-repeatable-field removal below, since 010 is deliberately excluded from that generic pass (non_repeatable_tags.txt) to avoid losing $z/$b along with a whole discarded duplicate field | Merged all 010 fields into one (see non_repeatable_tags.txt note) | Yes, always | `deduped_010_lccn` | FIXED/REQUIRES ATTENTION | **Yes** (only records where a different LCCN was moved to $z; identical-except-whitespace merges are summarized as a count) | -- (no switch -- always runs and always logged) |
-| 880 (Alternate Graphic Representation) missing/effectively-empty $a -- reuses the same missing-required-$a check above, as its own category: an 880 exists solely to carry a linked vernacular/alternate-script heading, and its only other subfields ($6 linking data, etc.) never carry that content themselves, so removing the whole field here is definite DATA LOSS, not just possible | Removed field (including any $6 it carried) | Yes, always | `removed_880_missing_a` | FIXED/REQUIRES ATTENTION | **Yes** | -- (no switch -- always runs and always logged) |
+| 880 (Alternate Graphic Representation) with no $6 -- $6 is the only subfield an 880 requires (it links the 880 to the field it represents; $a is not required), so an 880 without one is orphaned and removed. Definite DATA LOSS, not just possible | Removed field | Yes (`--no-remove-880-missing-6`) | `removed_880_missing_6` | FIXED/REQUIRES ATTENTION | **Yes** | `--no-remove-880-missing-6` |
 | Empty-field removal | Removed field | Yes (`--no-strip-empty-fields`) | -- (unconditional, unlogged either way) | -- | -- | `--no-strip-empty-fields` |
 | Duplicate non-repeatable field removal | Removed field | Yes (`--no-strip-duplicate-non-repeatable-fields`) | `removed_non_repeatable_duplicate` | FIXED/REQUIRES ATTENTION | **Yes** | `--no-strip-duplicate-non-repeatable-fields`; `--non-repeatable-tags-file` |
 | `--ensure-field` insertion | Added field | n/a (only if flag given) | `added_field` | FIXED/REQUIRES ATTENTION | No (header + count always shown; full per-record list via --log-full added_field) | `--ensure-field` |
@@ -214,7 +214,7 @@ invalid-subfield-code removal, `unfixable` diversion and its fallbacks.
 | `--remove-duplicate-non-repeatable-fields` | bib | on | `strip_duplicate_non_repeatable_fields` | `removed_non_repeatable_duplicate` | `--no-strip-duplicate-non-repeatable-fields` |
 | `--remove-010-whitespace-a` | bib | on | `remove_010_whitespace_a` | `removed_010_whitespace_a` |  |
 | `--merge-duplicate-010` | bib | on | `merge_duplicate_010` | `deduped_010_lccn` |  |
-| `--remove-880-missing-a` | bib | on | `remove_880_missing_a` | `removed_880_missing_a` |  |
+| `--remove-880-missing-6` | bib | on | `remove_880_missing_6` | `removed_880_missing_6` |  |
 | `--add-default-245` | bib | on | `add_default_245` | `added_default_245` |  |
 | `--fix-856-missing-u` | bib | on | `fix_856_missing_u` | `bib_856_missing_u` |  |
 | `--reattach-orphaned-fields` | bib | on | `reattach_orphaned_fields` | `reattached_orphaned_field` |  |
@@ -255,7 +255,7 @@ invalid-subfield-code removal, `unfixable` diversion and its fallbacks.
 | `--group-normalization` | `--normalize-smart-characters`, `--normalize-subfield-9`, `--fix-bad-indicators`, `--fix-008-length`, `--fix-invalid-leader-bytes` |
 | `--group-structural-salvage` | `--reattach-orphaned-fields`, `--fix-invalid-tags`, `--fix-misplaced-subfield-codes`, `--remove-empty-fields`, `--remove-null-identifiers` |
 | `--group-placeholders` | `--add-default-245`, `--add-default-008`, `--add-missing-852-location`, `--add-missing-852c` |
-| `--group-heading-cleanup` | `--recode-title-only-7xx`, `--recode-6xx-b-to-a`, `--remove-fields-missing-required-a`, `--remove-880-missing-a` |
+| `--group-heading-cleanup` | `--recode-title-only-7xx`, `--recode-6xx-b-to-a`, `--remove-fields-missing-required-a`, `--remove-880-missing-6` |
 | `--group-oversized` | `--collapse-oversized-field-escapes`, `--truncate-oversized-field`, `--trim-oversized-record` |
 | `--group-holdings-852` | `--recode-852-b-to-i`, `--remove-extra-852-b`, `--remove-duplicate-852-nr-subfields`, `--fix-852-b-suspect-content`, `--remove-bad-call-number`, `--remove-empty-852-subfields` |
 | `--group-holdings-record-splitting` | `--split-multiple-852`, `--split-multiple-004` |

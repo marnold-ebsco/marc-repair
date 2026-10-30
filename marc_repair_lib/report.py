@@ -74,7 +74,7 @@ _FIXED_REQUIRES_ATTENTION = {
     "invalid_bibliographic_level",
     "holdings_852_b_suspect_content",
     "deduped_010_lccn",
-    "removed_880_missing_a",
+    "removed_880_missing_6",
     "removed_untranscodable_subfield",
 }
 
@@ -264,9 +264,9 @@ _CHECK_DESCRIPTIONS: dict[str, str] = {
     "(NUCMC control number -- rare, treated the same as $z) from every original 010 is "
     "carried onto the surviving field, de-duplicated -- except a $z matching the surviving "
     "$a, which is dropped as a contradiction.",
-    "removed_880_missing_a": "An 880 (Alternate Graphic Representation) field whose $a was empty or "
-    "effectively empty (e.g. all spaces, or punctuation only) -- the whole "
-    "field removed, including any $6 linking data it carried.",
+    "removed_880_missing_6": "An 880 (Alternate Graphic Representation) field with no $6 (its only "
+    "required subfield: the link to the field it represents) -- the whole "
+    "field removed. An 880 without a $a is kept.",
     "removed_invalid_subfield": "A subfield code that isn't a lowercase letter or digit -- the subfield "
     "removed.",
     "removed_untranscodable_subfield": "A subfield's MARC-8 content couldn't be transcoded to UTF-8 (genuinely "
@@ -457,7 +457,7 @@ _CHECK_DATA_LOSS: dict[str, str] = {
     "field_removed_because_missing_a": "POSSIBLE DATA LOSS",
     "removed_010_whitespace_a": "NO DATA LOSS",
     "deduped_010_lccn": "NO DATA LOSS",
-    "removed_880_missing_a": "DATA LOSS",
+    "removed_880_missing_6": "DATA LOSS",
     "removed_invalid_subfield": "POSSIBLE DATA LOSS",
     "removed_untranscodable_subfield": "DATA LOSS",
     "removed_bad_call_number": "POSSIBLE DATA LOSS",
@@ -557,7 +557,7 @@ _ALWAYS_FULL_CATEGORIES = {
     "recoded_6xx_b_to_a",
     "recoded_title_only_7xx_to_730",
     "deduped_010_lccn",
-    "removed_880_missing_a",
+    "removed_880_missing_6",
     "removed_invalid_subfield",
     "removed_untranscodable_subfield",
     "truncated_oversized_field",

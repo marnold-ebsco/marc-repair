@@ -106,8 +106,8 @@ SWITCHES: tuple[Switch, ...] = (
        help="remove an 010 $a made up entirely of whitespace"),
     _s("merge_duplicate_010", "merge-duplicate-010", True, "bib", "deduped_010_lccn",
        help="merge a record's several 010s (or several $a in one 010) into exactly one"),
-    _s("remove_880_missing_a", "remove-880-missing-a", True, "bib", "removed_880_missing_a",
-       help="remove an 880 whose $a is missing or effectively empty"),
+    _s("remove_880_missing_6", "remove-880-missing-6", True, "bib", "removed_880_missing_6",
+       help="remove an 880 with no $6 (its only required subfield)"),
     _s("add_default_245", "add-default-245", True, "bib", "added_default_245"),
     _s("fix_856_missing_u", "fix-856-missing-u", True, "bib", "bib_856_missing_u",
        help="recode an unambiguous 856 $a/$z URL to $u, and flag the rest (an 856 with no $u)"),
@@ -200,7 +200,7 @@ GROUPS: dict[str, tuple[str, ...]] = {
     ),
     "heading-cleanup": (
         "recode_title_only_7xx", "recode_6xx_b_to_a", "strip_missing_required_a",
-        "remove_880_missing_a",
+        "remove_880_missing_6",
     ),
     "oversized": (
         "collapse_oversized_field_escapes", "truncate_oversized_field", "trim_oversized_record",

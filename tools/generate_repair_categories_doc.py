@@ -78,7 +78,7 @@ checking the per-record job log, not by guessing from this tool's own
   * 010 (LCCN) whitespace-only `$a` stripped, or duplicate 010s merged
     (`removed_010_whitespace_a`, `deduped_010_lccn`)
   * a 6xx/7xx (or other required-`$a`) field removed for lacking `$a`
-    (`field_removed_because_missing_a`, `removed_880_missing_a`)
+    (`field_removed_because_missing_a`, `removed_880_missing_6`)
 If a future FOLIO test turns up a category that genuinely does need
 diverting, add it to the curated set wherever `diverted_for_review` is
 raised in `marc_repair.py` and document it in this section too -- don't
@@ -333,17 +333,15 @@ BIB_ROWS = [
         "-- (no switch -- always runs and always logged)",
     ),
     CategoryRow(
-        "880 (Alternate Graphic Representation) missing/effectively-empty "
-        "$a -- reuses the same missing-required-$a check above, as its own "
-        "category: an 880 exists solely to carry a linked vernacular/"
-        "alternate-script heading, and its only other subfields ($6 "
-        "linking data, etc.) never carry that content themselves, so "
-        "removing the whole field here is definite DATA LOSS, not just "
-        "possible",
-        "Removed field (including any $6 it carried)",
-        "Yes, always", "`removed_880_missing_a`", "FIXED/REQUIRES ATTENTION",
+        "880 (Alternate Graphic Representation) with no $6 -- $6 is the "
+        "only subfield an 880 requires (it links the 880 to the field it "
+        "represents; $a is not required), so an 880 without one is "
+        "orphaned and removed. Definite DATA LOSS, not just possible",
+        "Removed field",
+        "Yes (`--no-remove-880-missing-6`)", "`removed_880_missing_6`",
+        "FIXED/REQUIRES ATTENTION",
         "**Yes**",
-        "-- (no switch -- always runs and always logged)",
+        "`--no-remove-880-missing-6`",
     ),
     CategoryRow(
         "Empty-field removal", "Removed field",
