@@ -107,10 +107,13 @@ win there would need much more careful, higher-risk work than this fix.
 Not investigated further: whether the "everything else" 43% has more
 redundant-work patterns like the one just fixed.
 
-### IN PROGRESS -- split `marc_repair.py` into modules ("cheap option"), branch `refactor/split-marc-repair` (started 2026-10-29)
+### DONE -- split `marc_repair.py` into modules + `marc_repair_lib/` package (2026-10-29/30; merged to `main` at `69d6a5d`)
 
-Profiles are done, so the refactor deferred earlier is under way, as its own
-branch (no feature work mixed in). Pure moves only: no logic edits.
+Merged by fast-forward and the branch `refactor/split-marc-repair` deleted
+(local and remote). Verified on real EC2 data by the user after the final
+commit. The log-header `Script version:` line was added at the end as one
+non-move commit. Nothing here is pending except the optional items under
+"Follow-ups". Pure moves only (no logic edits) except that last commit.
 
 **Status (update this block as each phase finishes):**
 
@@ -189,31 +192,19 @@ findings", most likely because the temporary worktree lacked the untracked
 `WTS_bibs_2026-10-01_libsplit.mrc`, `..._libsplit_log_20261030T001759Z.log`,
 `..._non_standard_fields.txt`, `..._libsplit.run.stdout`.
 
-**Merge readiness (2026-10-29):** branch is 6 commits ahead of `main`, 0
-behind (fast-forwardable), pushed, tree clean. The only unverified part is
-`install.sh` fetching the new `marc_repair_lib/` files (syntax-checked only).
+**Closeout (2026-10-30):** the user updated the EC2 box with the installer from
+the branch (including the version-line commit), ran a real file, and confirmed
+all good; the branch was then fast-forwarded into `main` and deleted. Both
+things the earlier checks could not cover -- `install.sh` fetching the
+`marc_repair_lib/` files and writing `.marc_repair_install_info` -- are now
+verified on EC2.
 
-**Morning checklist (user will test):**
-1. On the EC2 box, update with the installer against this branch:
-   `install.sh --ref refactor/split-marc-repair` (the installer pins a commit
-   SHA, so it can fetch these files without merging first). Confirm
-   `marc_repair_lib/` (`__init__.py` + 7 modules) is created in the install dir.
-2. Run one real file with the venv wrapper and compare to a previous run's
-   output (`.mrc` byte-identical expected; log differs only in timestamps,
-   filenames and the new `Script version:` line). That line (added after the
-   refactor, as a separate non-move commit: `report.script_version()`,
-   `install.sh` writes `.marc_repair_install_info`) should show the branch tip's
-   SHA and commit date -- if it says "commit date unknown" the box was last
-   installed by the old installer; if the SHA is older than the tip, the update
-   did not take.
-3. If it works: merge `refactor/split-marc-repair` into `main` (fast-forward)
-   and push. If `install.sh` misses a file, fix `FILES` and re-test.
-4. Optionally delete the old flat `marc_repair_*.py` files an existing install
-   keeps (harmless; see `docs/EC2_UPDATE.md`).
-
-**Not yet done:** run on real EC2 data (the installer is untested against a
-real pinned install: after merging, update the EC2 box with the installer and
-confirm a run matches the previous output). Merge to `main` is the user's call.
+**Housekeeping still open (optional):**
+- EC2 install dir may still hold the old flat `marc_repair_*.py` files (harmless,
+  nothing imports them; see `docs/EC2_UPDATE.md`) -- delete when convenient.
+- `/tmp/cmp.sh` + `/tmp/base` (before/after comparison harness) are lost when
+  WSL restarts; the recipe is described under "Final layout" above if a future
+  refactor needs it again.
 
 **Recon findings (Phase 0)**
 - File was 10,774 lines, ~196 top-level defs, ~134 module constants scattered
