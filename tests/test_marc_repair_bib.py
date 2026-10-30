@@ -4215,6 +4215,67 @@ class TestFindAndFixMojibake:
         assert len(details) == 1
         assert parsed.fields[0].content == "Großbritannien"
 
+    def test_fixes_undefined_cp1252_byte(self):
+        # "A with acute" is UTF-8 C3 81; cp1252 leaves 0x81 undefined, so
+        # the double-encoded form is "Ã" + U+0081 and Python's cp1252
+        # codec can't re-encode it -- the "sloppy" fallback must.
+        parsed = self._record("Ãrpád")
+        assert len(m.find_and_fix_mojibake(parsed)) == 1
+        assert parsed.fields[0].subfields == [("a", "Árpád")]
+
+    def test_fixes_other_lead_bytes(self):
+        # Polish l-stroke (C5 82), Cyrillic (D0 9C D0 BE), CJK (E6 97 A5)
+        cases = {
+            "Å‚ódÅº": "łódź",
+            "ÐœÐ¾Ñ": "Мос",
+            "æ—¥æœ¬": "日本",
+        }
+        for bad, good in cases.items():
+            parsed = self._record(bad)
+            assert len(m.find_and_fix_mojibake(parsed)) == 1, bad
+            assert parsed.fields[0].subfields == [("a", good)], bad
+
+    def test_fixes_mojibake_next_to_correct_non_cp1252_text(self):
+        # the genuine "l-stroke" can't be encoded as cp1252, which used
+        # to block the whole subfield; only the damaged run is touched
+        parsed = self._record("Łódź and GroÃŸbritannien")
+        assert len(m.find_and_fix_mojibake(parsed)) == 1
+        assert parsed.fields[0].subfields == [("a", "Łódź and Großbritannien")]
+
+    def test_guard_skips_non_latin_run_inside_correct_non_latin_text(self):
+        # real GTU case: garbled-but-Arabic field where "Þ·" happens to be
+        # valid UTF-8 for a Thaana letter -- leave the whole field alone
+        text = "إجخح ♭ج ائ؟ج إŁÞ·إ® ة♭· ج Ø· ةح"
+        parsed = self._record(text)
+        assert m.find_and_fix_mojibake(parsed) == []
+        assert parsed.fields[0].subfields == [("a", text)]
+
+    def test_guard_still_fixes_punctuation_next_to_real_hebrew(self):
+        # smart-quote mojibake decodes to punctuation, not a non-Latin
+        # letter, so real Hebrew in the same subfield doesn't block it
+        parsed = self._record("שלום â€œNationsâ€")
+        assert len(m.find_and_fix_mojibake(parsed)) == 1
+        assert parsed.fields[0].subfields == [("a", "שלום “Nations”")]
+
+    def test_guard_allows_non_latin_mojibake_in_latin_text(self):
+        parsed = self._record("Title: ÐœÐ¾Ñ (Moscow)")
+        assert len(m.find_and_fix_mojibake(parsed)) == 1
+        assert parsed.fields[0].subfields == [("a", "Title: Мос (Moscow)")]
+
+    def test_fixes_double_double_encoding(self):
+        once = "café".encode("utf-8").decode("cp1252")
+        twice = once.encode("utf-8").decode("cp1252")
+        assert twice != once
+        parsed = self._record(twice)
+        assert len(m.find_and_fix_mojibake(parsed)) == 1
+        assert parsed.fields[0].subfields == [("a", "café")]
+
+    def test_leaves_legitimate_accents_and_symbols_untouched(self):
+        for text in ("Ñandú", "Ångström ©", "Çà et là", "Þórr ß", "naïve — café"):
+            parsed = self._record(text)
+            assert m.find_and_fix_mojibake(parsed) == [], text
+            assert parsed.fields[0].subfields == [("a", text)], text
+
     def test_no_fix_mojibake_flag_skips_it(self, tmp_path):
         parsed = m.ParsedRecord(
             leader=_SYNTHETIC_LEADER,

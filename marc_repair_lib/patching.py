@@ -6,6 +6,7 @@ from __future__ import annotations
 import os
 import re
 import tempfile
+import unicodedata
 from array import array
 from dataclasses import replace
 from difflib import SequenceMatcher
@@ -2956,44 +2957,115 @@ def normalize_smart_characters(parsed: ParsedRecord) -> list[str]:
     return details
 
 
-#: Telltale characters produced when correctly-decoded UTF-8 text gets
-#: re-interpreted a second time as Latin-1/Windows-1252 and re-encoded
-#: (a common real-world corruption from Excel/CSV round-trips and some
-#: legacy export pipelines) -- e.g. "e" (U+00E9, 2 UTF-8 bytes C3 A9)
-#: becomes "Ã©" once those 2 bytes are misread as 2 separate Latin-1
-#: characters. "Ã" (U+00C3) is by far the most common marker since it's
-#: the lead byte for most accented Latin letters' UTF-8 encoding; "Â"
-#: and "â€" cover the rest of the common cases (nbsp/symbols, smart
-#: quotes/dashes). See `_fix_mojibake`.
-_MOJIBAKE_MARKERS = ("Ã", "Â", "â€")
+def _sloppy_cp1252_char(byte: int) -> str:
+    """The character a Windows "ANSI" tool shows for `byte`. Python's
+    cp1252 codec rejects the five bytes Microsoft left undefined (0x81,
+    0x8D, 0x8F, 0x90, 0x9D), but real double-encoded text carries them
+    through as the matching C1 control character (e.g. "A with acute" is
+    UTF-8 C3 81, which shows up as "Ã" + U+0081) -- so fall back to that,
+    the same "sloppy" mapping ftfy uses."""
+    try:
+        return bytes([byte]).decode("cp1252")
+    except UnicodeDecodeError:
+        return chr(byte)
+
+
+_MOJIBAKE_BYTE_TO_CHAR = {b: _sloppy_cp1252_char(b) for b in range(0x80, 0x100)}
+_MOJIBAKE_CHAR_TO_BYTE = {c: b for b, c in _MOJIBAKE_BYTE_TO_CHAR.items()}
+
+
+def _mojibake_class(lo: int, hi: int) -> str:
+    return "[" + "".join(re.escape(_MOJIBAKE_BYTE_TO_CHAR[b]) for b in range(lo, hi + 1)) + "]"
+
+
+_MOJIBAKE_CONT = _mojibake_class(0x80, 0xBF)
+
+#: One UTF-8 multi-byte sequence as it looks once its bytes have each been
+#: shown as a separate cp1252 character: a lead byte (C2-DF = 2-byte,
+#: E0-EF = 3-byte, F0-F4 = 4-byte) followed by the right number of
+#: continuation bytes (80-BF). E.g. "e-acute" is C3 A9 -> "Ã©"; a Cyrillic
+#: letter is D0 xx -> "Ð" + a symbol; a Polish "l-stroke" is C5 82 -> "Å‚";
+#: a smart quote is E2 80 99 -> "â€™".
+_MOJIBAKE_SEQUENCE = re.compile(
+    _mojibake_class(0xC2, 0xDF) + _MOJIBAKE_CONT
+    + "|" + _mojibake_class(0xE0, 0xEF) + _MOJIBAKE_CONT + "{2}"
+    + "|" + _mojibake_class(0xF0, 0xF4) + _MOJIBAKE_CONT + "{3}"
+)
+
+
+def _has_non_latin_letter(text: str) -> bool:
+    """True if `text` has a letter or combining mark from a non-Latin
+    script (Greek and beyond; Thaana vowel signs, Hebrew points, etc. are
+    marks, not letters). Modifier letters (category Lm, e.g. the ayn/hamza
+    marks used in transliteration) don't count."""
+    return any(
+        ord(c) >= 0x370 and unicodedata.category(c) in _LETTER_CATEGORIES
+        and "LATIN" not in unicodedata.name(c, "")
+        for c in text
+    )
+
+
+_LETTER_CATEGORIES = frozenset(("Lu", "Ll", "Lt", "Lo", "Mn", "Mc"))
 
 
 def _fix_mojibake(text: str) -> str | None:
-    """Return the corrected text if `text` looks like it was UTF-8 that
-    got double-encoded, or None if not (leave it alone). Re-encoding as
-    cp1252 (Windows-1252) recovers the original bytes 1:1 -- cp1252
-    rather than strict latin-1, since real-world mojibake overwhelmingly
-    comes from Windows "ANSI" tools (Excel, legacy exports) that use
-    cp1252's byte assignments for 0x80-0x9F (e.g. byte 0x9F is 'Y with
-    diaeresis' in cp1252 vs. an unprintable C1 control code in strict
-    latin-1); cp1252 is identical to latin-1 everywhere else, so this
-    is strictly more capable, never less. Decoding those bytes as
-    UTF-8 only succeeds if they were genuinely valid UTF-8 to begin
-    with -- an essentially impossible coincidence for text that wasn't
-    actually double-encoded, so a successful round-trip is strong
-    confirmation, not a guess."""
-    # Same reasoning as _replace_smart_chars: every marker is non-ASCII,
-    # so this O(1) check skips the substring scans (and the encode/decode
-    # round-trip below) for ordinary ASCII text, which is most of it.
+    """Return the corrected text if `text` contains UTF-8 that got
+    double-encoded (UTF-8 bytes misread as Windows-1252 characters and
+    saved again as UTF-8), or None if not (leave it alone).
+
+    Works sequence by sequence rather than on the whole string: each
+    lead-byte + continuation-bytes run is mapped back to its bytes (cp1252
+    byte assignments, since real mojibake overwhelmingly comes from Windows
+    "ANSI" tools like Excel, plus the five bytes cp1252 leaves undefined)
+    and replaced only if those bytes are strictly valid UTF-8 -- an
+    essentially impossible coincidence for text that wasn't really
+    double-encoded, so a successful decode is strong confirmation, not a
+    guess. Working per sequence means correctly-encoded characters sitting
+    in the same subfield (a genuine "l-stroke" or em dash next to the
+    damage) don't block the repair, and a second and third pass undo
+    text that was double-encoded more than once.
+
+    Guard: a run that decodes to a non-Latin letter/mark is left alone if the
+    subfield also holds non-Latin letters that are not part of any run
+    (i.e. text that is already correctly non-Latin). Real mojibake is
+    uniformly damaged, so a lone valid-UTF-8 run inside already-correct
+    Arabic/Hebrew/Cyrillic/etc. is far more likely junk that happens to
+    decode (seen in real data: a garbled Arabic field where "Þ·" became a
+    Thaana letter). A run that decodes to an unassigned code point is
+    never repaired. Runs that decode to punctuation, symbols or Latin
+    letters (smart quotes, accented Latin) are always repaired."""
+    # Every mojibake sequence is non-ASCII, so this O(1) check skips the
+    # regex for ordinary ASCII text, which is most of it.
     if text.isascii():
         return None
-    if not any(marker in text for marker in _MOJIBAKE_MARKERS):
-        return None
-    try:
-        candidate = text.encode("cp1252").decode("utf-8")
-    except (UnicodeDecodeError, UnicodeEncodeError):
-        return None
-    return candidate if candidate != text else None
+    fixed = text
+    for _ in range(3):
+        already_non_latin = None
+
+        def repair(match: re.Match) -> str:
+            nonlocal already_non_latin
+            try:
+                decoded = bytes(
+                    _MOJIBAKE_CHAR_TO_BYTE[c] for c in match.group()
+                ).decode("utf-8")
+            except UnicodeDecodeError:
+                return match.group()
+            if any(unicodedata.category(c) == "Cn" for c in decoded):
+                return match.group()  # unassigned code point: junk
+            if _has_non_latin_letter(decoded):
+                if already_non_latin is None:
+                    already_non_latin = _has_non_latin_letter(
+                        _MOJIBAKE_SEQUENCE.sub("", fixed)
+                    )
+                if already_non_latin:
+                    return match.group()
+            return decoded
+
+        repaired = _MOJIBAKE_SEQUENCE.sub(repair, fixed)
+        if repaired == fixed:
+            break
+        fixed = repaired
+    return fixed if fixed != text else None
 
 
 def find_and_fix_mojibake(parsed: ParsedRecord) -> list[str]:

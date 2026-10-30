@@ -8,6 +8,40 @@ current state and open items.
 
 ## Current state
 
+### DONE -- mojibake fixer hardened, pure Python, no ftfy (2026-10-30, uncommitted on `main`)
+
+`_fix_mojibake` (`marc_repair_lib/patching.py`) no longer round-trips the
+whole subfield through cp1252. It now finds each UTF-8 lead byte + continuation
+bytes shown as cp1252 characters (regex `_MOJIBAKE_SEQUENCE`), maps them back
+to bytes and replaces the run only if it is strictly valid UTF-8. Fixes four
+gaps in the old version: (1) the five bytes cp1252 leaves undefined
+(0x81/0x8D/0x8F/0x90/0x9D -> `A`-acute, `I`-acute etc.) now round-trip via a
+"sloppy" fallback; (2) any lead byte, not just `Ã`/`Â`/`â€` (Polish, Czech,
+Cyrillic, Greek, Arabic, CJK); (3) correct non-cp1252 text in the same
+subfield no longer blocks the repair; (4) up to 3 layers of double-encoding.
+Same switch (`--fix-mojibake`), same category (`fixed_mojibake`), still only
+runs on records declaring UTF-8 (after MARC-8 transcoding). ftfy was evaluated
+and rejected (extra dependency, normalizes quotes/NFC, does nothing for MARC-8).
+README row updated; `docs/REPAIR_CATEGORIES.md` needed no change.
+
+**Guard against junk runs (added after the first GTU run):** a run that
+decodes to a non-Latin letter/combining mark is left alone when the same
+subfield already holds non-Latin letters outside any run (already-correct
+Arabic/Hebrew/Cyrillic...), and a run that decodes to an unassigned code point
+is never repaired. Runs decoding to punctuation, symbols or Latin letters are
+always repaired. Known trade-off: Cyrillic/Arabic mojibake inside a field that
+also holds genuine non-Latin text is skipped (conservative).
+Tests: 8 new in `TestFindAndFixMojibake` (incl. the guard cases); full suite
+838 passed, 4 skipped.
+
+**GTU run (404,956 bibs, `--no-profile`, 155s):** old logic fixed 0
+subfields; new logic with the guard fixes 1 subfield in 1 record. All 404,956
+GTU records declare MARC-8 on input, so almost nothing reaches this step as
+mojibake. The one fix is real: "â€œNations" -> curly open quote (the
+neighbouring `â€s` apostrophe lost its last byte and can't be repaired). The
+other hit from the unguarded run -- a garbled Arabic field where "Thaana"
+junk and `Ø·` were rewritten -- is now left alone.
+
 ### DONE -- run profiles, verified on real EC2 data (2026-10-29, merged to `main` and pushed; branch `feature/profiles` deleted 2026-10-29, fully merged)
 
 **Verified on EC2 against a real mixed file:** `--profile mark-wms` run
