@@ -926,3 +926,17 @@ pattern, which already matches. Abandoning this thread for now; pick back
 up with the network-tab capture plan in "Where to pick this up" above,
 and/or re-check whether the environment's Data Import pipeline has
 recovered before assuming the script itself is at fault.
+
+## On/off switch registry (Oct 2026)
+- `marc_repair_lib/switches.py` is the single registry: one `Switch` per repair/check (58), `--NAME` / `--no-NAME`
+  sharing one dest/profile key, legacy `--no-*` spellings kept as aliases, and 10 `--group-NAME` / `--no-group-NAME`
+  switches (precedence: default < profile < group < individual switch, any order).
+- Existing dests were kept (e.g. `strip_empty_fields` is now `--remove-empty-fields`) so profiles still load.
+- Gating: bib loop in `cli.py` uses `args.<dest>`; `repair_holdings_records` takes `switches=` and uses `on("<dest>")`.
+  A switched-off check gets no log header (`inactive_categories`).
+- Oversized-field collapse/truncate are parse-time (`core._shrink_oversized_content`); with both off the record is
+  diverted as unfixable. `remove_incomplete_852` was folded into `split-multiple-852` (it only happens during a split).
+- `--fix-852-b-suspect-content` (not `check-`) because it replaces content. Switch table in docs/REPAIR_CATEGORIES.md is
+  generated from the registry. NEW CHECKS MUST GET A SWITCH (see the docstring in switches.py).
+- Not exercised by a behavioural test (only parser-level): holdings leader/collapse/truncate/split-004, empty-field removal
+  (unlogged), marc8 diacritic/corpus lookup, hex-encoded check.

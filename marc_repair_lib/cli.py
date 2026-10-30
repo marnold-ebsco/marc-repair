@@ -12,6 +12,9 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Callable
 
+from .switches import (
+    GROUP_DESTS, ToggleAction, add_switch_arguments, inactive_categories, switch_values,
+)
 from .common import (
     LogEntry,
     ParsedRecord,
@@ -395,6 +398,7 @@ def repair_holdings_records(
     on_record: Callable[[int], None] | None = None,
     on_estimate: Callable[[int, int], None] | None = None,
     include_zero: bool = False,
+    switches: dict[str, bool] | None = None,
 ) -> dict[str, int]:
     """Actually repair a holdings-only MARC file (e.g. one of
     `split_bib_holdings`'s outputs) -- unlike `check_holdings_records`
@@ -631,6 +635,10 @@ def repair_holdings_records(
     `split_holdings_multiple_004` wrote to the "_additional004s" file
     (0 if that file was never created).
     """
+    def on(dest: str) -> bool:
+        """Is this repair/check's switch on? (see switches.py; `switches` None = all defaults)"""
+        return switches is None or switches.get(dest, True)
+
     run_started = datetime.now(timezone.utc)
     encoding_used = detect_encoding(input_path)
     holdings_required_a_tags = load_tag_list(DEFAULT_HOLDINGS_REQUIRED_A_TAGS_FILE)
@@ -654,7 +662,9 @@ def repair_holdings_records(
     with open(output_path, "wb") as out_fh, _LazyBinaryWriter(error_path) as error_fh, \
             _LazyBinaryWriter(additional_004_path) as additional_004_fh:
         record_stream = iter_repair_stream(
-            input_path, on_progress=on_progress, fix_bad_indicators=True,
+            input_path, on_progress=on_progress, fix_bad_indicators=on("fix_bad_indicators"),
+            collapse_oversized_fields=on("collapse_oversized_field_escapes"),
+            truncate_oversized_fields=on("truncate_oversized_field"),
         )
         for i, (parsed, rec_text) in enumerate(record_stream):
             n_total += 1
@@ -708,7 +718,7 @@ def repair_holdings_records(
                     f"directory length limit -- truncated to {after} bytes "
                     f"(dropped tail starts: {tail!r})",
                 )
-            if ESCAPE in rec_text:
+            if ESCAPE in rec_text and on("check_holdings_escape_sequences"):
                 rec_id = record_identifier(parsed)
                 log(
                     "holdings_escape_sequence", False, i, rec_id,
@@ -717,67 +727,91 @@ def repair_holdings_records(
                     "is skipped for holdings records for now)",
                 )
             rec_id = record_identifier(parsed)
-            for detail in find_and_fix_mojibake(parsed):
-                log("fixed_mojibake", True, i, rec_id, detail)
-            for detail in fix_invalid_leader_bytes(
-                parsed,
-                type_of_record_default="u",
-                encoding_level_valid=LEADER_17_ENCODING_LEVEL_VALID_HOLDINGS,
-                encoding_level_default="u",
-            ):
-                log("holdings_leader_byte_defaulted", True, i, rec_id, detail)
-            for detail in normalize_subfield_9_to_0(parsed):
-                log("normalized_subfield_9_to_0", True, i, rec_id, detail)
-            for detail in normalize_smart_characters(parsed):
-                log("normalized_smart_characters", True, i, rec_id, detail)
-            for detail in fix_misplaced_subfield_codes(parsed):
-                log("fixed_misplaced_subfield_code", True, i, rec_id, detail)
+            if on("fix_mojibake"):
+                for detail in find_and_fix_mojibake(parsed):
+                    log("fixed_mojibake", True, i, rec_id, detail)
+            if on("fix_invalid_leader_bytes"):
+                for detail in fix_invalid_leader_bytes(
+                    parsed,
+                    type_of_record_default="u",
+                    encoding_level_valid=LEADER_17_ENCODING_LEVEL_VALID_HOLDINGS,
+                    encoding_level_default="u",
+                ):
+                    log("holdings_leader_byte_defaulted", True, i, rec_id, detail)
+            if on("normalize_subfield_9"):
+                for detail in normalize_subfield_9_to_0(parsed):
+                    log("normalized_subfield_9_to_0", True, i, rec_id, detail)
+            if on("normalize_smart_characters"):
+                for detail in normalize_smart_characters(parsed):
+                    log("normalized_smart_characters", True, i, rec_id, detail)
+            if on("fix_misplaced_subfield_codes"):
+                for detail in fix_misplaced_subfield_codes(parsed):
+                    log("fixed_misplaced_subfield_code", True, i, rec_id, detail)
             for detail in strip_invalid_subfield_codes(parsed):
                 log("removed_invalid_subfield", True, i, rec_id, detail)
-            for detail in strip_missing_required_a(parsed, holdings_required_a_tags):
-                log("field_removed_because_missing_a", True, i, rec_id, detail)
-            for detail in strip_missing_required_a(
-                parsed, HOLDINGS_CAPTION_PATTERN_TAGS,
-                valid_codes=HOLDINGS_CAPTION_PATTERN_VALID_CODES,
-            ):
-                log("field_removed_because_missing_a", True, i, rec_id, detail)
-            strip_empty_fields(parsed)
-            for detail in add_default_holdings_008(parsed):
-                log("added_default_holdings_008", True, i, rec_id, detail)
-            for detail in fix_008_length(parsed, expected_len=HOLDINGS_008_LENGTH):
-                log("fixed_holdings_008_length", True, i, rec_id, detail)
-            recoded_b_to_i, removed_extra_b = fix_852_multiple_b(parsed)
+            if on("strip_missing_required_a"):
+                for detail in strip_missing_required_a(parsed, holdings_required_a_tags):
+                    log("field_removed_because_missing_a", True, i, rec_id, detail)
+                for detail in strip_missing_required_a(
+                    parsed, HOLDINGS_CAPTION_PATTERN_TAGS,
+                    valid_codes=HOLDINGS_CAPTION_PATTERN_VALID_CODES,
+                ):
+                    log("field_removed_because_missing_a", True, i, rec_id, detail)
+            if on("strip_empty_fields"):
+                strip_empty_fields(parsed)
+            if on("add_default_008"):
+                for detail in add_default_holdings_008(parsed):
+                    log("added_default_holdings_008", True, i, rec_id, detail)
+            if on("fix_008_length"):
+                for detail in fix_008_length(parsed, expected_len=HOLDINGS_008_LENGTH):
+                    log("fixed_holdings_008_length", True, i, rec_id, detail)
+            recoded_b_to_i, removed_extra_b = fix_852_multiple_b(
+                parsed, recode=on("recode_852_b_to_i"), remove=on("remove_extra_852_b"),
+            )
             for detail in recoded_b_to_i:
                 log("recoded_852_b_to_i", True, i, rec_id, detail)
             for detail in removed_extra_b:
                 log("removed_extra_852_b", True, i, rec_id, detail)
-            removed_call_number, missing_call_number = fix_852_call_number(parsed)
+            removed_call_number, missing_call_number = fix_852_call_number(
+                parsed, remove_bad=on("remove_bad_call_number"),
+            )
             for detail in removed_call_number:
                 log("removed_bad_call_number", True, i, rec_id, detail)
-            for detail in missing_call_number:
-                log("missing_call_number", False, i, rec_id, detail)
-            for detail in fix_missing_852_location(parsed):
-                log("added_missing_852_location", True, i, rec_id, detail)
-            if fix_missing_852c:
+            if on("check_missing_call_number"):
+                for detail in missing_call_number:
+                    log("missing_call_number", False, i, rec_id, detail)
+            if on("add_missing_852_location"):
+                for detail in fix_missing_852_location(parsed):
+                    log("added_missing_852_location", True, i, rec_id, detail)
+            if fix_missing_852c and on("fix_missing_852c"):
                 for detail in add_missing_852c(parsed):
                     log("added_missing_852c", True, i, rec_id, detail)
-            for detail in strip_empty_852_subfields(parsed):
-                log("removed_empty_852_subfield", True, i, rec_id, detail)
-            for detail in strip_null_identifiers(parsed):
-                log("removed_null_identifier", True, i, rec_id, detail)
-            if not any(f.tag == "004" for f in parsed.fields):
+            if on("remove_empty_852_subfields"):
+                for detail in strip_empty_852_subfields(parsed):
+                    log("removed_empty_852_subfield", True, i, rec_id, detail)
+            if on("remove_null_identifiers"):
+                for detail in strip_null_identifiers(parsed):
+                    log("removed_null_identifier", True, i, rec_id, detail)
+            if on("check_holdings_missing_004") and not any(f.tag == "004" for f in parsed.fields):
                 for category, detail in _find_004_issues(0):
                     log(category, False, i, rec_id, detail)
-            for detail in strip_852_duplicate_non_repeatable_subfields(parsed):
-                log("holdings_852_duplicate_nr_subfield", True, i, rec_id, detail)
-            for detail in fix_852_b_suspect_content(parsed, allow_single_digit_852b):
-                log("holdings_852_b_suspect_content", True, i, rec_id, detail)
-            for detail in find_853_missing_8(parsed):
-                log("holdings_853_missing_8", False, i, rec_id, detail)
-            for detail in find_856_missing_u(parsed):
-                log("holdings_856_missing_u", False, i, rec_id, detail)
+            if on("remove_duplicate_852_nr_subfields"):
+                for detail in strip_852_duplicate_non_repeatable_subfields(parsed):
+                    log("holdings_852_duplicate_nr_subfield", True, i, rec_id, detail)
+            if on("fix_852_b_suspect_content"):
+                for detail in fix_852_b_suspect_content(parsed, allow_single_digit_852b):
+                    log("holdings_852_b_suspect_content", True, i, rec_id, detail)
+            if on("check_853_missing_8"):
+                for detail in find_853_missing_8(parsed):
+                    log("holdings_853_missing_8", False, i, rec_id, detail)
+            if on("check_holdings_856_missing_u"):
+                for detail in find_856_missing_u(parsed):
+                    log("holdings_856_missing_u", False, i, rec_id, detail)
 
-            records_to_write, incomplete_852_details = split_holdings_multiple_852(parsed)
+            if on("split_multiple_852"):
+                records_to_write, incomplete_852_details = split_holdings_multiple_852(parsed)
+            else:
+                records_to_write, incomplete_852_details = [parsed], []
             for detail in incomplete_852_details:
                 log("incomplete_852", False, i, rec_id, detail)
             if len(records_to_write) > 1:
@@ -792,7 +826,10 @@ def repair_holdings_records(
             resolved_records = []
             additional_004_records: list[ParsedRecord] = []
             for rec in records_to_write:
-                main_rec, extra_004_recs = split_holdings_multiple_004(rec)
+                if on("split_multiple_004"):
+                    main_rec, extra_004_recs = split_holdings_multiple_004(rec)
+                else:
+                    main_rec, extra_004_recs = rec, []
                 resolved_records.append(main_rec)
                 if extra_004_recs:
                     n_additional_004_written += len(extra_004_recs)
@@ -806,7 +843,7 @@ def repair_holdings_records(
                     )
             records_to_write = resolved_records
 
-            if trim_oversized_record_enabled:
+            if trim_oversized_record_enabled and on("trim_oversized_record"):
                 for rec in records_to_write:
                     trim_detail = trim_oversized_record(rec)
                     if trim_detail:
@@ -873,7 +910,7 @@ def repair_holdings_records(
                         used_tags.add(f.tag)
                     else:
                         has_invalid_tag = True
-                if has_invalid_tag:
+                if has_invalid_tag and on("fix_invalid_tags"):
                     rec_encoding = "utf-8" if rec.leader[9:10] == "a" else "latin-1"
                     pending_tag_fixes.append((i, offset, len(assembled), rec_encoding))
 
@@ -906,11 +943,14 @@ def repair_holdings_records(
                     fixup_fh.write(fixed_bytes)
 
     dup_ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    log_entries.extend(find_duplicate_identifiers(id_records, dup_ts))
+    if on("check_duplicate_identifiers"):
+        log_entries.extend(find_duplicate_identifiers(id_records, dup_ts))
 
     active_categories = set(_HOLDINGS_ALWAYS_ACTIVE_CATEGORIES) | {"duplicate_identifier"}
     if fix_missing_852c:
         active_categories.add("added_missing_852c")
+    if switches is not None:
+        active_categories -= inactive_categories(switches, "holdings")
     resolved_full_categories = _ALWAYS_FULL_CATEGORIES | (full_categories or set())
     count_notes = {}
     if n_new_holdings_records:
@@ -973,6 +1013,7 @@ def profile_option_actions(parser: argparse.ArgumentParser) -> dict:
     return {
         a.dest: a for a in parser._actions
         if a.option_strings and a.dest not in PROFILE_EXCLUDED_DESTS
+        and a.dest not in GROUP_DESTS
     }
 
 
@@ -980,6 +1021,7 @@ def profile_value_kind(action: argparse.Action) -> str:
     """'bool', 'list', 'int' or 'str' -- the JSON type a profile must use for this option."""
     if isinstance(action, (
         argparse._StoreTrueAction, argparse._StoreFalseAction, argparse.BooleanOptionalAction,
+        ToggleAction,
     )):
         return "bool"
     if isinstance(action, argparse._AppendAction):
@@ -1812,6 +1854,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="list the profiles found in the profile directory and exit",
     )
+    add_switch_arguments(parser)
     return parser
 
 
@@ -1945,6 +1988,7 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
                 allow_single_digit_852b=args.allow_single_digit_852b,
                 allow_oversized_sentinel=args.allow_oversized_sentinel,
                 trim_oversized_record_enabled=args.trim_oversized_record,
+                switches=switch_values(args),
                 full_categories=set(args.log_full),
                 include_zero=args.log_zero,
                 on_progress=holdings_progress.on_progress,
@@ -2017,6 +2061,7 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
             allow_single_digit_852b=args.allow_single_digit_852b,
             allow_oversized_sentinel=args.allow_oversized_sentinel,
             trim_oversized_record_enabled=args.trim_oversized_record,
+            switches=switch_values(args),
             full_categories=set(args.log_full),
             include_zero=args.log_zero,
             on_progress=progress.on_progress,
@@ -2256,6 +2301,8 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
             normalized_overrides,
             on_progress=progress.on_progress,
             fix_bad_indicators=args.fix_bad_indicators,
+            collapse_oversized_fields=args.collapse_oversized_field_escapes,
+            truncate_oversized_fields=args.truncate_oversized_field,
         )
         if args.reattach_orphaned_fields:
             record_stream = reattach_orphaned_trailing_fields(record_stream)
@@ -2345,14 +2392,16 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
                     rec_id = record_identifier(parsed)
                     for detail in fix_marc8_b2_umlaut(parsed, b2_lexicon):
                         log("fixed_marc8_b2_umlaut", True, i, rec_id, detail)
-                for category, detail in find_suspect_marc8_escapes(
-                    parsed, corpus_index=marc8_corpus_index,
-                ):
-                    rec_id = record_identifier(parsed)
-                    log(category, False, i, rec_id, detail)
-                for category, detail in find_suspect_hex_encoded_marc8(parsed):
-                    rec_id = record_identifier(parsed)
-                    log(category, False, i, rec_id, detail)
+                if args.check_suspect_marc8_escape:
+                    for category, detail in find_suspect_marc8_escapes(
+                        parsed, corpus_index=marc8_corpus_index,
+                    ):
+                        rec_id = record_identifier(parsed)
+                        log(category, False, i, rec_id, detail)
+                if args.check_suspect_hex_encoded_marc8:
+                    for category, detail in find_suspect_hex_encoded_marc8(parsed):
+                        rec_id = record_identifier(parsed)
+                        log(category, False, i, rec_id, detail)
                 if args.transcode_marc8:
                     try:
                         transcoded, removed_untranscodable = transcode_marc8_to_utf8(parsed)
@@ -2406,8 +2455,9 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
                 rec_id = record_identifier(parsed)
                 for detail in strip_invalid_subfield_codes(parsed):
                     log("removed_invalid_subfield", True, i, rec_id, detail)
-                for detail in strip_null_identifiers(parsed):
-                    log("removed_null_identifier", True, i, rec_id, detail)
+                if args.remove_null_identifiers:
+                    for detail in strip_null_identifiers(parsed):
+                        log("removed_null_identifier", True, i, rec_id, detail)
                 if args.recode_title_only_7xx:
                     rec_id = record_identifier(parsed)
                     for detail in recode_title_only_7xx_to_730(parsed):
@@ -2421,14 +2471,17 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
                     for detail in strip_missing_required_a(parsed, required_a_tags):
                         log("field_removed_because_missing_a", True, i, rec_id, detail)
                 rec_id = record_identifier(parsed)
-                for detail in strip_whitespace_only_010_a(parsed):
-                    log("removed_010_whitespace_a", True, i, rec_id, detail)
-                rec_id = record_identifier(parsed)
-                for detail in dedupe_010_fields(parsed):
-                    log("deduped_010_lccn", True, i, rec_id, detail)
-                rec_id = record_identifier(parsed)
-                for detail in strip_missing_required_a(parsed, _880_REQUIRED_A_TAGS):
-                    log("removed_880_missing_a", True, i, rec_id, detail)
+                if args.remove_010_whitespace_a:
+                    for detail in strip_whitespace_only_010_a(parsed):
+                        log("removed_010_whitespace_a", True, i, rec_id, detail)
+                if args.merge_duplicate_010:
+                    rec_id = record_identifier(parsed)
+                    for detail in dedupe_010_fields(parsed):
+                        log("deduped_010_lccn", True, i, rec_id, detail)
+                if args.remove_880_missing_a:
+                    rec_id = record_identifier(parsed)
+                    for detail in strip_missing_required_a(parsed, _880_REQUIRED_A_TAGS):
+                        log("removed_880_missing_a", True, i, rec_id, detail)
                 if args.strip_empty_fields:
                     strip_empty_fields(parsed)
                 if args.merge_duplicate_040:
@@ -2528,32 +2581,38 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
                     n_diverted_review += 1
                     continue
                 rec_id = record_identifier(parsed)
-                for detail in add_default_008(parsed):
-                    log("added_default_008", True, i, rec_id, detail)
+                if args.add_default_008:
+                    for detail in add_default_008(parsed):
+                        log("added_default_008", True, i, rec_id, detail)
                 if args.fix_008_length:
                     rec_id = record_identifier(parsed)
                     for detail in fix_008_length(parsed):
                         log("fixed_008_length", True, i, rec_id, detail)
                 rec_id = record_identifier(parsed)
-                for detail in fix_invalid_bibliographic_level(parsed):
-                    log("invalid_bibliographic_level", True, i, rec_id, detail)
+                if args.fix_invalid_bibliographic_level:
+                    for detail in fix_invalid_bibliographic_level(parsed):
+                        log("invalid_bibliographic_level", True, i, rec_id, detail)
                 extra_detect_only_findings = []
                 if args.check_dangling_880_links:
                     extra_detect_only_findings += find_dangling_880_links(parsed)
                 if args.check_isbn_issn_checksum:
                     extra_detect_only_findings += find_invalid_isbn_issn_checksums(parsed)
                 for category, detail in (
-                    find_invalid_indicator_values(parsed)
+                    (
+                        find_invalid_indicator_values(parsed)
+                        if args.check_invalid_indicator_values else []
+                    )
                     + extra_detect_only_findings
                 ):
                     rec_id = record_identifier(parsed)
                     log(category, False, i, rec_id, detail)
-                for detail in recode_856_missing_u(parsed):
-                    rec_id = record_identifier(parsed)
-                    log("bib_856_missing_u", True, i, rec_id, detail)
-                for detail in find_856_missing_u(parsed):
-                    rec_id = record_identifier(parsed)
-                    log("bib_856_missing_u", False, i, rec_id, detail)
+                if args.fix_856_missing_u:
+                    for detail in recode_856_missing_u(parsed):
+                        rec_id = record_identifier(parsed)
+                        log("bib_856_missing_u", True, i, rec_id, detail)
+                    for detail in find_856_missing_u(parsed):
+                        rec_id = record_identifier(parsed)
+                        log("bib_856_missing_u", False, i, rec_id, detail)
                 if non_standard_tally is not None:
                     rec_id = record_identifier(parsed)
                     for detail in non_standard_tally.check(parsed, i, rec_id):
@@ -2565,6 +2624,8 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
                     # slot is free, flagged for real) after the main
                     # pass -- see pending_tag_fixes below.
                     if category == "unfixed_non_numeric_tag" and args.fix_invalid_tags:
+                        continue
+                    if category == "doubled_proxy_url" and not args.check_doubled_proxy_url:
                         continue
                     rec_id = record_identifier(parsed)
                     log(category, False, i, rec_id, detail)
@@ -2725,7 +2786,8 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
                     fixup_fh.write(fixed_bytes)
 
     dup_ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    log_entries.extend(find_duplicate_identifiers(id_records, dup_ts))
+    if args.check_duplicate_identifiers:
+        log_entries.extend(find_duplicate_identifiers(id_records, dup_ts))
 
     # Every category this run's flags actually allow to fire -- used so
     # `write_log` can print a header (with a real count, even zero) for
@@ -2794,6 +2856,7 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
     if args.check_non_standard_fields:
         active_categories.add(NON_STANDARD_FIELD_CATEGORY)
 
+    active_categories -= inactive_categories(switch_values(args), "bib")
     resolved_full_categories = _ALWAYS_FULL_CATEGORIES | set(args.log_full)
 
     # Not-fixable/not-fixed-in-this-run issues first (still need your

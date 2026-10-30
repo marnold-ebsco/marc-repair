@@ -20,7 +20,7 @@ curl -fsSL https://raw.githubusercontent.com/marnold-ebsco/marc-repair/main/inst
 ## Notes
 
 - It re-downloads `marc_repair.py`, its `marc_repair_lib/` package (`__init__.py`, `common.py`, `qa.py`,
-  `core.py`, `marc8.py`, `patching.py`, `report.py`, `cli.py`),
+  `core.py`, `marc8.py`, `patching.py`, `report.py`, `switches.py`, `cli.py`),
   `marc_repair_profile.py`, `pyproject.toml`,
   `requirements.txt`, the tag lists, the profiles (`profiles/mark-*.json` and
   `profiles/examples/`) and the docs, pinned to one commit SHA. Local edits to

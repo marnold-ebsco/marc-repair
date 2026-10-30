@@ -172,3 +172,91 @@ bib-specific and deliberately not applied. It does now reuse bib's
 `strip_missing_required_a` mechanism (see `holdings_required_a_tags.txt`),
 for the specific holdings tags where a missing required subfield is just
 as unambiguous a defect as it is for a bib heading field.
+
+## Switches: one on/off setting per check
+
+Every check is ONE setting with two spellings, `--NAME` and `--no-NAME` (one
+profile key, the Profile key column). A switch given on the command line beats a
+profile, so a profile that turned a check off can be undone with `--NAME`.
+Legacy spellings (e.g. `--no-strip-empty-fields`) still work. Always on and not
+switchable: the structural (Mode 1/2) repair, leader entry-map correction,
+invalid-subfield-code removal, `unfixable` diversion and its fallbacks.
+
+| Switch | Pipeline | Default | Profile key | Log categories | Legacy spelling |
+|---|---|---|---|---|---|
+| `--fix-bad-indicators` | both | on | `fix_bad_indicators` | `padded_indicators` |  |
+| `--fix-mojibake` | both | on | `fix_mojibake` | `fixed_mojibake` |  |
+| `--fix-invalid-leader-bytes` | both | on | `fix_invalid_leader_bytes` | `leader_byte_defaulted`, `holdings_leader_byte_defaulted` |  |
+| `--normalize-subfield-9` | both | on | `normalize_subfield_9` | `normalized_subfield_9_to_0` |  |
+| `--normalize-smart-characters` | both | on | `normalize_smart_characters` | `normalized_smart_characters` |  |
+| `--fix-misplaced-subfield-codes` | both | on | `fix_misplaced_subfield_codes` | `fixed_misplaced_subfield_code` |  |
+| `--remove-empty-fields` | both | on | `strip_empty_fields` |  | `--no-strip-empty-fields` |
+| `--remove-null-identifiers` | both | on | `remove_null_identifiers` | `removed_null_identifier` |  |
+| `--remove-fields-missing-required-a` | both | on | `strip_missing_required_a` | `field_removed_because_missing_a` | `--no-strip-missing-required-a` |
+| `--fix-invalid-tags` | both | on | `fix_invalid_tags` | `invalid_tag` |  |
+| `--fix-008-length` | both | on | `fix_008_length` | `fixed_008_length`, `fixed_holdings_008_length` |  |
+| `--add-default-008` | both | on | `add_default_008` | `added_default_008`, `added_default_holdings_008` |  |
+| `--collapse-oversized-field-escapes` | both | on | `collapse_oversized_field_escapes` | `collapsed_oversized_field_escapes` |  |
+| `--truncate-oversized-field` | both | on | `truncate_oversized_field` | `truncated_oversized_field` |  |
+| `--trim-oversized-record` | both | on | `trim_oversized_record` | `trimmed_oversized_record` |  |
+| `--check-duplicate-identifiers` | both | on | `check_duplicate_identifiers` | `duplicate_identifier` |  |
+| `--transcode-marc8` | bib | on | `transcode_marc8` | `transcoded_marc8`, `transcode_marc8_failed`, `removed_untranscodable_subfield` |  |
+| `--fix-marc8-diacritic-escapes` | bib | on | `fix_marc8_diacritic_escapes` | `fixed_marc8_diacritic` |  |
+| `--marc8-corpus-lookup` | bib | on | `marc8_corpus_lookup` |  |  |
+| `--remap-999-to-945` | bib | off | `remap_999_to_945` | `remapped_999_to_945` |  |
+| `--merge-duplicate-040` | bib | on | `merge_duplicate_040` | `merged_duplicate_040` |  |
+| `--move-duplicate-100-to-700` | bib | on | `move_duplicate_100_to_700` | `moved_duplicate_to_added_entry` |  |
+| `--move-duplicate-240-to-730` | bib | on | `move_duplicate_240_to_730` | `moved_duplicate_to_added_entry` |  |
+| `--move-duplicate-245-to-246` | bib | on | `move_duplicate_245_to_246` | `moved_duplicate_to_added_entry` |  |
+| `--recode-misfiled-duplicate-245` | bib | on | `recode_misfiled_duplicate_245` | `moved_duplicate_to_added_entry` |  |
+| `--recode-title-only-7xx` | bib | on | `recode_title_only_7xx` | `recoded_title_only_7xx_to_730` |  |
+| `--recode-6xx-b-to-a` | bib | on | `recode_6xx_b_to_a` | `recoded_6xx_b_to_a` |  |
+| `--remove-duplicate-non-repeatable-fields` | bib | on | `strip_duplicate_non_repeatable_fields` | `removed_non_repeatable_duplicate` | `--no-strip-duplicate-non-repeatable-fields` |
+| `--remove-010-whitespace-a` | bib | on | `remove_010_whitespace_a` | `removed_010_whitespace_a` |  |
+| `--merge-duplicate-010` | bib | on | `merge_duplicate_010` | `deduped_010_lccn` |  |
+| `--remove-880-missing-a` | bib | on | `remove_880_missing_a` | `removed_880_missing_a` |  |
+| `--add-default-245` | bib | on | `add_default_245` | `added_default_245` |  |
+| `--fix-856-missing-u` | bib | on | `fix_856_missing_u` | `bib_856_missing_u` |  |
+| `--reattach-orphaned-fields` | bib | on | `reattach_orphaned_fields` | `reattached_orphaned_field` |  |
+| `--fix-invalid-bibliographic-level` | bib | on | `fix_invalid_bibliographic_level` | `invalid_bibliographic_level` |  |
+| `--check-isbn-issn-checksum` | bib | off | `check_isbn_issn_checksum` | `invalid_isbn_issn_checksum` |  |
+| `--check-dangling-880-links` | bib | off | `check_dangling_880_links` | `dangling_880_link` |  |
+| `--check-non-standard-fields` | bib | on | `check_non_standard_fields` | `non_standard_marc_fields` |  |
+| `--check-suspect-marc8-escape` | bib | on | `check_suspect_marc8_escape` | `suspect_marc8_escape` |  |
+| `--check-doubled-proxy-url` | bib | on | `check_doubled_proxy_url` | `doubled_proxy_url` |  |
+| `--check-suspect-hex-encoded-marc8` | bib | on | `check_suspect_hex_encoded_marc8` | `suspect_hex_encoded_marc8` |  |
+| `--check-invalid-indicator-values` | bib | on | `check_invalid_indicator_values` | `invalid_indicator_value` |  |
+| `--allow-oversized-sentinel` | bib | off | `allow_oversized_sentinel` |  |  |
+| `--recode-852-b-to-i` | holdings | on | `recode_852_b_to_i` | `recoded_852_b_to_i` |  |
+| `--remove-extra-852-b` | holdings | on | `remove_extra_852_b` | `removed_extra_852_b` |  |
+| `--remove-duplicate-852-nr-subfields` | holdings | on | `remove_duplicate_852_nr_subfields` | `holdings_852_duplicate_nr_subfield` |  |
+| `--fix-852-b-suspect-content` | holdings | on | `fix_852_b_suspect_content` | `holdings_852_b_suspect_content` |  |
+| `--remove-bad-call-number` | holdings | on | `remove_bad_call_number` | `removed_bad_call_number` |  |
+| `--check-missing-call-number` | holdings | on | `check_missing_call_number` | `missing_call_number` |  |
+| `--add-missing-852-location` | holdings | on | `add_missing_852_location` | `added_missing_852_location` |  |
+| `--add-missing-852c` | holdings | on | `fix_missing_852c` | `added_missing_852c` | `--no-fix-missing-852c` |
+| `--remove-empty-852-subfields` | holdings | on | `remove_empty_852_subfields` | `removed_empty_852_subfield` |  |
+| `--split-multiple-852` | holdings | on | `split_multiple_852` | `split_holdings_multiple_852`, `incomplete_852` |  |
+| `--split-multiple-004` | holdings | on | `split_multiple_004` | `holdings_multiple_004` |  |
+| `--check-853-missing-8` | holdings | on | `check_853_missing_8` | `holdings_853_missing_8` |  |
+| `--check-holdings-856-missing-u` | holdings | on | `check_holdings_856_missing_u` | `holdings_856_missing_u` |  |
+| `--check-holdings-escape-sequences` | holdings | on | `check_holdings_escape_sequences` | `holdings_escape_sequence` |  |
+| `--check-holdings-missing-004` | holdings | on | `check_holdings_missing_004` | `holdings_missing_004` |  |
+
+### Groups
+
+`--group-NAME` / `--no-group-NAME` sets every member. Precedence: default < profile
+< group < a switch given individually (in either order on the command line).
+
+| Group | Members |
+|---|---|
+| `--group-duplicate-fields` | `--merge-duplicate-040`, `--move-duplicate-100-to-700`, `--move-duplicate-240-to-730`, `--move-duplicate-245-to-246`, `--recode-misfiled-duplicate-245`, `--remove-duplicate-non-repeatable-fields`, `--merge-duplicate-010` |
+| `--group-marc8-encoding` | `--transcode-marc8`, `--fix-marc8-diacritic-escapes`, `--marc8-corpus-lookup`, `--fix-mojibake` |
+| `--group-normalization` | `--normalize-smart-characters`, `--normalize-subfield-9`, `--fix-bad-indicators`, `--fix-008-length`, `--fix-invalid-leader-bytes` |
+| `--group-structural-salvage` | `--reattach-orphaned-fields`, `--fix-invalid-tags`, `--fix-misplaced-subfield-codes`, `--remove-empty-fields`, `--remove-null-identifiers` |
+| `--group-placeholders` | `--add-default-245`, `--add-default-008`, `--add-missing-852-location`, `--add-missing-852c` |
+| `--group-heading-cleanup` | `--recode-title-only-7xx`, `--recode-6xx-b-to-a`, `--remove-fields-missing-required-a`, `--remove-880-missing-a` |
+| `--group-oversized` | `--collapse-oversized-field-escapes`, `--truncate-oversized-field`, `--trim-oversized-record` |
+| `--group-holdings-852` | `--recode-852-b-to-i`, `--remove-extra-852-b`, `--remove-duplicate-852-nr-subfields`, `--fix-852-b-suspect-content`, `--remove-bad-call-number`, `--remove-empty-852-subfields` |
+| `--group-holdings-record-splitting` | `--split-multiple-852`, `--split-multiple-004` |
+| `--group-detect-only` | `--check-duplicate-identifiers`, `--check-isbn-issn-checksum`, `--check-dangling-880-links`, `--check-non-standard-fields`, `--check-suspect-marc8-escape`, `--check-doubled-proxy-url`, `--check-suspect-hex-encoded-marc8`, `--check-invalid-indicator-values`, `--check-missing-call-number`, `--check-853-missing-8`, `--check-holdings-856-missing-u`, `--check-holdings-escape-sequences`, `--check-holdings-missing-004` |

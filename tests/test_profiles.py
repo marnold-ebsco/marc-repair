@@ -355,7 +355,7 @@ def test_save_bad_name_and_bad_switch(tmp_path):
 
 def test_wizard_collects_changed_options(parser):
     scripted = {
-        "--no-fix-mojibake": ["y"],
+        "--fix-mojibake": ["false"],
         "--sample-limit": ["40"],
         "--log-full": ["cat1", ""],
         "--source-system": ["sierra"],

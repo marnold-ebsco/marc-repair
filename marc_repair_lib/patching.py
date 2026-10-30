@@ -220,7 +220,9 @@ def fix_missing_852_location(parsed: ParsedRecord) -> list[str]:
     return details
 
 
-def fix_852_call_number(parsed: ParsedRecord) -> tuple[list[str], list[str]]:
+def fix_852_call_number(
+    parsed: ParsedRecord, remove_bad: bool = True,
+) -> tuple[list[str], list[str]]:
     """Handle 852 (Location)'s $h (Classification part -- the call
     number) two different ways depending on what's actually wrong,
     returning (removed_details, missing_details) for the caller to log
@@ -253,6 +255,8 @@ def fix_852_call_number(parsed: ParsedRecord) -> tuple[list[str], list[str]]:
         if not h_subfields:
             body = "".join(f"${code}{data}" for code, data in f.subfields)
             missing_details.append(f"={f.tag}  {f.indicators}{body} has no $h subfield")
+            continue
+        if not remove_bad:
             continue
         f.subfields = [(code, data) for code, data in f.subfields if code != "h"]
         removed = "".join(f"${code}{data}" for code, data in h_subfields)
@@ -289,7 +293,9 @@ def _is_852_b_non_location(data: str) -> bool:
     )
 
 
-def fix_852_multiple_b(parsed: ParsedRecord) -> tuple[list[str], list[str]]:
+def fix_852_multiple_b(
+    parsed: ParsedRecord, recode: bool = True, remove: bool = True,
+) -> tuple[list[str], list[str]]:
     """Fix an 852 (Location) field with more than one $b (Sublocation)
     subfield -- $b isn't meant to repeat, so this is always some kind
     of miscoding. Four cases, tried in order:
@@ -345,6 +351,8 @@ def fix_852_multiple_b(parsed: ParsedRecord) -> tuple[list[str], list[str]]:
         b_indices = [idx for idx, (code, _) in enumerate(f.subfields) if code == "b"]
         b_values = {f.subfields[idx][1] for idx in b_indices}
         if len(b_values) == 1:
+            if not remove:
+                continue
             dup_value = next(iter(b_values))
             keep_first = b_indices[0]
             f.subfields = [
@@ -364,6 +372,8 @@ def fix_852_multiple_b(parsed: ParsedRecord) -> tuple[list[str], list[str]]:
             codes.count("b") == 2 and "i" not in codes
             and b_before_h == 1 and b_after_h == 1
         ):
+            if not recode:
+                continue
             seen_h = False
             renamed_value = None
             new_subfields = []
@@ -380,6 +390,8 @@ def fix_852_multiple_b(parsed: ParsedRecord) -> tuple[list[str], list[str]]:
             recoded_details.append(
                 f"recoded 852 $b {renamed_value!r} (after $h, no existing $i) as $i"
             )
+            continue
+        if not remove:
             continue
         non_location = [idx for idx in b_indices if _is_852_b_non_location(f.subfields[idx][1])]
         if len(non_location) == 1:

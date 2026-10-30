@@ -28,6 +28,7 @@ import sys
 from typing import Callable
 
 import marc_repair
+from marc_repair_lib.switches import ToggleAction
 
 _HELP_CHARS = 400
 
@@ -100,7 +101,7 @@ def _parse_bool(text: str) -> bool | None:
 def _ask_option(action, default, ask, say):
     """The profile value for one option, or marc_repair.py's default if the user keeps it."""
     kind = marc_repair.profile_value_kind(action)
-    if kind == "bool" and not isinstance(action, argparse.BooleanOptionalAction):
+    if kind == "bool" and not isinstance(action, (argparse.BooleanOptionalAction, ToggleAction)):
         # store_true / store_false: the only question is whether to pass the flag
         answer = _ask(f"  Pass {action.option_strings[0]}? [y/N]: ", ask)
         return action.const if _parse_bool(answer) else default

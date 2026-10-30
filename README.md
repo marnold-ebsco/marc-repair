@@ -584,6 +584,14 @@ Both indices are 0-based, in the order records/fields appear. Run once
 without `--overrides` first, then fill this in from the stderr output and
 re-run with `--overrides overrides.json`.
 
+## Switching checks on and off
+
+Every repair or check is one setting with two spellings, `--NAME` and `--no-NAME` (e.g. `--fix-mojibake` /
+`--no-fix-mojibake`); the full list, defaults and log categories are in the Switches section of
+`docs/REPAIR_CATEGORIES.md`. A command-line switch beats a profile, so it can undo a profile's choice. Old
+`--no-*` spellings still work. `--group-NAME` / `--no-group-NAME` sets a related set at once (for example
+`--no-group-marc8-encoding`); a switch given individually wins over its group, in either order.
+
 ## Using profiles
 
 `marc_repair` has about 60 switches, and different shops want different

@@ -438,7 +438,9 @@ def _truncate_to_fit(content: str, encoding: str) -> str:
     return cut
 
 
-def _shrink_oversized_content(content: str, encoding: str) -> tuple[str, int, bool]:
+def _shrink_oversized_content(
+    content: str, encoding: str, collapse: bool = True, truncate: bool = True,
+) -> tuple[str, int, bool]:
     """Bring an over-9999-byte field back under the directory limit.
     Tries, in order, stopping as soon as it fits: merging redundant G0
     reset/re-designate escapes (lossless), stripping spurious one-character
@@ -446,12 +448,16 @@ def _shrink_oversized_content(content: str, encoding: str) -> tuple[str, int, bo
     producer artifact), merging again, and finally truncating. Returns
     (new_content, escape_pairs_stripped, truncated)."""
     stripped = 0
-    content = _merge_redundant_g0_resets(content)
-    if _field_byte_length(content, encoding) <= _MAX_FIELD_BYTES:
-        return content, stripped, False
-    stripped = len(_SPURIOUS_SCRIPT_PAIR_RE.findall(content))
-    content = _merge_redundant_g0_resets(_SPURIOUS_SCRIPT_PAIR_RE.sub("", content))
-    if _field_byte_length(content, encoding) <= _MAX_FIELD_BYTES:
+    if collapse:
+        content = _merge_redundant_g0_resets(content)
+        if _field_byte_length(content, encoding) <= _MAX_FIELD_BYTES:
+            return content, stripped, False
+        stripped = len(_SPURIOUS_SCRIPT_PAIR_RE.findall(content))
+        content = _merge_redundant_g0_resets(_SPURIOUS_SCRIPT_PAIR_RE.sub("", content))
+        if _field_byte_length(content, encoding) <= _MAX_FIELD_BYTES:
+            return content, stripped, False
+    if not truncate:
+        # left oversized: assemble_marc() raises, so the record is diverted as unfixable
         return content, stripped, False
     return _truncate_to_fit(content, encoding), stripped, True
 
@@ -460,6 +466,8 @@ def _read_intact_at(
     text: str,
     start: int,
     fix_bad_indicators: bool = False,
+    collapse_oversized_fields: bool = True,
+    truncate_oversized_fields: bool = True,
 ) -> tuple[ParsedRecord, int] | None:
     """Core of Mode 1, operating on an absolute position within a (possibly
     much larger) `text` rather than a pre-sliced single record. Determines
@@ -519,9 +527,13 @@ def _read_intact_at(
             # to desync everything after it or break the rebuild.
             before = _field_byte_length(content, encoding)
             original = content
-            content, stripped, truncated = _shrink_oversized_content(content, encoding)
+            content, stripped, truncated = _shrink_oversized_content(
+                content, encoding, collapse_oversized_fields, truncate_oversized_fields,
+            )
             after = _field_byte_length(content, encoding)
-            if truncated:
+            if after == before:
+                pass  # both repairs off: left as-is
+            elif truncated:
                 truncated_oversized_fields.append(
                     (entry.tag, before, after, original[len(content):][:200])
                 )
@@ -1173,6 +1185,8 @@ def iter_repair_stream(
     chunk_size: int = DEFAULT_STREAM_CHUNK_SIZE,
     on_progress: Callable[[int], None] | None = None,
     fix_bad_indicators: bool = False,
+    collapse_oversized_fields: bool = True,
+    truncate_oversized_fields: bool = True,
 ) -> Iterator[tuple[ParsedRecord, str]]:
     """Like `iter_repair`, but reads `path` incrementally in `chunk_size`
     pieces instead of loading the whole file into memory first -- for
@@ -1262,7 +1276,11 @@ def iter_repair_stream(
             if pos >= len(buf):
                 break
 
-            intact = _read_intact_at(buf, pos, fix_bad_indicators=fix_bad_indicators)
+            intact = _read_intact_at(
+                buf, pos, fix_bad_indicators=fix_bad_indicators,
+                collapse_oversized_fields=collapse_oversized_fields,
+                truncate_oversized_fields=truncate_oversized_fields,
+            )
             if intact is not None:
                 parsed, end = intact
             else:

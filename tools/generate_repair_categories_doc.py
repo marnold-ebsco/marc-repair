@@ -905,6 +905,45 @@ def _render_table(rows: list[CategoryRow]) -> str:
     return "\n".join(lines)
 
 
+def _render_switches() -> str:
+    """The switch tables, straight from marc_repair_lib/switches.py (never hand-edited)."""
+    import sys
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from marc_repair_lib import switches as sw
+
+    lines = [
+        "## Switches: one on/off setting per check\n",
+        "Every check is ONE setting with two spellings, `--NAME` and `--no-NAME` (one",
+        "profile key, the Profile key column). A switch given on the command line beats a",
+        "profile, so a profile that turned a check off can be undone with `--NAME`.",
+        "Legacy spellings (e.g. `--no-strip-empty-fields`) still work. Always on and not",
+        "switchable: the structural (Mode 1/2) repair, leader entry-map correction,",
+        "invalid-subfield-code removal, `unfixable` diversion and its fallbacks.\n",
+        "| Switch | Pipeline | Default | Profile key | Log categories | Legacy spelling |",
+        "|---|---|---|---|---|---|",
+    ]
+    for scope in ("both", "bib", "holdings"):
+        for s in (x for x in sw.SWITCHES if x.scope == scope):
+            lines.append(
+                f"| `--{s.name}` | {scope} | {'on' if s.default else 'off'} | `{s.dest}` | "
+                + ", ".join(f"`{c}`" for c in s.categories)
+                + " | " + ", ".join(f"`{a}`" for a in s.aliases) + " |"
+            )
+    lines += [
+        "\n### Groups\n",
+        "`--group-NAME` / `--no-group-NAME` sets every member. Precedence: default < profile",
+        "< group < a switch given individually (in either order on the command line).\n",
+        "| Group | Members |",
+        "|---|---|",
+    ]
+    for name, members in sw.GROUPS.items():
+        lines.append(
+            f"| `--group-{name}` | "
+            + ", ".join(f"`--{sw.BY_DEST[d].name}`" for d in members) + " |"
+        )
+    return "\n".join(lines) + "\n"
+
+
 def render_doc() -> str:
     parts = [
         HEADER,
@@ -914,6 +953,7 @@ def render_doc() -> str:
         "`--split-bib-holdings` or `--repair-holdings`)\n",
         _render_table(HOLDINGS_ROWS),
         FOOTER,
+        _render_switches(),
     ]
     return "\n".join(parts).rstrip("\n") + "\n"
 
