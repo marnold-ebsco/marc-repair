@@ -2753,7 +2753,7 @@ class TestFixMisplacedSubfieldCodes:
         ])
         assert rc == 0
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert "fixed_misplaced_subfield_code" not in content
+        assert "fixed_misplaced_subfield_code" not in content.split("\n\n", 1)[1]
         assert "removed_invalid_subfield" in content
         parsed_out = m.read_intact_record(m._read_text(str(out)))
         f260 = next(f for f in parsed_out.fields if f.tag == "260")
@@ -3137,7 +3137,7 @@ class TestReattachOrphanedFieldsCLI:
         content = _resolve_log(log).read_text(encoding="utf-8")
         assert "unfixable" in content
         assert "=== UNFIXABLE: unfixable ===" in content
-        assert "reattached_orphaned_field" not in content
+        assert "reattached_orphaned_field" not in content.split("\n\n", 1)[1]
 
 
 # ---------------------------------------------------------------------------
@@ -4876,7 +4876,7 @@ class TestNonStandardMarcFields:
             tmp_path, [self._rec([m.Field_("605", " 0", [("a", "x")])])],
             "--no-check-non-standard-fields",
         )
-        assert "non_standard_marc_fields" not in content
+        assert "non_standard_marc_fields" not in content.split("\n\n", 1)[1]
 
 
 # ---------------------------------------------------------------------------
@@ -5927,7 +5927,7 @@ class TestMisfiledDuplicatePipeline:
         tags = [f.tag for f in out.fields]
         assert tags.count("040") == 1 and tags.count("240") == 1 and tags.count("245") == 1
         assert "730" not in tags and "250" not in tags
-        assert "merged_duplicate_040" not in content.split("CHECKS PERFORMED")[0]
+        assert "merged_duplicate_040" not in content.split("\n\n", 1)[1].split("CHECKS PERFORMED")[0]
         assert "removed duplicate =040" in content and "removed duplicate =245" in content
 
 

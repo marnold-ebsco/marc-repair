@@ -254,3 +254,29 @@ def test_synthetic_defect_is_found_then_switched_off(tmp_path_factory, dest, cat
     assert on.get(cat, 0) >= 1, f"synthetic record never triggered {cat}"
     off = _run_synthetic(tmp_path_factory.mktemp("off"), [f"--no-{sw.BY_DEST[dest].name}"])
     assert off.get(cat, 0) < on[cat], f"--no-{sw.BY_DEST[dest].name} did not stop {cat}"
+
+
+# --- the run header records which switches were non-default ---------------------------------
+def _header(tmp_path, extra, fixture="kitchen_sink_bib.mrc", holdings=False):
+    out = tmp_path / "out.mrc"
+    log = tmp_path / "out.log"
+    argv = [os.path.join(FIXTURES, fixture), "-o", str(out), "--log", str(log), "--no-b2-lexicon",
+            "--no-profile"] + (["--repair-holdings"] if holdings else []) + extra
+    m.main(argv)
+    return open(glob.glob(str(tmp_path / "out*.log"))[0], encoding="utf-8").read().split("\n\n")[0]
+
+
+def test_header_says_all_defaults(tmp_path):
+    assert "Switches: all defaults" in _header(tmp_path, [])
+
+
+def test_header_lists_group_and_individual_switches(tmp_path):
+    head = _header(tmp_path, ["--no-group-detect-only", "--fix-mojibake", "--no-fix-bad-indicators"])
+    assert "Switches: --no-group-detect-only, --no-fix-bad-indicators" in head
+    assert "Checks switched off (no section in this log):" in head
+    assert "suspect_marc8_escape" in head
+
+
+def test_holdings_header_lists_switches(tmp_path):
+    head = _header(tmp_path, ["--no-group-holdings-852"], "kitchen_sink_holdings.mrc", True)
+    assert "Switches: --no-group-holdings-852" in head

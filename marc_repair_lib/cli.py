@@ -13,7 +13,8 @@ from datetime import datetime, timezone
 from typing import Callable
 
 from .switches import (
-    GROUP_DESTS, ToggleAction, add_switch_arguments, inactive_categories, switch_values,
+    GROUP_DESTS, ToggleAction, add_switch_arguments, describe_switches, inactive_categories,
+    switch_values,
 )
 from .common import (
     LogEntry,
@@ -399,6 +400,7 @@ def repair_holdings_records(
     on_estimate: Callable[[int, int], None] | None = None,
     include_zero: bool = False,
     switches: dict[str, bool] | None = None,
+    header_lines: list[str] | None = None,
 ) -> dict[str, int]:
     """Actually repair a holdings-only MARC file (e.g. one of
     `split_bib_holdings`'s outputs) -- unlike `check_holdings_records`
@@ -968,6 +970,7 @@ def repair_holdings_records(
         input_path, output_path,
         error_path if os.path.exists(error_path) else None,
         source_count=n_total, repaired_count=n_written, problem_count=n_unfixable,
+        extra_lines=header_lines,
     )
     write_log(
         log_path, log_entries, active_categories=active_categories,
@@ -1989,6 +1992,7 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
                 allow_oversized_sentinel=args.allow_oversized_sentinel,
                 trim_oversized_record_enabled=args.trim_oversized_record,
                 switches=switch_values(args),
+                header_lines=describe_switches(parser, args, "holdings"),
                 full_categories=set(args.log_full),
                 include_zero=args.log_zero,
                 on_progress=holdings_progress.on_progress,
@@ -2062,6 +2066,7 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
             allow_oversized_sentinel=args.allow_oversized_sentinel,
             trim_oversized_record_enabled=args.trim_oversized_record,
             switches=switch_values(args),
+            header_lines=describe_switches(parser, args, "holdings"),
             full_categories=set(args.log_full),
             include_zero=args.log_zero,
             on_progress=progress.on_progress,
@@ -2875,6 +2880,7 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
         problem_count=n_unfixable,
         review_path=review_path if os.path.exists(review_path) else None,
         review_count=n_diverted_review,
+        extra_lines=describe_switches(parser, args, "bib"),
     )
     write_log(
         log_path, log_entries, active_categories=active_categories,

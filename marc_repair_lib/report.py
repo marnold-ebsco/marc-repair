@@ -740,6 +740,7 @@ def _write_run_timing_header(
     problem_count: int | None = None,
     review_path: str | None = None,
     review_count: int | None = None,
+    extra_lines: list[str] | None = None,
 ) -> None:
     """Write a run-level started/finished/elapsed line, followed by the
     source/repaired/problem/needs-review filenames for this run, as the
@@ -785,6 +786,8 @@ def _write_run_timing_header(
         if review_path is not None:
             fh.write(f"Needs-review filename: {_named(review_path, review_count)}\n")
         fh.write(f"Script version: {script_version()}\n")
+        for line in extra_lines or ():
+            fh.write(line + "\n")
         fh.write("\n")
 
 

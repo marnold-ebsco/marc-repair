@@ -25,6 +25,7 @@ from dataclasses import dataclass
 
 #: Namespace attribute holding the dests given individually on the command line.
 EXPLICIT_ATTR = "_explicit_toggles"
+GROUPS_USED_ATTR = "_groups_used"
 
 
 @dataclass(frozen=True)
@@ -257,6 +258,11 @@ class GroupAction(argparse.Action):
         for dest in self.members:
             if dest not in explicit:
                 setattr(namespace, dest, value)
+        used = getattr(namespace, GROUPS_USED_ATTR, None)
+        if used is None:
+            used = []
+            setattr(namespace, GROUPS_USED_ATTR, used)
+        used.append((option_string, self.members))
 
 
 def add_switch_arguments(parser: argparse.ArgumentParser) -> None:
@@ -304,3 +310,28 @@ def inactive_categories(values: dict[str, bool], pipeline: str) -> set[str]:
             for cat in sw.categories:
                 produced.setdefault(cat, []).append(values.get(sw.dest, sw.default))
     return {cat for cat, states in produced.items() if not any(states)}
+
+
+def describe_switches(parser: argparse.ArgumentParser, args: argparse.Namespace,
+                      pipeline: str) -> list[str]:
+    """Run-header lines saying which checks were switched away from their defaults, and by
+    what (command line, group, or profile), plus the log sections that therefore have no
+    header because their check never ran."""
+    explicit = getattr(args, EXPLICIT_ATTR, None) or set()
+    groups = getattr(args, GROUPS_USED_ATTR, None) or []
+    in_group = {d for _, members in groups for d in members}
+    values = switch_values(args)
+    parts = [opt for opt, _ in groups]
+    for sw in SWITCHES:
+        if sw.scope not in ("both", pipeline) or values[sw.dest] == sw.default:
+            continue
+        flag = f"--{sw.name}" if values[sw.dest] else f"--no-{sw.name}"
+        if sw.dest in explicit:
+            parts.append(flag)
+        elif sw.dest not in in_group:
+            parts.append(f"{flag} (profile)")
+    lines = ["Switches: " + (", ".join(parts) if parts else "all defaults")]
+    off = sorted(inactive_categories(values, pipeline))
+    if off:
+        lines.append("Checks switched off (no section in this log): " + ", ".join(off))
+    return lines

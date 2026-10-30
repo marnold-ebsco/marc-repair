@@ -592,6 +592,11 @@ Every repair or check is one setting with two spellings, `--NAME` and `--no-NAME
 `--no-*` spellings still work. `--group-NAME` / `--no-group-NAME` sets a related set at once (for example
 `--no-group-marc8-encoding`); a switch given individually wins over its group, in either order.
 
+The log's run header records what was changed, so a missing section is never a mystery:
+`Switches: --no-group-detect-only, --no-fix-bad-indicators (profile)` (or `Switches: all defaults`),
+followed by `Checks switched off (no section in this log): ...` naming the log categories whose check
+did not run. A switch that came from a profile is marked `(profile)`.
+
 ## Using profiles
 
 `marc_repair` has about 60 switches, and different shops want different
