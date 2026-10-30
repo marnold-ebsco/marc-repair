@@ -164,24 +164,25 @@ thing that needs a look before the run's output is usable at all.
 ===============================================================================
 """
 
-# The implementation lives in layered sibling modules (each imports only the
-# ones before it); this file stays the entry point and re-exports every name
-# from them so `import marc_repair` / `python marc_repair.py` are unchanged.
-#   marc_repair_common   constants and shared record types
-#   marc_repair_qa       QA checks, identifier helpers, duplicate-identifier check
-#   marc_repair_core     detection, reconstruction, streaming, assembly
-#   marc_repair_marc8    MARC-8 (ANSEL) repair and transcoding to UTF-8
-#   marc_repair_patching required-field patching, dedupe, recode
-#   marc_repair_report   log file writing and the progress reporter
-#   marc_repair_cli      holdings repair, profiles, run orchestration, argument parsing
-import marc_repair_cli as _cli
-import marc_repair_common as _common
-import marc_repair_core as _core
-import marc_repair_marc8 as _marc8
-import marc_repair_patching as _patching
-import marc_repair_qa as _qa
-import marc_repair_report as _report
-from marc_repair_cli import main
+# The implementation lives in the marc_repair_lib/ package, in layers (each
+# module imports only the ones before it); this file stays the entry point and
+# re-exports every name from them so `import marc_repair` /
+# `python marc_repair.py` are unchanged.
+#   common    constants and shared record types
+#   qa        QA checks, identifier helpers, duplicate-identifier check
+#   core      detection, reconstruction, streaming, assembly
+#   marc8     MARC-8 (ANSEL) repair and transcoding to UTF-8
+#   patching  required-field patching, dedupe, recode
+#   report    log file writing and the progress reporter
+#   cli       holdings repair, profiles, run orchestration, argument parsing
+from marc_repair_lib import cli as _cli
+from marc_repair_lib import common as _common
+from marc_repair_lib import core as _core
+from marc_repair_lib import marc8 as _marc8
+from marc_repair_lib import patching as _patching
+from marc_repair_lib import qa as _qa
+from marc_repair_lib import report as _report
+from marc_repair_lib.cli import main
 
 for _mod in (_common, _qa, _core, _marc8, _patching, _report, _cli):
     for _name, _value in vars(_mod).items():

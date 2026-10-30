@@ -1,12 +1,12 @@
 """QA checks for marc_repair: flag suspicious content, identifier helpers and the
-duplicate-identifier check. Imports only marc_repair_common (it sits below marc8,
+duplicate-identifier check. Imports only marc_repair_lib.common (it sits below marc8,
 which uses its identifier helpers)."""
 
 from __future__ import annotations
 
 import re
 
-from marc_repair_common import (
+from .common import (
     LogEntry,
     ParsedRecord,
 )

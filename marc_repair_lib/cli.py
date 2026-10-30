@@ -12,12 +12,12 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Callable
 
-from marc_repair_common import (
+from .common import (
     LogEntry,
     ParsedRecord,
     RepairError,
 )
-from marc_repair_qa import (
+from .qa import (
     LEADER_17_ENCODING_LEVEL_VALID_HOLDINGS,
     SOURCE_SYSTEMS,
     _SOURCE_SYSTEM_IDENTIFIER,
@@ -32,7 +32,7 @@ from marc_repair_qa import (
     missing_identifier_reason,
     record_identifier,
 )
-from marc_repair_core import (
+from .core import (
     ESCAPE,
     _find_004_issues,
     _sniff_record_types,
@@ -47,7 +47,7 @@ from marc_repair_core import (
     to_mrk,
     trim_oversized_record,
 )
-from marc_repair_marc8 import (
+from .marc8 import (
     DEFAULT_B2_LEXICON_PATH,
     build_marc8_corpus_index,
     find_suspect_hex_encoded_marc8,
@@ -57,7 +57,7 @@ from marc_repair_marc8 import (
     load_b2_lexicon,
     transcode_marc8_to_utf8,
 )
-from marc_repair_patching import (
+from .patching import (
     DEFAULT_852_C_CONTENT,
     DEFAULT_852_LOCATION_CONTENT,
     DEFAULT_HOLDINGS_REQUIRED_A_TAGS_FILE,
@@ -115,7 +115,7 @@ from marc_repair_patching import (
     strip_whitespace_only_010_a,
     write_non_standard_supplement,
 )
-from marc_repair_report import (
+from .report import (
     ProgressReporter,
     _ALWAYS_FULL_CATEGORIES,
     _CHECK_DESCRIPTIONS,
@@ -949,7 +949,7 @@ def repair_holdings_records(
 # Run profiles: named sets of switches kept as JSON files (see profiles/)
 # ---------------------------------------------------------------------------
 
-DEFAULT_PROFILE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "profiles")
+DEFAULT_PROFILE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "profiles")
 
 
 # Per-run paths, one-shot modes, and the profile options themselves never go

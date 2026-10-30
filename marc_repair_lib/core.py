@@ -1,5 +1,5 @@
 """Record boundary detection, Mode 1/Mode 2 reconstruction, streaming and assembly for
-marc_repair. Imports only marc_repair_common."""
+marc_repair. Imports only marc_repair_lib.common."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import codecs
 import re
 from typing import Callable, Iterator
 
-from marc_repair_common import (
+from .common import (
     Ambiguous,
     CONTROL_TAG_LIMIT,
     DirEntry,

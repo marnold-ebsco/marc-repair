@@ -7,7 +7,7 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import marc_repair_cli  # noqa: E402
+import marc_repair_lib.cli as marc_repair_cli  # noqa: E402
 
 
 @pytest.fixture(autouse=True, scope="session")

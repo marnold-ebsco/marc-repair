@@ -1,6 +1,6 @@
 """MARC-8 (ANSEL) handling for marc_repair: diacritic and escape repair, suspect-escape
-finders and the MARC-8 to UTF-8 transcoder. Imports marc_repair_common and
-marc_repair_qa."""
+finders and the MARC-8 to UTF-8 transcoder. Imports marc_repair_lib.common and
+marc_repair_lib.qa."""
 
 from __future__ import annotations
 
@@ -11,10 +11,10 @@ import re
 import unicodedata
 from contextlib import redirect_stderr
 
-from marc_repair_common import (
+from .common import (
     ParsedRecord,
 )
-from marc_repair_qa import (
+from .qa import (
     _record_lccn,
     _record_oclc,
 )
@@ -815,7 +815,7 @@ _B2_MAX_GAPS = 2
 # it by default). Resolved relative to this script, not the cwd, so it's
 # found the same way no matter where marc_repair.py is invoked from.
 DEFAULT_B2_LEXICON_PATH = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "working", "b2_lexicon.json"
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "working", "b2_lexicon.json"
 )
 
 

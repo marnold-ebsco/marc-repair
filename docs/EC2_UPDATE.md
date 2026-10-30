@@ -19,14 +19,18 @@ curl -fsSL https://raw.githubusercontent.com/marnold-ebsco/marc-repair/main/inst
 
 ## Notes
 
-- It re-downloads `marc_repair.py`, its modules (`marc_repair_common.py`,
-  `marc_repair_qa.py`, `marc_repair_core.py`, `marc_repair_marc8.py`,
-  `marc_repair_patching.py`, `marc_repair_report.py`, `marc_repair_cli.py`),
+- It re-downloads `marc_repair.py`, its `marc_repair_lib/` package (`__init__.py`, `common.py`, `qa.py`,
+  `core.py`, `marc8.py`, `patching.py`, `report.py`, `cli.py`),
   `marc_repair_profile.py`, `pyproject.toml`,
   `requirements.txt`, the tag lists, the profiles (`profiles/mark-*.json` and
   `profiles/examples/`) and the docs, pinned to one commit SHA. Local edits to
   those files are overwritten, so change profiles in the repo, not on the box.
   A new profile only installs once it is added to `FILES` in `install.sh`.
+- Moving to the `marc_repair_lib/` package leaves the old flat module files
+  (`marc_repair_common.py`, `marc_repair_qa.py`, `marc_repair_core.py`,
+  `marc_repair_marc8.py`, `marc_repair_patching.py`, `marc_repair_report.py`,
+  `marc_repair_cli.py`) behind in the install directory. Nothing imports them
+  any more, so they are harmless, but they can be deleted.
 - The existing venv is left alone unless the interpreter changes.
 - Other flags: `--ref <branch|tag>`, `--recreate-venv`,
   `--interpreter cpython|pypy`.

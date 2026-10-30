@@ -124,8 +124,8 @@ branch (no feature work mixed in). Pure moves only: no logic edits.
 | 7 Closeout | tests, flake8, installer, docs, before/after output comparison, commit, push | DONE 2026-10-29 (results below); real EC2 data check still TODO |
 | QA split | QA checks + identifier helpers + duplicate-identifier check out of core -> `marc_repair_qa.py` (sits BELOW core: core's MARC-8 code uses `_record_lccn`/`_record_oclc`) | DONE 2026-10-29: core 3,721 -> 3,272, qa 464; 659 tests, flake8, 244-file output comparison identical |
 | 2 Pure helpers | MARC-8 fixers/transcoder out of core -> `marc_repair_marc8.py` | DONE 2026-10-29: core 3,272 -> 1,635, marc8 1,648; same checks identical |
-| 5 Reporting/log | log tables, `write_log`, `ProgressReporter` out of cli -> `marc_repair_report.py` | TODO |
-| 8 Package folder | move the modules into a folder (user approved 2026-10-29, 4th commit) | TODO |
+| 5 Reporting/log | log tables, `write_log`, `ProgressReporter` out of cli -> `marc_repair_report.py` | DONE 2026-10-29: cli 3,909 -> 2,873, report 1,063; same checks identical |
+| 8 Package folder | modules moved into `marc_repair_lib/` (user approved 2026-10-29, 4th commit) | DONE 2026-10-29 (see Final layout) |
 
 The split was generated in one mechanical pass, so phases 1/core/3/4-6 landed
 together; each was marked DONE only after the full suite and the before/after
@@ -144,6 +144,39 @@ Tests retargeted (setup only): `conftest.py` and `test_profiles.py` patch
 `detect_encoding` in both `marc_repair_core` and `marc_repair_cli`.
 `install.sh` `FILES`, README file table and `docs/EC2_UPDATE.md` list the new
 modules.
+
+**Final layout (2026-10-29, after the four follow-up commits)** -- `marc_repair.py`
+(188-line facade/entry point) + package `marc_repair_lib/`, layered low to high,
+each module importing only earlier ones (relative imports, `from .qa import ...`):
+
+| Module | Lines | Holds |
+|---|---|---|
+| `common` | 249 | constants, `RepairError`, record types, `LogEntry` |
+| `qa` | 464 | QA checks, LCCN/OCLC identifier helpers, duplicate-identifier check |
+| `core` | 1,635 | record detection, Mode 1/2 reconstruction, dispatcher, streaming, assembly |
+| `marc8` | 1,648 | MARC-8 (ANSEL) fixers, suspect-escape finders, MARC-8 -> UTF-8 transcoder |
+| `patching` | 3,024 | content patching rules, non-standard-field tally |
+| `report` | 1,063 | log category tables, `write_log`, `ProgressReporter` |
+| `cli` | 2,873 | holdings repair, profiles, `run`, `build_parser`, `main` |
+
+`qa` sits below `core` because the MARC-8 code (now `marc8`) uses
+`_record_lccn`/`_record_oclc`. Data files (`profiles/`, tag lists,
+`working/b2_lexicon.json`) are still found relative to the repo root: the six
+`__file__`-based paths gained one extra `dirname`. Tests: `conftest.py`,
+`test_profiles.py`, `test_marc_repair_bib.py` import `marc_repair_lib.cli` /
+`.core` under their old alias names so the patch targets are unchanged.
+`install.sh` `FILES` lists `marc_repair_lib/*.py`; an existing install keeps
+the old flat module files (harmless, deletable; noted in `docs/EC2_UPDATE.md`).
+Each commit was verified by 659 tests, `flake8 --select=F,E9`, and a 244-file
+byte comparison (17 tracked fixtures x plain/`--split-bib-holdings`/
+`--repair-holdings`; `/tmp/cmp.sh DIR`, baseline `/tmp/base`) -- the only
+difference is `marc_repair_lib.common.RepairError` in the one crashing
+fixture's traceback. The harness is in `/tmp` (lost on WSL restart); it runs
+each tracked fixture copied into DIR with `--no-profile --source-system other`
+and normalises timestamps, durations and paths. `tests/fixtures/` also holds
+~370 git-ignored generated files from an early harness run that wrote beside
+its inputs (names like `*_bib_bib_repaired.mrc`, dated 2026-10-29): safe to
+delete; the older `ub_holdings_*` files there are not from this work.
 
 **Not yet done:** run on real EC2 data (the installer is untested against a
 real pinned install: after merging, update the EC2 box with the installer and
@@ -199,10 +232,11 @@ confirm a run matches the previous output). Merge to `main` is the user's call.
 **Estimates:** the full split was ~500-750k tokens over 7 phases; this "cheap
 option" ~250-400k. Doing the rest later costs ~10-15% more than one pass.
 
-**Future (not in this branch):** Phase 2 (pure helpers out of core), Phase 5
-(reporting/log module split from cli), and splitting QA out of core
-(~1,270 lines). Independent of each other; do them soon after, while this
-layout is fresh, and keep each as pure-move commits.
+**Follow-ups done (2026-10-29):** Phase 2 (MARC-8 helpers out of core), Phase 5
+(reporting/log out of cli), the QA split, and the `marc_repair_lib/` folder --
+four more pure-move commits on this branch. Possible further work: `cli` is
+still 2,873 lines (`run` ~1,000, `build_parser` ~680, holdings repair ~600,
+profiles ~180) and `patching` 3,024; both could be cut further the same way.
 
 ### DONE -- trim records over 99999 bytes instead of diverting them (2026-10-29, on `main`)
 

@@ -10,10 +10,10 @@ import textwrap
 import time
 from datetime import datetime
 
-from marc_repair_common import (
+from .common import (
     LogEntry,
 )
-from marc_repair_patching import (
+from .patching import (
     DEFAULT_852_LOCATION_CONTENT,
     NON_STANDARD_FIELD_CATEGORY,
     NonStandardFieldTally,

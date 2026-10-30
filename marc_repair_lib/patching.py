@@ -11,7 +11,7 @@ from dataclasses import replace
 from difflib import SequenceMatcher
 from typing import Iterator
 
-from marc_repair_common import (
+from .common import (
     CONTROL_TAG_LIMIT,
     FIELDTERM,
     Field_,
@@ -19,15 +19,15 @@ from marc_repair_common import (
     ParsedRecord,
     SUBFIELD,
 )
-from marc_repair_qa import (
+from .qa import (
     VALID_SUBFIELD_CODE_CHARS,
     record_identifier,
 )
-from marc_repair_core import (
+from .core import (
     assemble_marc,
     read_intact_record,
 )
-from marc_repair_marc8 import (
+from .marc8 import (
     UNICODE_ENCODING_BYTE,
 )
 
@@ -968,17 +968,17 @@ def parse_ensure_field_spec(
 
 
 DEFAULT_REQUIRED_A_TAGS_FILE = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "required_a_tags.txt"
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "required_a_tags.txt"
 )
 
 
 DEFAULT_NON_REPEATABLE_TAGS_FILE = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "non_repeatable_tags.txt"
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "non_repeatable_tags.txt"
 )
 
 
 DEFAULT_HOLDINGS_REQUIRED_A_TAGS_FILE = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "holdings_required_a_tags.txt"
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "holdings_required_a_tags.txt"
 )
 
 
@@ -993,7 +993,7 @@ HOLDINGS_CAPTION_PATTERN_VALID_CODES = frozenset({"a", "g", "i"})
 
 
 DEFAULT_STANDARD_MARC_FIELDS_FILE = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "standard_marc_fields.txt"
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "standard_marc_fields.txt"
 )
 
 

@@ -10,7 +10,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
 import marc_repair as m  # noqa: E402
-import marc_repair_cli  # noqa: E402
+import marc_repair_lib.cli as marc_repair_cli  # noqa: E402
 import marc_repair_profile as tool  # noqa: E402
 
 FIXTURE = os.path.join(

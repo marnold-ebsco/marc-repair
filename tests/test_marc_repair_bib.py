@@ -27,8 +27,8 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import marc_repair as m  # noqa: E402
-import marc_repair_cli  # noqa: E402
-import marc_repair_core  # noqa: E402
+import marc_repair_lib.cli as marc_repair_cli  # noqa: E402
+import marc_repair_lib.core as marc_repair_core  # noqa: E402
 
 FIXTURES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures")
 
