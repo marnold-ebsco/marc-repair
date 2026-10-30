@@ -37,6 +37,7 @@ DIR_EXPLICIT=0
 FILES=(
   "marc_repair.py"
   "marc_repair_common.py"
+  "marc_repair_qa.py"
   "marc_repair_core.py"
   "marc_repair_patching.py"
   "marc_repair_cli.py"

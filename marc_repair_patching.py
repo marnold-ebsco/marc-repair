@@ -1,5 +1,5 @@
 """Content patching for marc_repair: add or fix required fields, dedupe, recode,
-and the non-standard-field tally. Imports marc_repair_common and marc_repair_core."""
+and the non-standard-field tally. Imports the modules before it."""
 
 from __future__ import annotations
 
@@ -19,12 +19,14 @@ from marc_repair_common import (
     ParsedRecord,
     SUBFIELD,
 )
+from marc_repair_qa import (
+    VALID_SUBFIELD_CODE_CHARS,
+    record_identifier,
+)
 from marc_repair_core import (
     UNICODE_ENCODING_BYTE,
-    VALID_SUBFIELD_CODE_CHARS,
     assemble_marc,
     read_intact_record,
-    record_identifier,
 )
 
 
