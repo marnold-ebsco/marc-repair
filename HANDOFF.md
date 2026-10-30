@@ -173,10 +173,38 @@ byte comparison (17 tracked fixtures x plain/`--split-bib-holdings`/
 difference is `marc_repair_lib.common.RepairError` in the one crashing
 fixture's traceback. The harness is in `/tmp` (lost on WSL restart); it runs
 each tracked fixture copied into DIR with `--no-profile --source-system other`
-and normalises timestamps, durations and paths. `tests/fixtures/` also holds
-~370 git-ignored generated files from an early harness run that wrote beside
-its inputs (names like `*_bib_bib_repaired.mrc`, dated 2026-10-29): safe to
-delete; the older `ub_holdings_*` files there are not from this work.
+and normalises timestamps, durations and paths. An early harness run wrote
+~370 generated files into `tests/fixtures/` (git-ignored); they were moved
+aside, the suite re-run (659 pass), and deleted (2026-10-29). The older
+`ub_holdings_*` files there are not from this work and were left alone.
+
+**Real-data check done locally (2026-10-29):** `working/WTS_bibs_2026-10-01.out`
+(402 MB, 263,595 bibs) with `--profile mark-bib --source-system sierra`:
+all records written in 100.6 s, 0 not fixed. The same command on the
+pre-refactor code (commit `45ed37b`, in a temporary worktree) produced a
+byte-identical `.mrc` and non-standard-fields file; the logs differ only in
+the output filename and one check (`fixed_marc8_b2_umlaut`) listed under "no
+findings", most likely because the temporary worktree lacked the untracked
+`working/b2_lexicon.json` (not tested directly). Outputs kept in `working/`:
+`WTS_bibs_2026-10-01_libsplit.mrc`, `..._libsplit_log_20261030T001759Z.log`,
+`..._non_standard_fields.txt`, `..._libsplit.run.stdout`.
+
+**Merge readiness (2026-10-29):** branch is 6 commits ahead of `main`, 0
+behind (fast-forwardable), pushed, tree clean. The only unverified part is
+`install.sh` fetching the new `marc_repair_lib/` files (syntax-checked only).
+
+**Morning checklist (user will test):**
+1. On the EC2 box, update with the installer against this branch:
+   `install.sh --ref refactor/split-marc-repair` (the installer pins a commit
+   SHA, so it can fetch these files without merging first). Confirm
+   `marc_repair_lib/` (`__init__.py` + 7 modules) is created in the install dir.
+2. Run one real file with the venv wrapper and compare to a previous run's
+   output (`.mrc` byte-identical expected; log differs only in timestamps and
+   filenames).
+3. If it works: merge `refactor/split-marc-repair` into `main` (fast-forward)
+   and push. If `install.sh` misses a file, fix `FILES` and re-test.
+4. Optionally delete the old flat `marc_repair_*.py` files an existing install
+   keeps (harmless; see `docs/EC2_UPDATE.md`).
 
 **Not yet done:** run on real EC2 data (the installer is untested against a
 real pinned install: after merging, update the EC2 box with the installer and
