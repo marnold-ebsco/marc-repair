@@ -734,9 +734,11 @@ HOLDINGS_ROWS = [
     CategoryRow(
         "856 (Electronic Location and Access) missing $u (URI) -- same "
         "real-world validation, same reasoning",
-        "Flagged only, no change", "detect-only",
+        "A subfield recoded to $u when the URL is unambiguous (same rules as "
+        "bib's `bib_856_missing_u`). Anything else is flagged only, no change",
+        "Yes, always (recode); detect-only otherwise",
         "`holdings_856_missing_u`", "NEEDS REVIEW", "**Yes**",
-        "-- (detect-only, no switch)",
+        "-- (always on, no switch)",
     ),
     CategoryRow(
         "852 (Location) $h (call number) present but "

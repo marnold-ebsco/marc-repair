@@ -165,8 +165,10 @@ SWITCHES: tuple[Switch, ...] = (
        help="write each additional 004 as its own record in the _additional004s file"),
     _s("check_853_missing_8", "check-853-missing-8", True, "holdings", "holdings_853_missing_8",
        help="flag an 853 with no $8"),
-    _s("check_holdings_856_missing_u", "check-holdings-856-missing-u", True, "holdings",
-       "holdings_856_missing_u", help="flag an 856 with no $u"),
+    _s("fix_holdings_856_missing_u", "fix-holdings-856-missing-u", True, "holdings",
+       "holdings_856_missing_u", "--check-holdings-856-missing-u --no-check-holdings-856-missing-u",
+       help="recode an unambiguous 856 URL (in any subfield) to $u, and flag the rest (an 856 "
+       "with no $u)"),
     _s("check_holdings_escape_sequences", "check-holdings-escape-sequences", True, "holdings",
        "holdings_escape_sequence", help="flag a record containing an ESC (0x1B) byte"),
     _s("check_holdings_missing_004", "check-holdings-missing-004", True, "holdings",

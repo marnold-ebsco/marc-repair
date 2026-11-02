@@ -1321,6 +1321,21 @@ class TestRepairHoldingsRecords:
         f856 = next(f for f in parsed.fields if f.tag == "856")
         assert ("a", "Fulltext Ebsco OA database 1911-2013") in f856.subfields
 
+    def test_856_missing_u_url_in_other_subfield_recoded(self, tmp_path):
+        fields = [
+            m.Field_("004", None, None, content="ocm123"),
+            m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
+            m.Field_("852", "  ", [("b", "Main Library"), ("h", "ABC123")]),
+            m.Field_("856", "40", [("z", "http://example.org/x"), ("3", "Online")]),
+        ]
+        result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
+        content = _resolve_log(log).read_text(encoding="utf-8")
+        assert "holdings_856_missing_u" in content
+        parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
+        f856 = next(f for f in parsed.fields if f.tag == "856")
+        assert ("u", "http://example.org/x") in f856.subfields
+        assert not any(code == "z" for code, _ in f856.subfields)
+
     def test_852_b_purely_numeric_replaced_with_migration(self, tmp_path):
         fields = [
             m.Field_("004", None, None, content="ocm123"),

@@ -495,9 +495,10 @@ def repair_holdings_records(
         tool has no way to invent a real link/sequence number; see
         `find_853_missing_8`
       * an 856 (Electronic Location and Access) field with no $u (URI)
-        is flagged NOT FIXED (category "holdings_856_missing_u"): same
-        real-world validation, same reasoning -- this tool has no way
-        to invent a real URL; see `find_856_missing_u`
+        gets the same treatment as bib's (category
+        "holdings_856_missing_u"): an unambiguous URL in another
+        subfield is recoded to $u (`recode_856_missing_u`); the rest
+        is flagged NOT FIXED (`find_856_missing_u`)
       * 863/864/865/866/867/868 (Enumeration and Chronology / Textual
         Holdings, all three "levels") missing a non-empty, non-
         punctuation-only $a are removed the same way bib's
@@ -805,9 +806,13 @@ def repair_holdings_records(
             if on("check_853_missing_8"):
                 for detail in find_853_missing_8(parsed):
                     log("holdings_853_missing_8", False, i, rec_id, detail)
-            if on("check_holdings_856_missing_u"):
+            if on("fix_holdings_856_missing_u"):
+                for detail in recode_856_missing_u(parsed):
+                    log("holdings_856_missing_u", True, i, rec_id,
+                        f"{detail} -- NO DATA LOSS")
                 for detail in find_856_missing_u(parsed):
-                    log("holdings_856_missing_u", False, i, rec_id, detail)
+                    log("holdings_856_missing_u", False, i, rec_id,
+                        f"{detail} -- DATA LOSS")
 
             if on("split_multiple_852"):
                 records_to_write, incomplete_852_details = split_holdings_multiple_852(parsed)

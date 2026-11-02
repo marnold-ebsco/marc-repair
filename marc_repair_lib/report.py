@@ -311,7 +311,9 @@ _CHECK_DESCRIPTIONS: dict[str, str] = {
     "number) -- the 863/864/865 enumeration fields that should reference it "
     "can't be linked.",
     "holdings_856_missing_u": "An 856 (Electronic Location and Access) field has no $u (URI) -- the field "
-    "exists but has no actual link. Check to see if the link is in an incorrect subfield.",
+    "exists but has no actual link. Check to see if the link is in an incorrect subfield. "
+    "Where the URL is unambiguous (a lost 'u' code, or a bare http(s) URL alone in one subfield) "
+    "it is recoded to $u; the action taken is in parentheses.",
     "bib_856_missing_u": "A bib record's 856 (Electronic Location and Access) field has no $u (URI) -- "
     "the field exists but has no actual link. Check to see if the link is in an incorrect subfield. "
     "Where the URL is unambiguous (a lost 'u' code, or a bare http(s) URL alone in $a/$z) it is "
@@ -465,7 +467,7 @@ _CHECK_DATA_LOSS: dict[str, str] = {
     "suspect_hex_encoded_marc8": "POSSIBLE DATA LOSS",
     "holdings_852_b_suspect_content": "POSSIBLE DATA LOSS",
     "holdings_853_missing_8": "POSSIBLE DATA LOSS",
-    "holdings_856_missing_u": "NO DATA LOSS",
+    "holdings_856_missing_u": "POSSIBLE DATA LOSS",
     "bib_856_missing_u": "POSSIBLE DATA LOSS",
     "split_holdings_multiple_852": "NO DATA LOSS",
     "unfixed_non_numeric_tag": "POSSIBLE DATA LOSS",
@@ -611,7 +613,7 @@ _ID_LIST_ONLY_CATEGORIES: set[str] = set()
 
 #: Categories whose log section puts a blank line between the
 #: (POSSIBLE) DATA LOSS entries and the NO DATA LOSS ones.
-_BLANK_LINE_BETWEEN_LOSS_GROUPS = {"bib_856_missing_u"}
+_BLANK_LINE_BETWEEN_LOSS_GROUPS = {"bib_856_missing_u", "holdings_856_missing_u"}
 
 
 #: Where each 852 (Location)-related category sits within its own
