@@ -8,7 +8,43 @@ current state and open items.
 
 ## Current state
 
-### DONE -- mojibake fixer hardened, pure Python, no ftfy (2026-10-30, uncommitted on `main`)
+### DONE -- holdings 856 recode + learned 852 `$c` suggestions (2026-11-02, committed and pushed on `main`: `410767e`, `83a798d`)
+
+**`holdings_856_missing_u` now recodes, like bib.** A holdings 856 with no `$u`
+gets the same `recode_856_missing_u` as bib (lost `u` code, or one subfield
+that is only an http(s)/`www.` URL, any code); the rest is still flagged. The
+switch was renamed `check_holdings_856_missing_u` -> `fix_holdings_856_missing_u`
+(`--fix-holdings-856-missing-u`; old `--check-`/`--no-check-` spellings kept as
+aliases; it left the `detect-only` group). A saved profile using the old dest
+name would need updating. Category now POSSIBLE DATA LOSS with the blank line
+between loss groups, same as bib. Docs regenerated; one holdings test added.
+
+**`added_missing_852c` log lines now carry a learned suggestion.** The
+placeholder is still `Migration` (decided: leave it; the suggestion is
+log-only, nothing extra is written). `Location852cSuggester`
+(`patching.py`) counts the real `$c` of every holdings record in the same file,
+keyed by (852 `$b`, first 2 chars of 007, has 853/863/866, has non-empty `$h`).
+At the end of the run each placeholder line gets
+` (perhaps should be 'X': 96% of 2,301 similar records with a $c)`, only when
+the context has >= 30 examples and one location wins >= 90%
+(`MIN_RECORDS`/`MIN_SHARE`). Exact-context match only, no fallback to a looser
+one. Nothing is hardcoded per client (an earlier Bucknell-hardcoded version was
+replaced). Single pass: the log entries are patched after the loop in
+`repair_holdings_records`. `Migration` is never learned. Tests: 2 new.
+
+**Verified on the real, unfixed Bucknell holdings (379 records, EC2):** nearly
+all get Journal Collection (98% of 896 or 100% of 1,299 similar records);
+184743 -> Closed Stacks, 766802 -> DVD Collection, 16946 and 767954 -> Stacks
+(91% of 20,533, weakest). About a seventh get no suggestion. Earlier analysis
+of the (already-repaired) file: none of the 379 has a location miscoded in
+another subfield; 1 of 379 has an 856, so they are print serials/microform, not
+electronic-only.
+
+**Open / not done:** no option to apply the suggestions (log only); a list of
+record ids grouped by suggested location for Bucknell to approve was offered,
+not built. Full suite: 841 passed, 4 skipped.
+
+### DONE -- mojibake fixer hardened, pure Python, no ftfy (2026-10-30, committed `dd1d112`)
 
 `_fix_mojibake` (`marc_repair_lib/patching.py`) no longer round-trips the
 whole subfield through cp1252. It now finds each UTF-8 lead byte + continuation
