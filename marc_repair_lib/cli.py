@@ -77,6 +77,7 @@ from .patching import (
     add_default_008,
     add_default_245,
     add_default_holdings_008,
+    Location852cSuggester,
     add_missing_852c,
     dedupe_010_fields,
     ensure_field,
@@ -650,6 +651,8 @@ def repair_holdings_records(
     used_tags: set[str] = set()
     pending_tag_fixes: list[tuple[int, int, int, str]] = []
     id_records: list[tuple[int, str, str]] = []
+    location_suggester = Location852cSuggester()
+    pending_c_suggestions: list[tuple[LogEntry, tuple]] = []
     n_total = 0
     n_written = 0
     n_unfixable = 0
@@ -785,9 +788,12 @@ def repair_holdings_records(
             if on("add_missing_852_location"):
                 for detail in fix_missing_852_location(parsed):
                     log("added_missing_852_location", True, i, rec_id, detail)
+            location_suggester.observe(parsed)
             if fix_missing_852c and on("fix_missing_852c"):
-                for detail in add_missing_852c(parsed):
+                missing_c_keys = location_suggester.keys_missing_c(parsed)
+                for detail, key in zip(add_missing_852c(parsed), missing_c_keys):
                     log("added_missing_852c", True, i, rec_id, detail)
+                    pending_c_suggestions.append((log_entries[-1], key))
             if on("remove_empty_852_subfields"):
                 for detail in strip_empty_852_subfields(parsed):
                     log("removed_empty_852_subfield", True, i, rec_id, detail)
@@ -947,6 +953,11 @@ def repair_holdings_records(
                     )
                     fixup_fh.seek(offset)
                     fixup_fh.write(fixed_bytes)
+
+    # The suggestions need the whole file's $c statistics, so they're
+    # appended now rather than while the records were being read.
+    for entry, key in pending_c_suggestions:
+        entry.detail += location_suggester.suggestion(key)
 
     dup_ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     if on("check_duplicate_identifiers"):

@@ -735,6 +735,50 @@ class TestRepairHoldingsRecords:
         assert ("c", "Migration") in field852.subfields
         assert result["log_lines"] == 2  # byte-17 leader default + this
 
+    def test_fix_missing_852c_suggests_learned_location_in_log_only(self, tmp_path):
+        def rec(n, c=None):
+            subs = [("a", "PBU"), ("b", "PBUB")] + ([("c", c)] if c else [])
+            return self._holdings_record(fields=[
+                m.Field_("004", None, None, content=f"ocm{n}"),
+                m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
+                m.Field_("852", "  ", subs),
+                m.Field_("863", "3 ", [("8", "1.1"), ("a", "1-5")]),
+            ])
+
+        records = [rec(n, "Periodicals") for n in range(30)] + [rec(99)]
+        src = self._write_holdings_file(tmp_path, records)
+        out = tmp_path / "out.mrc"
+        log = tmp_path / "out.log"
+        m.repair_holdings_records(str(src), str(out), str(log), fix_missing_852c=True)
+        content = _resolve_log(log).read_text(encoding="utf-8")
+        assert (
+            "added missing 852 $c: 'Migration' (perhaps should be 'Periodicals': "
+            "100% of 30 similar records with a $c)"
+        ) in content
+        parsed = m.read_intact_record(out.read_bytes().decode("utf-8").split("\x1d")[-2] + "\x1d")
+        assert ("c", "Migration") in next(f for f in parsed.fields if f.tag == "852").subfields
+
+    def test_location_suggester_needs_enough_consistent_evidence(self):
+        def parsed(c=None, h=None):
+            subs = [("b", "PBUB")] + ([("c", c)] if c else []) + ([("h", h)] if h else [])
+            return m.ParsedRecord(
+                leader="0" * 24, entries=[], fields=[m.Field_("852", "  ", subs)])
+
+        s = m.Location852cSuggester()
+        for _ in range(29):
+            s.observe(parsed("Stacks"))
+        key = s.keys_missing_c(parsed())[0]
+        assert s.suggestion(key) == ""          # 29 < MIN_RECORDS
+        s.observe(parsed("Stacks"))
+        assert "'Stacks': 100% of 30" in s.suggestion(key)
+        for _ in range(5):
+            s.observe(parsed("Reference"))
+        assert "'Stacks': 86%" not in s.suggestion(key)
+        assert s.suggestion(key) == ""          # 30/35 < MIN_SHARE
+        assert s.suggestion(s.keys_missing_c(parsed(h="QH1"))[0]) == ""  # unseen context
+        s.observe(parsed("Migration"))          # the placeholder is never learned
+        assert sum(sum(c.values()) for c in s._counts.values()) == 35
+
     def test_fix_missing_852c_noop_for_non_wms_record(self, tmp_path):
         # $c is only the live location subfield for OCLC WMS-sourced
         # records (004 starting "on"/"ocn"/"ocm"); a non-WMS record

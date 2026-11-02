@@ -346,7 +346,10 @@ _CHECK_DESCRIPTIONS: dict[str, str] = {
     "(disable with --no-fix-missing-852c) -- only fills a gap that was already "
     "empty; never overwrites an existing $c. Only runs for a record identified "
     "as OCLC WMS-sourced (see _is_wms_holdings_record), since $c is only that "
-    "system's live location subfield.",
+    "system's live location subfield. Where this file's own records with a $c "
+    "show a consistent location for records like this one (same 852 $b, 007 type, "
+    "serial-ness and call-number presence), the line adds '(perhaps should be "
+    "<location>)' -- a suggestion only, never written.",
     "normalized_subfield_9_to_0": "A $9 subfield was rewritten to $0 (MARC21's standard "
     "authority-control-number code).",
     "normalized_smart_characters": 'Typographic ("smart") quotes/dashes were flattened to their plain-ASCII '

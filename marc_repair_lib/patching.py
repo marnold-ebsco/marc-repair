@@ -8,6 +8,7 @@ import re
 import tempfile
 import unicodedata
 from array import array
+from collections import Counter
 from dataclasses import replace
 from difflib import SequenceMatcher
 from typing import Iterator
@@ -721,6 +722,66 @@ def fix_852_b_suspect_content(
             new_subfields.append((code, DEFAULT_852_LOCATION_CONTENT))
         f.subfields = new_subfields
     return details
+
+
+class Location852cSuggester:
+    """Learns, from the holdings records of the file being processed
+    that DO have an 852 $c, which shelving location goes with which
+    record context, so a record missing $c can be reported with
+    "(perhaps should be <location>)". Nothing here is ever written to a
+    record -- the placeholder stays. Nothing is hardcoded per client:
+    the context is (852 $b, 007 type/form, has serial holdings fields
+    853/863/866, has a non-empty $h) and the suggestion is that
+    context's most common $c, offered only when it has at least
+    `MIN_RECORDS` examples and wins at least `MIN_SHARE` of them."""
+
+    MIN_RECORDS = 30
+    MIN_SHARE = 0.9
+
+    def __init__(self) -> None:
+        self._counts: dict[tuple, Counter] = {}
+
+    @staticmethod
+    def _key(parsed: ParsedRecord, f852: Field_) -> tuple:
+        subs = f852.subfields
+        b = next((d.strip() for code, d in subs if code == "b"), "")
+        f007 = next((f.content or "" for f in parsed.fields if f.tag == "007"), "")
+        serial = any(f.tag in ("853", "863", "866") for f in parsed.fields)
+        has_h = any(code == "h" and d.strip() for code, d in subs)
+        return (b, f007[:2], serial, has_h)
+
+    def observe(self, parsed: ParsedRecord) -> None:
+        """Count each 852 that already has a real $c."""
+        for f in parsed.fields:
+            if f.tag != "852" or f.is_control():
+                continue
+            c = next((d.strip() for code, d in f.subfields if code == "c"), "")
+            if c and c != DEFAULT_852_C_CONTENT:
+                self._counts.setdefault(self._key(parsed, f), Counter())[c] += 1
+
+    def keys_missing_c(self, parsed: ParsedRecord) -> list[tuple]:
+        """The context of each 852 with no $c, in field order -- the
+        same order `add_missing_852c` reports them in."""
+        return [
+            self._key(parsed, f) for f in parsed.fields
+            if f.tag == "852" and not f.is_control()
+            and not any(code == "c" for code, _ in f.subfields)
+        ]
+
+    def suggestion(self, key: tuple) -> str:
+        """" (perhaps should be 'X': 96% of 2,301 similar records with a
+        $c)", or "" when the evidence is too thin or too mixed."""
+        counts = self._counts.get(key)
+        if not counts:
+            return ""
+        total = sum(counts.values())
+        location, n = counts.most_common(1)[0]
+        if total < self.MIN_RECORDS or n / total < self.MIN_SHARE:
+            return ""
+        return (
+            f" (perhaps should be {location!r}: {n / total:.0%} of {total:,} "
+            "similar records with a $c)"
+        )
 
 
 def add_missing_852c(parsed: ParsedRecord) -> list[str]:
