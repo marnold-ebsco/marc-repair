@@ -658,6 +658,21 @@ class TestRepairHoldingsRecords:
         assert len(f852s) == 1
         assert ("b", "Main Library") in f852s[0].subfields
 
+    def test_multiple_852_c_only_is_split_not_dropped(self, tmp_path):
+        # WMS-style 852s carry the location in $c only, never $b.
+        fields = [
+            m.Field_("001", None, None, content="12345"),
+            m.Field_("004", None, None, content="ocm123"),
+            m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
+            m.Field_("852", "  ", [("c", "Main Stacks")]),
+            m.Field_("852", "  ", [("c", "Annex")]),
+        ]
+        result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
+        assert result["written"] == 2
+        content = _resolve_log(log).read_text(encoding="utf-8")
+        assert not _detail_line_marker("incomplete_852").search(content)
+        assert _detail_line_marker("split_holdings_multiple_852").search(content)
+
     def test_single_852_with_no_b_not_touched(self, tmp_path):
         # A lone 852 (no other 852 to be ambiguous against) is left
         # alone here regardless of which subfield carries its location

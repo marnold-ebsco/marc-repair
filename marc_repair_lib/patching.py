@@ -420,11 +420,14 @@ def split_holdings_multiple_852(parsed: ParsedRecord) -> tuple[list[ParsedRecord
     isn't representable as one record at all; this is what actually
     resolves it, by producing several.
 
-    An 852 with no $b (Sublocation) at all has no location to split
-    out in the first place -- rather than duplicating it into a copy
-    of its own, it's dropped entirely and returned in the second list
-    (category "incomplete_852", NOT FIXED: there's no data here to
-    fix, just a location this tool can't use).
+    An 852 with neither a $b (Sublocation) nor a usable $c (shelving
+    location) has no location to split out in the first place --
+    rather than duplicating it into a copy of its own, it's dropped
+    entirely and returned in the second list (category
+    "incomplete_852", NOT FIXED: there's no data here to fix, just a
+    location this tool can't use). A $c-only 852 (OCLC WMS, Koha,
+    FOLIO and Symphony carry the location there, never in $b) is
+    kept and split out like any other.
 
     Every other field is duplicated into every copy verbatim, and
     each copy keeps exactly one of the record's remaining ($b-bearing)
@@ -458,12 +461,16 @@ def split_holdings_multiple_852(parsed: ParsedRecord) -> tuple[list[ParsedRecord
     valid_indices = []
     for i in indices_852:
         f = parsed.fields[i]
-        if any(code == "b" for code, _ in f.subfields):
+        if any(
+            code == "b" or (code == "c" and data.strip() and not _is_punctuation_only(data))
+            for code, data in f.subfields
+        ):
             valid_indices.append(i)
             continue
         body = "".join(f"${code}{data}" for code, data in f.subfields)
         incomplete_details.append(
-            f"removed 852 with no $b (Sublocation): ={f.tag}  {f.indicators}{body}"
+            f"removed 852 with no $b (Sublocation) or $c (Shelving location): "
+            f"={f.tag}  {f.indicators}{body}"
         )
     other_fields = [(i, f) for i, f in enumerate(parsed.fields) if f.tag != "852"]
     if len(valid_indices) <= 1:
