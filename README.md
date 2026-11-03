@@ -124,6 +124,21 @@ unparseable holdings record, or a split copy too large to represent —
 also lands under `unfixable`/UNFIXABLE in its own `_error` file, not
 left in the main holdings output.
 
+### Holdings records with multiple 852s
+
+In the holdings pipeline, a record with more than one 852 (Location) is
+split into one holdings record per 852 that has a `$b` (category
+`split_holdings_multiple_852`); all other fields are copied into each
+copy and copies after the first get `-2`, `-3`, ... appended to the 001.
+An 852 with no `$b` in such a record is dropped, not copied
+(`incomplete_852`), even if it has `$a`/`$c` -- so `$c`-only (WMS-style)
+852s in a multi-852 record are lost. A record with a single 852 is never
+split or dropped; a missing location is handled by
+`added_missing_852_location` instead. The split runs after the other 852
+fixes: a suspect `$b` replaced by the placeholder still counts, an empty
+`$b` removed earlier does not. Disable with `--no-split-multiple-852`
+(see `docs/REPAIR_CATEGORIES.md`).
+
 ### What gets fixed automatically vs. flagged
 
 | Issue | Behavior |
