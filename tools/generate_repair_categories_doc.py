@@ -177,6 +177,13 @@ BIB_ROWS = [
         '`--remap-999-to-945`',
     ),
     CategoryRow(
+        "999 -> 949 move", "Renamed field tag",
+        "Yes (`--no-move-999-to-949`)", "`moved_999_to_949`",
+        "INFORMATIONAL", "No -- INFORMATIONAL categories are never listed in full, "
+        "not even via --log-full",
+        '`--no-move-999-to-949`',
+    ),
+    CategoryRow(
         "$9 -> $0 normalization", "Renamed subfield code",
         "Yes (`--no-normalize-subfield-9`)", "`normalized_subfield_9_to_0`",
         "INFORMATIONAL",

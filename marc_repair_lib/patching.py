@@ -2820,6 +2820,25 @@ def remap_999_to_945(parsed: ParsedRecord) -> list[str]:
     return details
 
 
+def move_999_to_949(parsed: ParsedRecord) -> list[str]:
+    """Retag every 999 data field that does NOT have indicators "ff" to
+    949, leaving its indicators, subfields and order untouched.
+    FOLIO reserves 999 with indicators "ff" for its own use (the
+    instance/record identifiers in $i and $s), so a source system's own
+    999 -- e.g. Sirsi/Sierra's item field ($w $i $m $l $t $o), usually with
+    blank indicators -- conflicts with it and makes Data Import fail the
+    record. A real 999 ff is never touched. Returns one detail string
+    per field moved (category "moved_999_to_949"; INFORMATIONAL, so only
+    a header + count is logged, never a per-record listing)."""
+    details = []
+    for f in parsed.fields:
+        if f.is_control() or f.tag != "999" or f.indicators == "ff":
+            continue
+        f.tag = "949"
+        details.append("moved =999 to =949 (FOLIO reserves 999 ff)")
+    return details
+
+
 #: MARC21 tags are always 3 numeric digits; 900-999 is the block reserved
 #: for locally-defined fields, so it's the natural place to park a tag
 #: that's genuinely garbage (e.g. "ABC" from directory corruption) --

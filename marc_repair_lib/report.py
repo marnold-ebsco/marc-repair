@@ -104,6 +104,7 @@ _INFORMATIONAL = {
     "invalid_isbn_issn_checksum",
     "fixed_mojibake",
     "remapped_999_to_945",
+    "moved_999_to_949",
     "oversized_sentinel_fixed",
     "fixed_marc8_diacritic",
     "fixed_marc8_b2_umlaut",
@@ -388,6 +389,10 @@ _CHECK_DESCRIPTIONS: dict[str, str] = {
     'closing sequence got swapped (e.g. "Facolta" + <escape> + " " (trapped) + '
     '<close> + "di lettere" -> "Facoltà di lettere"). See suspect_marc8_escape '
     "for the same defect's unconfirmed payloads, left for a human to review.",
+    "moved_999_to_949": "A 999 field (not indicators ff) was retagged to 949 (on by default; "
+    "--no-move-999-to-949 turns it off). FOLIO reserves 999 with indicators ff for its own record "
+    "identifiers ($i/$s), so a source system's own 999 (e.g. Sirsi/Sierra item data) "
+    "conflicts with it and Data Import rejects the record; a real 999 ff is never touched.",
     "remapped_999_to_945": 'A 999 field was retagged to 945 (indicators forced to "ff") -- only with '
     "--remap-999-to-945.",
     "trimmed_oversized_record": "A record was over 99999 bytes (the most ISO 2709's leader can "
@@ -498,6 +503,7 @@ _CHECK_DATA_LOSS: dict[str, str] = {
     "fixed_marc8_b2_umlaut": "NO DATA LOSS",
     "fixed_marc8_diacritic": "NO DATA LOSS",
     "remapped_999_to_945": "NO DATA LOSS",
+    "moved_999_to_949": "NO DATA LOSS",
     "oversized_sentinel_fixed": "NO DATA LOSS",
     "padded_indicators": "NO DATA LOSS",
     "holdings_missing_004": "POSSIBLE DATA LOSS",

@@ -3851,12 +3851,11 @@ class TestFixInvalidTags:
         src.write_bytes(m.assemble_marc(rec1) + m.assemble_marc(rec2))
         out = tmp_path / "out.mrc"
         log = tmp_path / "run.log"
-        # 999->945 remapping is off by default (see TestRemap999To945),
-        # so the filler "999" field here keeps its slot taken without
-        # needing any extra flag, satisfying this test's "every 9XX
-        # slot taken" setup.
+        # 999 moves are switched off so the filler "999" field keeps its
+        # slot taken, satisfying this test's "every 9XX slot taken" setup.
         rc = m.main([
             str(src), "-o", str(out), "--log-full", "unfixed_non_numeric_tag", "--log", str(log),
+            "--no-move-999-to-949",
         ])
         assert rc == 0
         content = _resolve_log(log).read_text(encoding="utf-8")
@@ -3872,6 +3871,44 @@ class TestFixInvalidTags:
 # ---------------------------------------------------------------------------
 # remap_999_to_945 -- Sierra's internal 999 -> locally-defined 945
 # ---------------------------------------------------------------------------
+
+class TestMove999To949:
+    def test_moves_non_ff_999_keeping_indicators_and_subfields(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[
+                m.Field_("999", "  ", [("w", "LC"), ("i", "92648")]),
+                m.Field_("999", "ff", [("i", "uuid"), ("s", "uuid2")]),
+            ],
+        )
+        details = m.move_999_to_949(parsed)
+        assert len(details) == 1
+        assert parsed.fields[0].tag == "949"
+        assert parsed.fields[0].indicators == "  "
+        assert parsed.fields[0].subfields == [("w", "LC"), ("i", "92648")]
+        assert parsed.fields[1].tag == "999"
+
+    def test_via_cli_flag_only(self, tmp_path):
+        parsed = m.ParsedRecord(
+            leader=_SYNTHETIC_LEADER,
+            entries=[],
+            fields=[
+                m.Field_("001", None, None, content="rec12"),
+                m.Field_("008", None, None, content="x" * 40),
+                m.Field_("999", "  ", [("i", "12345")]),
+            ],
+        )
+        src = tmp_path / "s999.mrc"
+        src.write_bytes(m.assemble_marc(parsed))
+        for flag, want in (([], "949"), (["--no-move-999-to-949"], "999")):
+            out = tmp_path / f"out{want}.mrc"
+            log = tmp_path / f"run{want}.log"
+            assert m.main([str(src), "-o", str(out), "--log", str(log), *flag]) == 0
+            tags = [f.tag for f in m.repair_text(m._read_text(str(out)))[0].fields]
+            assert want in tags
+            assert ("999" in tags) == (want == "999")
+
 
 class TestRemap999To945:
     def test_retags_999_to_945_with_ff_indicators(self):
@@ -3920,7 +3957,7 @@ class TestRemap999To945:
         src.write_bytes(m.assemble_marc(parsed))
         out = tmp_path / "out.mrc"
         log = tmp_path / "run.log"
-        rc = m.main([str(src), "-o", str(out), "--log", str(log)])
+        rc = m.main([str(src), "-o", str(out), "--log", str(log), "--no-move-999-to-949"])
         assert rc == 0
         results = m.repair_text(m._read_text(str(out)))
         tags = [f.tag for f in results[0].fields]

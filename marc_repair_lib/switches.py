@@ -87,6 +87,7 @@ SWITCHES: tuple[Switch, ...] = (
        "fixed_marc8_diacritic"),
     _s("marc8_corpus_lookup", "marc8-corpus-lookup", True, "bib"),
     _s("remap_999_to_945", "remap-999-to-945", False, "bib", "remapped_999_to_945"),
+    _s("move_999_to_949", "move-999-to-949", True, "bib", "moved_999_to_949"),
     _s("merge_duplicate_040", "merge-duplicate-040", True, "bib", "merged_duplicate_040"),
     _s("move_duplicate_100_to_700", "move-duplicate-100-to-700", True, "bib",
        "moved_duplicate_to_added_entry"),

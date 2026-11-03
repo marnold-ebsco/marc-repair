@@ -105,6 +105,7 @@ from .patching import (
     recode_misfiled_duplicate_245,
     recode_title_only_7xx_to_730,
     record_missing_245,
+    move_999_to_949,
     remap_999_to_945,
     split_holdings_multiple_004,
     split_holdings_multiple_852,
@@ -1685,6 +1686,20 @@ def build_parser() -> argparse.ArgumentParser:
         "record",
     )
     parser.add_argument(
+        "--move-999-to-949",
+        dest="move_999_to_949",
+        action="store_true",
+        default=True,
+        help="retag every 999 field that does not have indicators \"ff\" "
+        "to 949 (indicators and subfields unchanged). FOLIO reserves "
+        "999 ff for its own record identifiers ($i/$s), so a source "
+        "system's own 999 (e.g. Sirsi/Sierra item data) conflicts with "
+        "it and makes Data Import reject the record. A genuine 999 ff "
+        "is never touched. On by default (999 is normally only a Sirsi "
+        "Dynix item field); pass --no-move-999-to-949 to leave them. "
+        "Header + count only in the log (INFORMATIONAL)",
+    )
+    parser.add_argument(
         "--no-normalize-subfield-9",
         dest="normalize_subfield_9",
         action="store_false",
@@ -2459,6 +2474,10 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
                     rec_id = record_identifier(parsed)
                     for detail in remap_999_to_945(parsed):
                         log("remapped_999_to_945", True, i, rec_id, detail)
+                if args.move_999_to_949:
+                    rec_id = record_identifier(parsed)
+                    for detail in move_999_to_949(parsed):
+                        log("moved_999_to_949", True, i, rec_id, detail)
                 if args.normalize_subfield_9:
                     rec_id = record_identifier(parsed)
                     for detail in normalize_subfield_9_to_0(parsed):
@@ -2841,6 +2860,8 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
         active_categories.add("leader_byte_defaulted")
     if args.remap_999_to_945:
         active_categories.add("remapped_999_to_945")
+    if args.move_999_to_949:
+        active_categories.add("moved_999_to_949")
     if args.normalize_subfield_9:
         active_categories.add("normalized_subfield_9_to_0")
     if args.normalize_smart_characters:
