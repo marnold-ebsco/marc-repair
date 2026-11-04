@@ -2917,6 +2917,7 @@ def _rewrite_stripping_invalid_tags(
     pending: list[tuple[int, int, int, str]],
     log_entries: list["LogEntry"],
     fix_ts: str,
+    append_004: bool = False,
 ) -> None:
     """Full second pass over an already-written output file, for the
     rare case where every 900-999 tag is already taken and an invalid
@@ -2958,6 +2959,12 @@ def _rewrite_stripping_invalid_tags(
             else:
                 rec = read_intact_record(raw.decode(rec_encoding))
                 rec_id = record_identifier(rec)
+                if append_004 and rec_id:
+                    rec_004 = ", ".join(
+                        f.content for f in rec.fields if f.tag == "004" and f.content
+                    )
+                    if rec_004:
+                        rec_id = f"{rec_id} / {rec_004}"
                 for detail in strip_invalid_tags(rec):
                     log_entries.append(
                         LogEntry(

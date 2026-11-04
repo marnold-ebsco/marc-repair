@@ -1084,7 +1084,9 @@ def _find_004_issues(count: int) -> list[tuple[str, str]]:
     return []
 
 
-def check_holdings_record(rec_text: str, encoding: str) -> tuple[list[tuple[str, str]], str]:
+def check_holdings_record(
+    rec_text: str, encoding: str, with_004: bool = False
+) -> tuple[list[tuple[str, str]], str]:
     """Read-only structural/content checks for one already-isolated
     holdings record's text -- the same categories of defect this tool
     detects (and, for bib records -- and now holdings records too, see
@@ -1136,6 +1138,7 @@ def check_holdings_record(rec_text: str, encoding: str) -> tuple[list[tuple[str,
     dir_end = 24 + skip + len(entries) * 12
     pos = rec_text.find(FIELDTERM, dir_end)
     record_id = ""
+    values_004: list[str] = []
     if pos == -1:
         issues.append(("holdings_bad_directory", "directory terminator not found"))
         return issues, record_id
@@ -1151,6 +1154,8 @@ def check_holdings_record(rec_text: str, encoding: str) -> tuple[list[tuple[str,
         if entry.tag.isdigit() and int(entry.tag) < CONTROL_TAG_LIMIT:
             if entry.tag == "001" and not record_id:
                 record_id = content
+            elif entry.tag == "004" and content:
+                values_004.append(content)
             pos = end + 1
             continue
         _, spaces_needed = _pad_short_indicators(content)
@@ -1176,6 +1181,8 @@ def check_holdings_record(rec_text: str, encoding: str) -> tuple[list[tuple[str,
                     f"={entry.tag}: subfield ${code} has no data (null identifier)",
                 ))
         pos = end + 1
+    if with_004 and record_id and values_004:
+        record_id = f"{record_id} / {', '.join(values_004)}"
     return issues, record_id
 
 

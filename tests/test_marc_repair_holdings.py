@@ -141,6 +141,18 @@ class TestCheckHoldingsRecord:
         _, record_id = m.check_holdings_record(text, "utf-8")
         assert record_id == "on123"
 
+    def test_with_004_appends_004_to_record_id(self):
+        text = self._holdings_text([
+            m.Field_("001", None, None, content="on123"),
+            m.Field_("004", None, None, content="ocm9"),
+            m.Field_("008", None, None, content="x" * 40),
+            m.Field_("852", "  ", [("a", "Main Library")]),
+        ])
+        _, plain = m.check_holdings_record(text, "utf-8")
+        _, with_004 = m.check_holdings_record(text, "utf-8", with_004=True)
+        assert plain == "on123"
+        assert with_004 == "on123 / ocm9"
+
     def test_nothing_is_modified(self):
         text = self._holdings_text([m.Field_("852", "  ", [("a", "Main Library")])])
         before = text
@@ -1379,6 +1391,47 @@ class TestRepairHoldingsRecords:
         parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
         f856 = next(f for f in parsed.fields if f.tag == "856")
         assert ("a", "Fulltext Ebsco OA database 1911-2013") in f856.subfields
+
+    def _fields_856(self, f004=True, f001="HOLD1", content004="ocm123"):
+        fields = [m.Field_("001", None, None, content=f001)]
+        if f004:
+            fields.append(m.Field_("004", None, None, content=content004))
+        fields += [
+            m.Field_("008", None, None, content="x" * m.HOLDINGS_008_LENGTH),
+            m.Field_("852", "  ", [("b", "Main Library"), ("h", "ABC123")]),
+            m.Field_("856", "  ", [("a", "Fulltext Ebsco OA database 1911-2013")]),
+        ]
+        return fields
+
+    def test_log_row_shows_holdings_id_and_004(self, tmp_path):
+        _, _, log = self._run(
+            tmp_path, [self._holdings_record(fields=self._fields_856())])
+        content = _resolve_log(log).read_text(encoding="utf-8")
+        assert "record 0 (HOLD1 / ocm123)\t=856" in content
+
+    def test_log_row_without_004_has_no_slash(self, tmp_path):
+        _, _, log = self._run(
+            tmp_path, [self._holdings_record(fields=self._fields_856(f004=False))])
+        content = _resolve_log(log).read_text(encoding="utf-8")
+        assert "record 0 (HOLD1)\t" in content
+        assert "HOLD1 /" not in content
+
+    def test_log_row_lists_multiple_004s(self, tmp_path):
+        fields = self._fields_856()
+        fields.insert(2, m.Field_("004", None, None, content="ocm456"))
+        _, _, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
+        content = _resolve_log(log).read_text(encoding="utf-8")
+        assert "(HOLD1 / ocm123, ocm456)" in content
+
+    def test_duplicate_identifier_rows_show_004(self, tmp_path):
+        recs = [
+            self._holdings_record(fields=self._fields_856(content004="ocm111")),
+            self._holdings_record(fields=self._fields_856(content004="ocm222")),
+        ]
+        _, _, log = self._run(tmp_path, recs)
+        content = _resolve_log(log).read_text(encoding="utf-8")
+        assert "record 0 (HOLD1 / ocm111)\tidentifier used on 2 records" in content
+        assert "record 1 (HOLD1 / ocm222)\tidentifier used on 2 records" in content
 
     def test_856_missing_u_url_in_other_subfield_recoded(self, tmp_path):
         fields = [

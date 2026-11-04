@@ -156,7 +156,7 @@ def check_holdings_records(
     def _check(raw: bytes) -> None:
         nonlocal n_flagged, idx
         rec_text = raw.decode(encoding)
-        issues, record_id = check_holdings_record(rec_text, encoding)
+        issues, record_id = check_holdings_record(rec_text, encoding, with_004=True)
         if issues:
             n_flagged += 1
             for category, detail in issues:
@@ -661,8 +661,15 @@ def repair_holdings_records(
     n_additional_004_written = 0
     bytes_consumed_for_estimate = 0
 
+    # The current record's original 004 value(s), appended to its identifier
+    # in holdings log lines: "record N (id / 004)".
+    current_004 = [""]
+    id_004: dict[int, str] = {}  # record_idx -> 004 text, for duplicate_identifier rows
+
     def log(category: str, fixed: bool, record_idx: int, rec_id: str, detail: str) -> None:
         ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        if rec_id and current_004[0]:
+            rec_id = f"{rec_id} / {current_004[0]}"
         log_entries.append(LogEntry(category, fixed, ts, record_idx, rec_id, detail))
 
     with open(output_path, "wb") as out_fh, _LazyBinaryWriter(error_path) as error_fh, \
@@ -674,6 +681,11 @@ def repair_holdings_records(
         )
         for i, (parsed, rec_text) in enumerate(record_stream):
             n_total += 1
+            current_004[0] = ", ".join(
+                f.content for f in parsed.fields if f.tag == "004" and f.content
+            )
+            if current_004[0]:
+                id_004[i] = current_004[0]
             if on_record is not None:
                 on_record(n_total)
             # errors="surrogateescape" here and below: rec_text is the raw,
@@ -935,7 +947,7 @@ def repair_holdings_records(
         fix_ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         if replacement_tag is None:
             _rewrite_stripping_invalid_tags(
-                output_path, pending_tag_fixes, log_entries, fix_ts,
+                output_path, pending_tag_fixes, log_entries, fix_ts, append_004=True,
             )
         else:
             with open(output_path, "r+b") as fixup_fh:
@@ -944,6 +956,11 @@ def repair_holdings_records(
                     raw = fixup_fh.read(length)
                     rec = read_intact_record(raw.decode(rec_encoding))
                     rec_id = record_identifier(rec)
+                    rec_004 = ", ".join(
+                        f.content for f in rec.fields if f.tag == "004" and f.content
+                    )
+                    if rec_id and rec_004:
+                        rec_id = f"{rec_id} / {rec_004}"
                     for detail in fix_invalid_tags(rec, replacement_tag):
                         log_entries.append(
                             LogEntry("invalid_tag", True, fix_ts, record_idx, rec_id, detail)
@@ -962,7 +979,12 @@ def repair_holdings_records(
 
     dup_ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     if on("check_duplicate_identifiers"):
-        log_entries.extend(find_duplicate_identifiers(id_records, dup_ts))
+        dup_entries = find_duplicate_identifiers(id_records, dup_ts)
+        for entry in dup_entries:
+            suffix = id_004.get(entry.record_idx)
+            if suffix:
+                entry.record_id = f"{entry.record_id} / {suffix}"
+        log_entries.extend(dup_entries)
 
     active_categories = set(_HOLDINGS_ALWAYS_ACTIVE_CATEGORIES) | {"duplicate_identifier"}
     if fix_missing_852c:
