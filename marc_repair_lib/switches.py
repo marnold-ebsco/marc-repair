@@ -119,6 +119,8 @@ SWITCHES: tuple[Switch, ...] = (
        "invalid_bibliographic_level",
        help="default an invalid bibliographic level (leader byte 07) to 'm'"),
     _s("check_008_language", "check-008-language", True, "bib", "invalid_008_language_code"),
+    _s("split_041_language_codes", "split-041-language-codes", True, "bib",
+       "split_041_language_codes"),
     _s("fix_language_code_case", "fix-language-code-case", True, "bib", "fixed_language_code_case"),
     _s("check_041_area_code", "check-041-area-code", True, "bib", "area_code_in_041"),
     _s("check_041_language", "check-041-language", True, "bib", "invalid_041_language_code"),
@@ -198,7 +200,7 @@ GROUPS: dict[str, tuple[str, ...]] = {
     "normalization": (
         "normalize_smart_characters", "normalize_subfield_9", "fix_bad_indicators",
         "fix_008_length", "fix_invalid_leader_bytes", "fix_misaligned_008",
-        "fix_language_code_case",
+        "fix_language_code_case", "split_041_language_codes",
     ),
     "structural-salvage": (
         "reattach_orphaned_fields", "fix_invalid_tags", "fix_misplaced_subfield_codes",

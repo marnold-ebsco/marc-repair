@@ -108,6 +108,7 @@ from .patching import (
     count_008_languages,
     find_area_code_in_041,
     fix_language_code_case,
+    split_041_language_codes,
     count_041_languages,
     find_invalid_041_language,
     find_invalid_008_language,
@@ -1766,6 +1767,18 @@ def build_parser() -> argparse.ArgumentParser:
         "default; --no-check-008-language to skip",
     )
     parser.add_argument(
+        "--split-041-language-codes",
+        dest="split_041_language_codes",
+        action="store_true",
+        default=True,
+        help="split a 041 language subfield holding several codes "
+        "separated by spaces (\"fre eng\") into one repeated subfield per "
+        "code, when every piece is an approved MARC language code (case "
+        "ignored). Nothing is lost. On by default; "
+        "--no-split-041-language-codes to leave them. Header + count only "
+        "in the log (INFORMATIONAL)",
+    )
+    parser.add_argument(
         "--fix-language-code-case",
         dest="fix_language_code_case",
         action="store_true",
@@ -2718,6 +2731,10 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
                     rec_id = record_identifier(parsed)
                     for detail in fix_008_length(parsed):
                         log("fixed_008_length", True, i, rec_id, detail)
+                if args.split_041_language_codes:
+                    rec_id = record_identifier(parsed)
+                    for detail in split_041_language_codes(parsed):
+                        log("split_041_language_codes", True, i, rec_id, detail)
                 if args.fix_language_code_case:
                     rec_id = record_identifier(parsed)
                     for detail in fix_language_code_case(parsed):
@@ -3010,6 +3027,8 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
         active_categories.add("area_code_in_041")
     if args.fix_language_code_case:
         active_categories.add("fixed_language_code_case")
+    if args.split_041_language_codes:
+        active_categories.add("split_041_language_codes")
     if args.check_isbn_issn_checksum:
         active_categories.add("invalid_isbn_issn_checksum")
     if args.fix_invalid_tags:

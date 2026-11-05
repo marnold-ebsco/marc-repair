@@ -4021,6 +4021,21 @@ class TestLanguageCaseAndAreaCode:
             "041 $a: 'xx1' is not an approved MARC language code"]
 
 
+class TestSplit041LanguageCodes:
+    def test_splits_only_when_every_piece_is_valid(self):
+        rec = m.ParsedRecord(leader=_SYNTHETIC_LEADER, entries=[], fields=[
+            m.Field_("041", "0 ", [("a", "fre ENG"), ("b", "ger"), ("a", "engfre lat"),
+                                   ("h", "eng xqz")]),
+            m.Field_("041", "07", [("a", "fre eng"), ("2", "x")]),
+        ])
+        details = m.split_041_language_codes(rec)
+        assert len(details) == 2
+        assert rec.fields[0].subfields == [
+            ("a", "fre"), ("a", "eng"), ("b", "ger"),
+            ("a", "eng"), ("a", "fre"), ("a", "lat"), ("h", "eng xqz")]
+        assert rec.fields[1].subfields[0] == ("a", "fre eng")  # other scheme
+
+
 class TestMove999To949:
     def test_moves_non_ff_999_keeping_indicators_and_subfields(self):
         parsed = m.ParsedRecord(

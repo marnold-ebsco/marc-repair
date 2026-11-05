@@ -581,6 +581,14 @@ BIB_ROWS = [
         '`--no-fix-language-code-case`',
     ),
     CategoryRow(
+        "041 language subfield with several space-separated codes (\"fre eng\")",
+        "Split into one repeated subfield per code",
+        "Yes (`--no-split-041-language-codes`)", "`split_041_language_codes`",
+        "INFORMATIONAL", "No -- INFORMATIONAL categories are never listed in full, "
+        "not even via --log-full",
+        '`--no-split-041-language-codes`',
+    ),
+    CategoryRow(
         "Geographic area code in a 041 language subfield (belongs in 043 $a)",
         "Flagged only, no change", "Yes (`--no-check-041-area-code`)",
         "`area_code_in_041`", "NEEDS REVIEW", "**Yes**", "`--no-check-041-area-code`",

@@ -3034,6 +3034,38 @@ def find_area_code_in_041(parsed: ParsedRecord) -> list[tuple[str, str]]:
     return out
 
 
+def split_041_language_codes(parsed: ParsedRecord) -> list[str]:
+    """Split a 041 language subfield holding several codes separated by
+    whitespace ("fre eng") into one repeated subfield per code ($a fre $a
+    eng), keeping the subfield code and position. Only when EVERY piece is
+    an approved MARC code once lowercased (a piece may itself be several
+    codes run together, "engfre" -> eng, fre), so nothing is lost; anything
+    else is left for the invalid-code check. One detail per subfield
+    changed (category "split_041_language_codes"; INFORMATIONAL)."""
+    codes = approved_language_codes()
+    details = []
+    for f in _041_language_fields(parsed):
+        new_subfields = []
+        for sub_code, data in f.subfields:
+            pieces = data.lower().split()
+            chunks = [
+                p[k:k + 3] for p in pieces if len(p) % 3 == 0 for k in range(0, len(p), 3)
+            ]
+            if (
+                sub_code in _041_LANGUAGE_SUBFIELDS and len(pieces) > 1
+                and all(len(p) % 3 == 0 for p in pieces)
+                and all(c in codes for c in chunks)
+            ):
+                new_subfields.extend((sub_code, c) for c in chunks)
+                details.append(
+                    f"041 ${sub_code} {data!r} -> " + ", ".join(f"${sub_code} {c}" for c in chunks)
+                )
+            else:
+                new_subfields.append((sub_code, data))
+        f.subfields = new_subfields
+    return details
+
+
 def fix_language_code_case(parsed: ParsedRecord) -> list[str]:
     """Lowercase a language code that is only wrong by case ("ENG", "Heb")
     in 008/35-37 and in 041 language subfields -- when the lowercased value

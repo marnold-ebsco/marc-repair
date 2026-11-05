@@ -21,6 +21,7 @@ was compared and adds nothing (MARC uses the bibliographic forms).
 |---|---|---|
 | `fixed_misaligned_008` | `--fix-misaligned-008` (in `--group-normalization`) | INFORMATIONAL, count only |
 | `fixed_language_code_case` | `--fix-language-code-case` (in `--group-normalization`) | INFORMATIONAL, count only |
+| `split_041_language_codes` | `--split-041-language-codes` (in `--group-normalization`) | INFORMATIONAL, count only |
 | `invalid_008_language_code` | `--check-008-language` | NEEDS REVIEW, full |
 | `invalid_041_language_code` | `--check-041-language` | NEEDS REVIEW, full |
 | `area_code_in_041` | `--check-041-area-code` | NEEDS REVIEW, full |
@@ -40,10 +41,17 @@ was compared and adds nothing (MARC uses the bibliographic forms).
   by how often each code occurs in THIS file (counted during the run, hints
   appended at the end like the 852 `$c` suggestions), then a common-language
   list. Detail messages never include the whole 008.
-- Results (before the case fix): Carolina 008: 1 bad (`pog`); GTU 008: 18
-  (`n/a`, `ng `, `er `, `|en`); WTS 008: 26 (24 `N/A`); 041: Carolina 1, GTU 344
-  in 290 records, WTS 179 in 118 (mostly upper-case codes, area codes, `jap`).
-- OPEN: `n/a` / `N/A` could be repaired to `zxx` or `und` (not done -- needs a
+- `split_041_language_codes`: `fre eng` -> `$a fre $a eng` (repeated subfield),
+  only when every piece is an approved code (case ignored; a piece may be
+  run-together codes). Runs before the case repair.
+- Results with the case fix (before the space split): Carolina 008: 1 bad
+  (`pog`); GTU 008: 18 (`n/a`, `ng `, `er `, `|en`); WTS 008: 26 (24 `N/A`).
+  041 invalid: Carolina 1; GTU 344 -> 210 subfields (199 records), 106 case
+  fixes, 27 area-code records; WTS 179 -> 65 (63 records), 57 case fixes, 1
+  area-code record.
+- OPEN: 041 leftovers seen: `grk` (gre or grc? not aliased), truncated
+  `engfr`/`engga`, call-number-like text in one GTU 041 (record 30227);
+  `n/a` / `N/A` could be repaired to `zxx` or `und` (not done -- needs a
   decision which); `pog` is probably `por`; 043 content itself is not checked;
   no 008-vs-041 consistency check (would be noisy for translations).
 

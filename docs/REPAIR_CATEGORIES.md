@@ -121,6 +121,7 @@ infer it from a category's DATA LOSS/POSSIBLE DATA LOSS label alone.
 | Dangling 880 $6 link | Flagged only, no change | **No** (`--check-dangling-880-links` to enable) | `dangling_880_link` | INFORMATIONAL | No -- INFORMATIONAL categories are never listed in full, not even via --log-full | `--check-dangling-880-links` |
 | Language code (008/35-37) not an approved MARC language code | Flagged only, no change | Yes (`--no-check-008-language`) | `invalid_008_language_code` | NEEDS REVIEW | **Yes** | `--no-check-008-language` |
 | Language code differing only by case (008/35-37, 041) | Lowercased code | Yes (`--no-fix-language-code-case`) | `fixed_language_code_case` | INFORMATIONAL | No -- INFORMATIONAL categories are never listed in full, not even via --log-full | `--no-fix-language-code-case` |
+| 041 language subfield with several space-separated codes ("fre eng") | Split into one repeated subfield per code | Yes (`--no-split-041-language-codes`) | `split_041_language_codes` | INFORMATIONAL | No -- INFORMATIONAL categories are never listed in full, not even via --log-full | `--no-split-041-language-codes` |
 | Geographic area code in a 041 language subfield (belongs in 043 $a) | Flagged only, no change | Yes (`--no-check-041-area-code`) | `area_code_in_041` | NEEDS REVIEW | **Yes** | `--no-check-041-area-code` |
 | 041 language subfield not an approved MARC language code | Flagged only, no change | Yes (`--no-check-041-language`) | `invalid_041_language_code` | NEEDS REVIEW | **Yes** | `--no-check-041-language` |
 | Invalid ISBN/ISSN checksum | Flagged only, no change | **No** (`--check-isbn-issn-checksum` to enable) | `invalid_isbn_issn_checksum` | INFORMATIONAL | No -- INFORMATIONAL categories are never listed in full, not even via --log-full | `--check-isbn-issn-checksum` |
@@ -228,6 +229,7 @@ invalid-subfield-code removal, `unfixable` diversion and its fallbacks.
 | `--reattach-orphaned-fields` | bib | on | `reattach_orphaned_fields` | `reattached_orphaned_field` |  |
 | `--fix-invalid-bibliographic-level` | bib | on | `fix_invalid_bibliographic_level` | `invalid_bibliographic_level` |  |
 | `--check-008-language` | bib | on | `check_008_language` | `invalid_008_language_code` |  |
+| `--split-041-language-codes` | bib | on | `split_041_language_codes` | `split_041_language_codes` |  |
 | `--fix-language-code-case` | bib | on | `fix_language_code_case` | `fixed_language_code_case` |  |
 | `--check-041-area-code` | bib | on | `check_041_area_code` | `area_code_in_041` |  |
 | `--check-041-language` | bib | on | `check_041_language` | `invalid_041_language_code` |  |
@@ -264,7 +266,7 @@ invalid-subfield-code removal, `unfixable` diversion and its fallbacks.
 |---|---|
 | `--group-duplicate-fields` | `--merge-duplicate-040`, `--move-duplicate-100-to-700`, `--move-duplicate-240-to-730`, `--move-duplicate-245-to-246`, `--recode-misfiled-duplicate-245`, `--remove-duplicate-non-repeatable-fields`, `--merge-duplicate-010` |
 | `--group-marc8-encoding` | `--transcode-marc8`, `--fix-marc8-diacritic-escapes`, `--marc8-corpus-lookup`, `--fix-mojibake` |
-| `--group-normalization` | `--normalize-smart-characters`, `--normalize-subfield-9`, `--fix-bad-indicators`, `--fix-008-length`, `--fix-invalid-leader-bytes`, `--fix-misaligned-008`, `--fix-language-code-case` |
+| `--group-normalization` | `--normalize-smart-characters`, `--normalize-subfield-9`, `--fix-bad-indicators`, `--fix-008-length`, `--fix-invalid-leader-bytes`, `--fix-misaligned-008`, `--fix-language-code-case`, `--split-041-language-codes` |
 | `--group-structural-salvage` | `--reattach-orphaned-fields`, `--fix-invalid-tags`, `--fix-misplaced-subfield-codes`, `--remove-empty-fields`, `--remove-null-identifiers` |
 | `--group-placeholders` | `--add-default-245`, `--add-default-008`, `--add-missing-852-location`, `--add-missing-852c` |
 | `--group-heading-cleanup` | `--recode-title-only-7xx`, `--recode-6xx-b-to-a`, `--remove-fields-missing-required-a`, `--remove-880-missing-6` |

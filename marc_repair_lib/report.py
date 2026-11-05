@@ -106,6 +106,7 @@ _INFORMATIONAL = {
     "remapped_999_to_945",
     "moved_999_to_949",
     "fixed_language_code_case",
+    "split_041_language_codes",
     "fixed_misaligned_008",
     "oversized_sentinel_fixed",
     "fixed_marc8_diacritic",
@@ -397,6 +398,9 @@ _CHECK_DESCRIPTIONS: dict[str, str] = {
     "area_code_in_041": "A 041 language subfield holds what looks like a MARC geographic area code "
     "(e.g. n-us---, s-cl---), which belongs in 043 $a. Detect-only -- nothing was changed (on by "
     "default; --no-check-041-area-code turns it off).",
+    "split_041_language_codes": "A 041 language subfield holding several codes separated by spaces "
+    "(\"fre eng\") was split into one repeated subfield per code, when every piece is an approved "
+    "MARC language code (on by default; --no-split-041-language-codes turns it off). Nothing is lost.",
     "fixed_language_code_case": "A language code differing from an approved MARC code only by case "
     "(ENG, Heb) in 008/35-37 or a 041 language subfield was lowercased (on by default; "
     "--no-fix-language-code-case turns it off). Nothing is lost.",
@@ -533,6 +537,7 @@ _CHECK_DATA_LOSS: dict[str, str] = {
     "invalid_041_language_code": "NO DATA LOSS",
     "area_code_in_041": "NO DATA LOSS",
     "fixed_language_code_case": "NO DATA LOSS",
+    "split_041_language_codes": "NO DATA LOSS",
     "oversized_sentinel_fixed": "NO DATA LOSS",
     "padded_indicators": "NO DATA LOSS",
     "holdings_missing_004": "POSSIBLE DATA LOSS",
