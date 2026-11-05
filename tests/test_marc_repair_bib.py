@@ -3872,6 +3872,155 @@ class TestFixInvalidTags:
 # remap_999_to_945 -- Sierra's internal 999 -> locally-defined 945
 # ---------------------------------------------------------------------------
 
+class TestFixMisaligned008:
+    # real examples from CUMARCExport110226.mrc
+    CASES = [
+        ("151210s1988                 bi   1 0 eng",
+         "151210s1988               bi   1 0 eng  "),
+        ("000000s1901           o         0 0 eng ",
+         "000000s1901          o         0 0 eng  "),
+        ("000000s1906                 eo   0 0 eng",
+         "000000s1906               eo   0 0 eng  "),
+        # 41 bytes: must be realigned before the length fix truncates it
+        ("000000s1977           g      bk   0 0 eng",
+         "000000s1977" + " " * 8 + "g" + " " * 6 + "bk   0 0 eng  "),
+    ]
+
+    @pytest.mark.parametrize("old,new", CASES)
+    def test_realigns(self, old, new):
+        got, _ = m.realign_008(old)
+        assert got is not None and len(got) == 40
+        assert got[35:38] == "eng"
+        assert got == new
+
+    def test_nd_date(self):
+        got, note = m.realign_008("000000sn.d.                 b   1 0 eng ")
+        assert got is not None and got[6:15] == "nuuuuuuuu" and got[35:38] == "eng"
+
+    def test_leaves_good_and_unsafe_alone(self):
+        good = "780615s1999" + " " * 20 + "0 0 eng" + "  "
+        assert len(good) == 40 and m.realign_008(good)[0] is None
+        # non-blank data in the run that would have to be removed
+        bad = "000000s1901" + "X" + " " * 20 + "0 0 eng" + " "
+        assert m.realign_008(bad)[0] is None
+
+    def test_cli_default_and_switch(self, tmp_path):
+        bad = "000000s1906                 eo   0 0 eng"
+        parsed = m.ParsedRecord(
+            leader=_SYNTHETIC_LEADER,
+            entries=[],
+            fields=[
+                m.Field_("001", None, None, content="rec1"),
+                m.Field_("008", None, None, content=bad),
+            ],
+        )
+        src = tmp_path / "s008.mrc"
+        src.write_bytes(m.assemble_marc(parsed))
+        for flag, aligned in (([], True), (["--no-fix-misaligned-008"], False)):
+            out = tmp_path / f"o{aligned}.mrc"
+            log = tmp_path / f"l{aligned}.log"
+            assert m.main([str(src), "-o", str(out), "--log", str(log), *flag]) == 0
+            f008 = [f for f in m.repair_text(m._read_text(str(out)))[0].fields
+                    if f.tag == "008"][0]
+            assert (f008.content[35:38] == "eng") == aligned
+
+
+class TestInvalid008Language:
+    def _rec(self, content):
+        return m.ParsedRecord(
+            leader=_SYNTHETIC_LEADER, entries=[],
+            fields=[m.Field_("008", None, None, content=content)],
+        )
+
+    def test_flags_only_unapproved(self):
+        ok = "780615s1999" + " " * 20 + "0 0 ger" + "  "
+        blank = "780615s1999" + " " * 29
+        fill = "780615s1999" + " " * 20 + "0 0 |||" + "  "
+        bad = "780615s1999" + " " * 20 + "0 0 xqz" + "  "
+        for good in (ok, blank, fill):
+            assert m.find_invalid_008_language(self._rec(good)) == []
+        found = m.find_invalid_008_language(self._rec(bad))
+        assert [c for c, _ in found] == ["invalid_008_language_code"]
+        assert "'xqz'" in found[0][1]
+        assert "780615" not in found[0][1]  # never the whole 008
+        assert len(m.suggest_language_codes("pog")) <= 3
+        # the file's own most-used language wins a tie
+        assert m.suggest_language_codes("pog", {"pon": 50})[0] == "pon"
+        assert m.suggest_language_codes("pog", {"por": 1, "pon": 50})[0] == "pon"
+        assert m.suggest_language_codes("%%%") == []
+        assert m.suggest_language_codes("n/a") == ["zxx", "und"]
+        freq = {"eng": 900, "ger": 40}
+        assert m.suggest_language_codes("ng ", freq)[0] == "eng"
+        assert m.suggest_language_codes("|en", freq)[0] == "eng"
+        assert m.suggest_language_codes("er ", freq)[0] == "ger"
+
+    def test_realigns_non_english(self):
+        got, _ = m.realign_008("000000s1906" + " " * 17 + "eo   0 0 ger")
+        assert got is not None and got[35:38] == "ger" and len(got) == 40
+
+    def test_ambiguous_left_alone(self):
+        assert m.realign_008("000000s1906" + " " * 17 + "0 0 ger0 0 eng")[0] is None
+
+
+class TestInvalid041Language:
+    def _rec(self, *fields):
+        return m.ParsedRecord(leader=_SYNTHETIC_LEADER, entries=[], fields=list(fields))
+
+    def test_flags_bad_chunks_and_lengths(self):
+        rec = self._rec(
+            m.Field_("041", "0 ", [("a", "engfre"), ("h", "xqz")]),
+            m.Field_("041", "1 ", [("a", "en"), ("b", "ger"), ("d", "fre!")]),
+        )
+        found = [d for _, d in m.find_invalid_041_language(rec)]
+        assert found == [
+            "041 $h: 'xqz' is not an approved MARC language code",
+            "041 $a: 'en' is not a whole number of 3-letter codes",
+            "041 $d: 'fre!' is not a whole number of 3-letter codes",
+        ]
+
+    def test_skips_other_schemes_and_non_language_subfields(self):
+        rec = self._rec(
+            m.Field_("041", "07", [("a", "xx"), ("2", "iso639-1")]),
+            m.Field_("041", "0 ", [("a", "en"), ("2", "iso639-1")]),
+            m.Field_("041", "0 ", [("a", "eng"), ("x", "zz")]),
+        )
+        assert m.find_invalid_041_language(rec) == []
+
+    def test_two_letter_suggestion_and_counts(self):
+        assert m.suggest_language_codes("en") == ["eng"]
+        counts = {}
+        m.count_041_languages(
+            self._rec(m.Field_("041", "0 ", [("a", "engfre"), ("b", "xxx")])), counts)
+        assert counts == {"eng": 1, "fre": 1}
+
+
+class TestLanguageCaseAndAreaCode:
+    def _rec(self, *fields):
+        return m.ParsedRecord(leader=_SYNTHETIC_LEADER, entries=[], fields=list(fields))
+
+    def test_lowercases_case_only_mismatches(self):
+        rec = self._rec(
+            m.Field_("008", None, None, content="780615s1999" + " " * 20 + "0 0 ENG" + "  "),
+            m.Field_("041", "0 ", [("a", "Heb"), ("b", "ENGFRE"), ("d", "xqz"), ("h", "GER")]),
+            m.Field_("041", "07", [("a", "GER"), ("2", "x")]),
+        )
+        details = m.fix_language_code_case(rec)
+        assert len(details) == 4
+        assert rec.fields[0].content[35:38] == "eng"
+        assert rec.fields[1].subfields == [
+            ("a", "heb"), ("b", "engfre"), ("d", "xqz"), ("h", "ger")]
+        assert rec.fields[2].subfields[0] == ("a", "GER")  # other scheme, untouched
+
+    def test_jap_alias(self):
+        assert m.suggest_language_codes("jap") == ["jpn"]
+
+    def test_area_code_flagged_separately(self):
+        rec = self._rec(m.Field_("041", "0 ", [("a", "n-us-il"), ("a", "s-cl---"), ("a", "xx1")]))
+        assert [c for c, _ in m.find_area_code_in_041(rec)] == ["area_code_in_041"] * 2
+        assert [d for _, d in m.find_invalid_041_language(rec)] == [
+            "041 $a: 'xx1' is not an approved MARC language code"]
+
+
 class TestMove999To949:
     def test_moves_non_ff_999_keeping_indicators_and_subfields(self):
         parsed = m.ParsedRecord(

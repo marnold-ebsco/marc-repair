@@ -105,6 +105,8 @@ _INFORMATIONAL = {
     "fixed_mojibake",
     "remapped_999_to_945",
     "moved_999_to_949",
+    "fixed_language_code_case",
+    "fixed_misaligned_008",
     "oversized_sentinel_fixed",
     "fixed_marc8_diacritic",
     "fixed_marc8_b2_umlaut",
@@ -122,6 +124,9 @@ _INFORMATIONAL = {
 #: flagging prominently rather than burying at the bottom with
 #: everything else.
 _NEEDS_REVIEW = {
+    "area_code_in_041",
+    "invalid_041_language_code",
+    "invalid_008_language_code",
     "doubled_proxy_url",
     "invalid_indicator_value",
     "suspect_marc8_escape",
@@ -389,6 +394,25 @@ _CHECK_DESCRIPTIONS: dict[str, str] = {
     'closing sequence got swapped (e.g. "Facolta" + <escape> + " " (trapped) + '
     '<close> + "di lettere" -> "Facoltà di lettere"). See suspect_marc8_escape '
     "for the same defect's unconfirmed payloads, left for a human to review.",
+    "area_code_in_041": "A 041 language subfield holds what looks like a MARC geographic area code "
+    "(e.g. n-us---, s-cl---), which belongs in 043 $a. Detect-only -- nothing was changed (on by "
+    "default; --no-check-041-area-code turns it off).",
+    "fixed_language_code_case": "A language code differing from an approved MARC code only by case "
+    "(ENG, Heb) in 008/35-37 or a 041 language subfield was lowercased (on by default; "
+    "--no-fix-language-code-case turns it off). Nothing is lost.",
+    "invalid_041_language_code": "A 041 language subfield ($a $b $d $e $f $g $h $j $k $m $n) holds "
+    "something that is not an approved MARC language code (approved_language_codes.txt), or a "
+    "length that is not a whole number of 3-letter codes. Several codes run together are checked "
+    "3 characters at a time; fields coded in another scheme (indicator 2 = 7 or a $2) are skipped. "
+    "Detect-only -- nothing was changed (on by default; --no-check-041-language turns it off).",
+    "invalid_008_language_code": "A bibliographic 008's language code (35-37) is not an approved "
+    "MARC language code (approved_language_codes.txt; blank and \"|||\" are also valid). Detect-only "
+    "-- nothing was changed (on by default; --no-check-008-language turns it off).",
+    "fixed_misaligned_008": "A bibliographic 008 had its fixed fields after date1 shifted (the "
+    "run of blanks at 008/11 was too long or short), so the language code was not at 35-37 and "
+    "read as junk (found by looking for exactly one approved MARC language code). Blanks at 008/11 were removed/added to put the language code back at 35-37 "
+    "(on by default; --no-fix-misaligned-008 turns it off). Only blanks are ever discarded. "
+    "Runs before the 008 length fix.",
     "moved_999_to_949": "A 999 field (not indicators ff) was retagged to 949 (on by default; "
     "--no-move-999-to-949 turns it off). FOLIO reserves 999 with indicators ff for its own record "
     "identifiers ($i/$s), so a source system's own 999 (e.g. Sirsi/Sierra item data) "
@@ -504,6 +528,11 @@ _CHECK_DATA_LOSS: dict[str, str] = {
     "fixed_marc8_diacritic": "NO DATA LOSS",
     "remapped_999_to_945": "NO DATA LOSS",
     "moved_999_to_949": "NO DATA LOSS",
+    "fixed_misaligned_008": "NO DATA LOSS",
+    "invalid_008_language_code": "NO DATA LOSS",
+    "invalid_041_language_code": "NO DATA LOSS",
+    "area_code_in_041": "NO DATA LOSS",
+    "fixed_language_code_case": "NO DATA LOSS",
     "oversized_sentinel_fixed": "NO DATA LOSS",
     "padded_indicators": "NO DATA LOSS",
     "holdings_missing_004": "POSSIBLE DATA LOSS",
@@ -553,6 +582,9 @@ _CATEGORY_DISPLAY_NOTE: dict[str, str] = {
 #: unlikely to ever be individually fixed (dangling_880_link,
 #: invalid_isbn_issn_checksum) -- on request.
 _ALWAYS_FULL_CATEGORIES = {
+    "area_code_in_041",
+    "invalid_041_language_code",
+    "invalid_008_language_code",
     "unfixable",
     "record_identifier_required",
     "diverted_for_review",

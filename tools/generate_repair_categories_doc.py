@@ -397,6 +397,13 @@ BIB_ROWS = [
         "`--ensure-field` (takes priority per-record)",
     ),
     CategoryRow(
+        "Misaligned 008 (language code not at 35-37) realigned", "Realigned field (blanks at 008/11 removed/added)",
+        "Yes (`--no-fix-misaligned-008`)", "`fixed_misaligned_008`",
+        "INFORMATIONAL", "No -- INFORMATIONAL categories are never listed in full, "
+        "not even via --log-full",
+        '`--no-fix-misaligned-008`',
+    ),
+    CategoryRow(
         "008 length pad/truncate (40 bytes)", "Padded/truncated field",
         "Yes (`--no-fix-008-length`)", "`fixed_008_length`",
         "FIXED/REQUIRES ATTENTION", "No (header + count always shown; full per-record list via "
@@ -560,6 +567,28 @@ BIB_ROWS = [
         "No -- INFORMATIONAL categories are never listed in full, "
         "not even via --log-full",
         '`--check-dangling-880-links`',
+    ),
+    CategoryRow(
+        "Language code (008/35-37) not an approved MARC language code", "Flagged only, no change",
+        "Yes (`--no-check-008-language`)", "`invalid_008_language_code`", "NEEDS REVIEW",
+        "**Yes**", "`--no-check-008-language`",
+    ),
+    CategoryRow(
+        "Language code differing only by case (008/35-37, 041)", "Lowercased code",
+        "Yes (`--no-fix-language-code-case`)", "`fixed_language_code_case`",
+        "INFORMATIONAL", "No -- INFORMATIONAL categories are never listed in full, "
+        "not even via --log-full",
+        '`--no-fix-language-code-case`',
+    ),
+    CategoryRow(
+        "Geographic area code in a 041 language subfield (belongs in 043 $a)",
+        "Flagged only, no change", "Yes (`--no-check-041-area-code`)",
+        "`area_code_in_041`", "NEEDS REVIEW", "**Yes**", "`--no-check-041-area-code`",
+    ),
+    CategoryRow(
+        "041 language subfield not an approved MARC language code", "Flagged only, no change",
+        "Yes (`--no-check-041-language`)", "`invalid_041_language_code`", "NEEDS REVIEW",
+        "**Yes**", "`--no-check-041-language`",
     ),
     CategoryRow(
         "Invalid ISBN/ISSN checksum", "Flagged only, no change",

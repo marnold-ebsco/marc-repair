@@ -105,6 +105,14 @@ from .patching import (
     recode_misfiled_duplicate_245,
     recode_title_only_7xx_to_730,
     record_missing_245,
+    count_008_languages,
+    find_area_code_in_041,
+    fix_language_code_case,
+    count_041_languages,
+    find_invalid_041_language,
+    find_invalid_008_language,
+    language_hint,
+    fix_misaligned_008,
     move_999_to_949,
     remap_999_to_945,
     split_holdings_multiple_004,
@@ -1460,6 +1468,18 @@ def build_parser() -> argparse.ArgumentParser:
         f"tag per line (default: {DEFAULT_NON_REPEATABLE_TAGS_FILE})",
     )
     parser.add_argument(
+        "--fix-misaligned-008",
+        dest="fix_misaligned_008",
+        action="store_true",
+        default=True,
+        help="realign an 008 whose fixed fields after date1 are shifted "
+        "so the language code (\"eng\") is not at 35-37 -- blanks at "
+        "008/11 are removed/added, nothing else is discarded. Runs "
+        "before the 008 length fix. On by default; pass "
+        "--no-fix-misaligned-008 to leave them. Header + count only in "
+        "the log (INFORMATIONAL)",
+    )
+    parser.add_argument(
         "--no-fix-008-length",
         dest="fix_008_length",
         action="store_false",
@@ -1733,6 +1753,50 @@ def build_parser() -> argparse.ArgumentParser:
         "$9 subfields as-is instead. Header + count always logged (see "
         "--log); not listed per-record by default (see --log-full) "
         "since this can be nearly every record in a file that uses $9",
+    )
+    parser.add_argument(
+        "--check-008-language",
+        dest="check_008_language",
+        action="store_true",
+        default=True,
+        help="detect a bibliographic 008 whose language code (35-37) is "
+        "not an approved MARC language code (approved_language_codes.txt; "
+        "blank and \"|||\" are also fine). Detect-only, no change; logged "
+        "in full as invalid_008_language_code under NEEDS REVIEW. On by "
+        "default; --no-check-008-language to skip",
+    )
+    parser.add_argument(
+        "--fix-language-code-case",
+        dest="fix_language_code_case",
+        action="store_true",
+        default=True,
+        help="lowercase a language code that is only wrong by case "
+        "(\"ENG\", \"Heb\") in 008/35-37 and in 041 language subfields, "
+        "when the lowercase form is an approved MARC code. Nothing is "
+        "lost. On by default; --no-fix-language-code-case to leave them. "
+        "Header + count only in the log (INFORMATIONAL)",
+    )
+    parser.add_argument(
+        "--check-041-area-code",
+        dest="check_041_area_code",
+        action="store_true",
+        default=True,
+        help="detect a 041 language subfield holding a geographic area "
+        "code (\"n-us\", \"s-cl---\") -- those belong in 043 $a. "
+        "Detect-only; logged in full as area_code_in_041 under NEEDS "
+        "REVIEW. On by default; --no-check-041-area-code to skip",
+    )
+    parser.add_argument(
+        "--check-041-language",
+        dest="check_041_language",
+        action="store_true",
+        default=True,
+        help="detect a 041 language subfield ($a $b $d $e $f $g $h $j $k "
+        "$m $n) that is not an approved MARC language code (several "
+        "codes run together are checked 3 characters at a time; fields "
+        "coded in another scheme -- indicator 2 = 7 or a $2 -- are "
+        "skipped). Detect-only; logged in full as invalid_041_language_code "
+        "under NEEDS REVIEW. On by default; --no-check-041-language to skip",
     )
     parser.add_argument(
         "--check-isbn-issn-checksum",
@@ -2328,6 +2392,8 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
     # len() on text already in hand) but no reason to keep paying it for
     # the rest of a long run once it's no longer needed.
     bytes_consumed_for_estimate = 0
+    language_counts: dict[str, int] = {}
+    pending_language_hints: list[tuple[LogEntry, str]] = []
     log_entries: list[LogEntry] = []
     # (record_idx, identifier, declared_length) for every record that has a
     # usable identifier -- used after the full pass to find identifiers
@@ -2644,10 +2710,18 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
                 if args.add_default_008:
                     for detail in add_default_008(parsed):
                         log("added_default_008", True, i, rec_id, detail)
+                if args.fix_misaligned_008:
+                    rec_id = record_identifier(parsed)
+                    for detail in fix_misaligned_008(parsed):
+                        log("fixed_misaligned_008", True, i, rec_id, detail)
                 if args.fix_008_length:
                     rec_id = record_identifier(parsed)
                     for detail in fix_008_length(parsed):
                         log("fixed_008_length", True, i, rec_id, detail)
+                if args.fix_language_code_case:
+                    rec_id = record_identifier(parsed)
+                    for detail in fix_language_code_case(parsed):
+                        log("fixed_language_code_case", True, i, rec_id, detail)
                 rec_id = record_identifier(parsed)
                 if args.fix_invalid_bibliographic_level:
                     for detail in fix_invalid_bibliographic_level(parsed):
@@ -2655,6 +2729,14 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
                 extra_detect_only_findings = []
                 if args.check_dangling_880_links:
                     extra_detect_only_findings += find_dangling_880_links(parsed)
+                if args.check_008_language:
+                    count_008_languages(parsed, language_counts)
+                    extra_detect_only_findings += find_invalid_008_language(parsed)
+                if args.check_041_area_code:
+                    extra_detect_only_findings += find_area_code_in_041(parsed)
+                if args.check_041_language:
+                    count_041_languages(parsed, language_counts)
+                    extra_detect_only_findings += find_invalid_041_language(parsed)
                 if args.check_isbn_issn_checksum:
                     extra_detect_only_findings += find_invalid_isbn_issn_checksums(parsed)
                 for category, detail in (
@@ -2666,6 +2748,8 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
                 ):
                     rec_id = record_identifier(parsed)
                     log(category, False, i, rec_id, detail)
+                    if category in ("invalid_008_language_code", "invalid_041_language_code"):
+                        pending_language_hints.append((log_entries[-1], detail.split("'")[1]))
                 if args.fix_856_missing_u:
                     for detail in recode_856_missing_u(parsed):
                         rec_id = record_identifier(parsed)
@@ -2850,6 +2934,9 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
     dup_ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     if args.check_duplicate_identifiers:
         log_entries.extend(find_duplicate_identifiers(id_records, dup_ts))
+    # the suggestions' tie-break needs the whole file's language counts
+    for entry, bad_code in pending_language_hints:
+        entry.detail += language_hint(bad_code, language_counts)
 
     # Every category this run's flags actually allow to fire -- used so
     # `write_log` can print a header (with a real count, even zero) for
@@ -2909,10 +2996,20 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
         active_categories.add("added_default_245")
     else:
         active_categories.add("diverted_for_review")
+    if args.fix_misaligned_008:
+        active_categories.add("fixed_misaligned_008")
     if args.fix_008_length:
         active_categories.add("fixed_008_length")
     if args.check_dangling_880_links:
         active_categories.add("dangling_880_link")
+    if args.check_008_language:
+        active_categories.add("invalid_008_language_code")
+    if args.check_041_language:
+        active_categories.add("invalid_041_language_code")
+    if args.check_041_area_code:
+        active_categories.add("area_code_in_041")
+    if args.fix_language_code_case:
+        active_categories.add("fixed_language_code_case")
     if args.check_isbn_issn_checksum:
         active_categories.add("invalid_isbn_issn_checksum")
     if args.fix_invalid_tags:

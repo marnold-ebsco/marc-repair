@@ -7,6 +7,7 @@ import os
 import re
 import tempfile
 import unicodedata
+from collections.abc import Mapping
 from array import array
 from collections import Counter
 from dataclasses import replace
@@ -2817,6 +2818,328 @@ def remap_999_to_945(parsed: ParsedRecord) -> list[str]:
         f.tag = "945"
         f.indicators = "ff"
         details.append("remapped =999 to =945, indicators set to 'ff'")
+    return details
+
+
+DEFAULT_LANGUAGE_CODES_FILE = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "approved_language_codes.txt"
+)
+
+_008_LIT_TAIL = re.compile(r"[0-9 |] [0-9 |] ")
+_language_codes_cache: dict[str, tuple[frozenset[str], frozenset[str]]] = {}
+
+
+def _load_language_codes(path: str) -> tuple[frozenset[str], frozenset[str]]:
+    if path not in _language_codes_cache:
+        every, active = set(), set()
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if line and not line.startswith("#"):
+                    every.add(line.lstrip("-"))
+                    if not line.startswith("-"):
+                        active.add(line)
+        _language_codes_cache[path] = (frozenset(every), frozenset(active))
+    return _language_codes_cache[path]
+
+
+def approved_language_codes(path: str = DEFAULT_LANGUAGE_CODES_FILE) -> frozenset[str]:
+    """The MARC language codes in approved_language_codes.txt (obsolete ones,
+    marked with a leading "-", included -- legacy data still carries them)."""
+    return _load_language_codes(path)[0]
+
+
+#: Tie-breaker for suggest_language_codes: when several codes are equally
+#: close to a bad one, the commonly catalogued languages win.
+_COMMON_LANGUAGE_CODES = frozenset(
+    "eng spa fre ger ita por rus chi jpn lat ara heb dut pol swe dan nor fin gre tur "
+    "kor hin hun cze lit grc yid ukr rum".split()
+)
+
+
+#: Two-letter ISO 639-1 codes sometimes typed in place of the MARC code.
+_ISO639_1_TO_MARC = {
+    "en": "eng", "fr": "fre", "de": "ger", "es": "spa", "it": "ita", "pt": "por",
+    "ru": "rus", "zh": "chi", "ja": "jpn", "ko": "kor", "ar": "ara", "he": "heb",
+    "la": "lat", "nl": "dut", "pl": "pol", "sv": "swe", "da": "dan", "no": "nor",
+    "fi": "fin", "el": "gre", "tr": "tur", "hi": "hin", "hu": "hun", "cs": "cze",
+    "ro": "rum", "uk": "ukr", "yi": "yid", "sa": "san", "fa": "per", "vi": "vie",
+}
+
+#: Common wrong spellings -> the MARC code.
+_LANGUAGE_ALIASES = {"jap": "jpn"}
+
+#: "No language" spelled out instead of coded -> zxx / und.
+_NO_LANGUAGE_ALIASES = frozenset({"n/a", "n.a", "na", "---", "xx", "???"})
+
+
+def suggest_language_codes(
+    code: str, frequencies: Mapping[str, int] | None = None,
+    path: str = DEFAULT_LANGUAGE_CODES_FILE,
+) -> list[str]:
+    """Up to 3 current (non-obsolete) MARC language codes close to `code`
+    (two of three letters in place, or two letters swapped). Ranked by
+    closeness (a swap first), then same first letter, then how often the
+    candidate is a valid language code in `frequencies` (this file's own
+    008s -- the language the cataloguers actually use wins a tie), then
+    the commonly catalogued list, then alphabetical. Empty when nothing
+    is close."""
+    code = code.lower()
+    if code.strip() in _NO_LANGUAGE_ALIASES:
+        return ["zxx", "und"]
+    if code.strip().lower() in _LANGUAGE_ALIASES:
+        return [_LANGUAGE_ALIASES[code.strip().lower()]]
+    if code.strip() in _ISO639_1_TO_MARC:
+        return [_ISO639_1_TO_MARC[code.strip()]]
+    freq = frequencies or {}
+    core = "".join(ch for ch in code if ch not in " |")
+    scored = []
+    for cand in _load_language_codes(path)[1]:
+        if len(core) == 3:
+            hits = sum(a == b for a, b in zip(code, cand))
+            swapped = any(
+                code[:i] + code[i + 1] + code[i] + code[i + 2:] == cand for i in (0, 1)
+            )
+            if hits >= 2 or swapped:
+                scored.append((
+                    -(3 if swapped else hits), code[:1] != cand[:1], -freq.get(cand, 0),
+                    cand not in _COMMON_LANGUAGE_CODES, cand,
+                ))
+        elif len(core) == 2 and len(code) == 3:
+            # blank / "|" stands for any letter, or one letter was lost off
+            # an end ("ng " -> eng, "|en" -> eng, "er " -> ger)
+            in_place = all(c in " |" or c == d for c, d in zip(code, cand))
+            if in_place or cand[:2] == core or cand[1:] == core:
+                scored.append((
+                    -2, False, -freq.get(cand, 0), cand not in _COMMON_LANGUAGE_CODES, cand,
+                ))
+    return [c[-1] for c in sorted(scored)[:3]]
+
+
+def language_hint(code: str, frequencies: Mapping[str, int] | None = None) -> str:
+    """"; perhaps a, b, c" for `code`, or "" when nothing is close."""
+    near = suggest_language_codes(code, frequencies)
+    return f"; perhaps {', '.join(near)}" if near else ""
+
+
+def count_008_languages(parsed: ParsedRecord, counts: dict[str, int]) -> None:
+    """Tally each real (approved, not blank/|||) 008/35-37 language code
+    into `counts` -- feeds `language_hint` once the whole file is read."""
+    codes = approved_language_codes()
+    for f in parsed.fields:
+        if f.tag == "008" and f.is_control() and len(f.content or "") >= 38:
+            if f.content[35:38] in codes:
+                counts[f.content[35:38]] = counts.get(f.content[35:38], 0) + 1
+
+
+def _valid_008_language(code: str, codes: frozenset[str]) -> bool:
+    return code in codes or code in ("   ", "|||")
+
+
+def realign_008(value: str, codes: frozenset[str] | None = None) -> tuple[str | None, str]:
+    """Realign a misaligned bibliographic 008 (one whose language code is
+    not at 35-37) -- returns (new 40-byte 008, note), or (None, reason)
+    when the value isn't a pattern this knows how to fix safely.
+
+    Seen in a Carolina export: the run of blanks starting at 008/11 was
+    one or more characters too long (or short), so everything after it --
+    index, undefined, literary form, biography, language -- sat off
+    position and the language code read as junk. The language is found by
+    looking for exactly ONE approved MARC language code (see
+    approved_language_codes.txt) preceded by the tail pattern
+    "index, blank, lit form, biography" -- more than one candidate, or
+    none, leaves the field alone. A trailing "en" at the very end of the
+    field (cut off by an earlier length repair) is restored to "eng". The
+    tail (31-37) is anchored to its correct place and blanks are removed
+    from (or added to) the run at 008/11, so every token in between keeps
+    its relative position. Nothing but blanks is ever discarded: if a
+    non-blank character would be lost, the field is left alone.
+    Date1 "n.d." becomes type "n" with dates "uuuu"/"uuuu"."""
+    codes = codes or approved_language_codes()
+    if len(value) not in (40, 41):
+        return None, "length not 40/41"
+    if _valid_008_language(value[35:38], codes):
+        return None, "language already at 35-37"
+    cands = [
+        q for q in range(33, len(value) - 2)
+        if q != 35 and value[q:q + 3] in codes and _008_LIT_TAIL.fullmatch(value[q - 4:q])
+    ]
+    inferred = False
+    if not cands and value.endswith("en") and _008_LIT_TAIL.fullmatch(value[-6:-2]):
+        cands, inferred = [len(value) - 2], True
+    if len(cands) != 1:
+        return None, "no unambiguous language code found"
+    p = cands[0]
+    code = "eng" if inferred else value[p:p + 3]
+    rest = "" if inferred else value[p + 3:]
+    if rest[2:].strip():
+        return None, "non-blank data after language would be lost"
+    trailing = rest[:2].ljust(2)
+    mid = value[11:p - 4]
+    delta = len(mid) - 20
+    if delta > 0:
+        if mid[:delta].strip():
+            return None, f"cannot remove {delta} blanks at 11"
+        mid = mid[delta:]
+    elif delta < 0:
+        mid = " " * (-delta) + mid
+    head = value[:11]
+    notes = [f"{delta:+d} blanks at 008/11"]
+    if head[6:11] == "sn.d.":
+        if mid[:4].strip():
+            return None, "n.d. date with non-blank date2"
+        head = head[:6] + "nuuuu"
+        mid = "uuuu" + mid[4:]
+        notes.append("n.d. -> type n, uuuu/uuuu")
+    if inferred:
+        notes.append("truncated en -> eng")
+    new = head + mid + value[p - 4:p] + code + trailing
+    if len(new) != 40 or new[35:38] != code:
+        return None, "internal length error"
+    return new, "; ".join(notes)
+
+
+#: 041 subfields that hold MARC language codes ($2 is a source code, not one).
+_041_LANGUAGE_SUBFIELDS = frozenset("abdefghjkmn")
+
+
+def _041_language_fields(parsed: ParsedRecord):
+    """041 fields whose codes are MARC language codes (not another scheme:
+    second indicator 7 or a $2 means a different code source)."""
+    for f in parsed.fields:
+        if f.tag != "041" or f.is_control() or (f.indicators or "  ")[1:2] == "7":
+            continue
+        if any(code == "2" for code, _ in f.subfields):
+            continue
+        yield f
+
+
+#: MARC geographic area code shape ("n-us---", "s-cl", "ac---", "e-uk-en"):
+#: these belong in 043 $a, not in a 041 language subfield.
+_AREA_CODE = re.compile(r"[a-z]{1,2}-[a-z-]*")
+
+
+def find_area_code_in_041(parsed: ParsedRecord) -> list[tuple[str, str]]:
+    """Detect-only: a 041 language subfield holding what looks like a
+    geographic area code (belongs in 043 $a). Category "area_code_in_041"."""
+    out = []
+    for f in _041_language_fields(parsed):
+        for sub_code, data in f.subfields:
+            if sub_code in _041_LANGUAGE_SUBFIELDS and _AREA_CODE.fullmatch(data):
+                out.append((
+                    "area_code_in_041",
+                    f"041 ${sub_code}: {data!r} looks like a geographic area code "
+                    "(belongs in 043 $a), not a language code",
+                ))
+    return out
+
+
+def fix_language_code_case(parsed: ParsedRecord) -> list[str]:
+    """Lowercase a language code that is only wrong by case ("ENG", "Heb")
+    in 008/35-37 and in 041 language subfields -- when the lowercased value
+    is an approved MARC code (every 3-letter piece, for a 041 subfield).
+    Nothing is lost. One detail per field changed (category
+    "fixed_language_code_case"; INFORMATIONAL)."""
+    codes = approved_language_codes()
+    details = []
+    for f in parsed.fields:
+        if f.tag == "008" and f.is_control() and len(f.content or "") >= 38:
+            cur = f.content[35:38]
+            if cur != cur.lower() and cur.lower() in codes:
+                f.content = f.content[:35] + cur.lower() + f.content[38:]
+                details.append(f"008/35-37 {cur!r} -> {cur.lower()!r}")
+    for f in _041_language_fields(parsed):
+        for k, (sub_code, data) in enumerate(f.subfields):
+            if (
+                sub_code in _041_LANGUAGE_SUBFIELDS and data and len(data) % 3 == 0
+                and data != data.lower()
+                and all(data.lower()[j:j + 3] in codes for j in range(0, len(data), 3))
+            ):
+                f.subfields[k] = (sub_code, data.lower())
+                details.append(f"041 ${sub_code} {data!r} -> {data.lower()!r}")
+    return details
+
+
+def count_041_languages(parsed: ParsedRecord, counts: dict[str, int]) -> None:
+    """Tally each approved 3-letter code found in 041 language subfields."""
+    codes = approved_language_codes()
+    for f in _041_language_fields(parsed):
+        for sub_code, data in f.subfields:
+            if sub_code in _041_LANGUAGE_SUBFIELDS and len(data) % 3 == 0:
+                for k in range(0, len(data), 3):
+                    if data[k:k + 3] in codes:
+                        counts[data[k:k + 3]] = counts.get(data[k:k + 3], 0) + 1
+
+
+def find_invalid_041_language(
+    parsed: ParsedRecord, codes: frozenset[str] | None = None,
+) -> list[tuple[str, str]]:
+    """Detect-only: a 041 language subfield ($a $b $d $e $f $g $h $j $k $m
+    $n) holding something that is not an approved MARC language code. A
+    subfield may hold several codes run together ("engfre"), so it is
+    checked in 3-character pieces; one whose length isn't a multiple of 3
+    is flagged whole. Fields coded in another scheme (indicator 2 = 7, or
+    a $2) are skipped. Category "invalid_041_language_code"."""
+    codes = codes or approved_language_codes()
+    out = []
+    for f in _041_language_fields(parsed):
+        for sub_code, data in f.subfields:
+            if sub_code not in _041_LANGUAGE_SUBFIELDS or not data.strip():
+                continue
+            if _AREA_CODE.fullmatch(data):
+                continue  # reported by find_area_code_in_041
+            if len(data) % 3:
+                out.append((
+                    "invalid_041_language_code",
+                    f"041 ${sub_code}: {data!r} is not a whole number of 3-letter codes",
+                ))
+                continue
+            for k in range(0, len(data), 3):
+                chunk = data[k:k + 3]
+                if chunk not in codes:
+                    out.append((
+                        "invalid_041_language_code",
+                        f"041 ${sub_code}: {chunk!r} is not an approved MARC language code",
+                    ))
+    return out
+
+
+def find_invalid_008_language(
+    parsed: ParsedRecord, codes: frozenset[str] | None = None,
+) -> list[tuple[str, str]]:
+    """Detect-only: a bibliographic 008 whose language code (35-37) is not
+    an approved MARC language code (nor blank or "|||"). Runs after
+    `fix_misaligned_008`/`fix_008_length`, so what it reports is what is
+    left in the output. Category "invalid_008_language_code"."""
+    codes = codes or approved_language_codes()
+    out = []
+    for f in parsed.fields:
+        if f.tag != "008" or not f.is_control() or len(f.content or "") < 38:
+            continue
+        code = f.content[35:38]
+        if not _valid_008_language(code, codes):
+            out.append((
+                "invalid_008_language_code",
+                f"008/35-37 is {code!r}, not an approved MARC language code",
+            ))
+    return out
+
+
+def fix_misaligned_008(parsed: ParsedRecord) -> list[str]:
+    """Realign a misaligned 008 (see `realign_008`) in place. Returns one
+    detail string per field fixed (category "fixed_misaligned_008";
+    INFORMATIONAL, so only a header + count is logged). Must run BEFORE
+    `fix_008_length`, which would otherwise truncate a 41-byte one and
+    cut the last letter off "eng"."""
+    details = []
+    for f in parsed.fields:
+        if f.tag != "008" or not f.is_control() or not f.content:
+            continue
+        new, note = realign_008(f.content)
+        if new is None:
+            continue
+        f.content = new
+        details.append(f"008 realigned so the language code is at 35-37 ({note})")
     return details
 
 

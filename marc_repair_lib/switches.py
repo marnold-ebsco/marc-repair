@@ -63,6 +63,7 @@ SWITCHES: tuple[Switch, ...] = (
     _s("strip_missing_required_a", "remove-fields-missing-required-a", True, "both",
        "field_removed_because_missing_a", "--no-strip-missing-required-a"),
     _s("fix_invalid_tags", "fix-invalid-tags", True, "both", "invalid_tag"),
+    _s("fix_misaligned_008", "fix-misaligned-008", True, "bib", "fixed_misaligned_008"),
     _s("fix_008_length", "fix-008-length", True, "both",
        "fixed_008_length fixed_holdings_008_length"),
     _s("add_default_008", "add-default-008", True, "both",
@@ -117,6 +118,10 @@ SWITCHES: tuple[Switch, ...] = (
     _s("fix_invalid_bibliographic_level", "fix-invalid-bibliographic-level", True, "bib",
        "invalid_bibliographic_level",
        help="default an invalid bibliographic level (leader byte 07) to 'm'"),
+    _s("check_008_language", "check-008-language", True, "bib", "invalid_008_language_code"),
+    _s("fix_language_code_case", "fix-language-code-case", True, "bib", "fixed_language_code_case"),
+    _s("check_041_area_code", "check-041-area-code", True, "bib", "area_code_in_041"),
+    _s("check_041_language", "check-041-language", True, "bib", "invalid_041_language_code"),
     _s("check_isbn_issn_checksum", "check-isbn-issn-checksum", False, "bib",
        "invalid_isbn_issn_checksum"),
     _s("check_dangling_880_links", "check-dangling-880-links", False, "bib", "dangling_880_link"),
@@ -192,7 +197,8 @@ GROUPS: dict[str, tuple[str, ...]] = {
     ),
     "normalization": (
         "normalize_smart_characters", "normalize_subfield_9", "fix_bad_indicators",
-        "fix_008_length", "fix_invalid_leader_bytes",
+        "fix_008_length", "fix_invalid_leader_bytes", "fix_misaligned_008",
+        "fix_language_code_case",
     ),
     "structural-salvage": (
         "reattach_orphaned_fields", "fix_invalid_tags", "fix_misplaced_subfield_codes",

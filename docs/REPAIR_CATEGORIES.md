@@ -98,6 +98,7 @@ infer it from a category's DATA LOSS/POSSIBLE DATA LOSS label alone.
 | Missing 245 backfilled from 130/240/246/242/222/880, or placeholder 245 added | Added default field | Yes (`--no-add-default-245`, `--guarantee-importable`) | `added_default_245` | FIXED/REQUIRES ATTENTION | **Yes** | `--no-add-default-245`; `--guarantee-importable` (implies `--no-add-default-245`); `--ensure-field` (takes priority per-record) |
 | Missing 245, with `--no-add-default-245` (or `--guarantee-importable`, which implies it) set, so no placeholder/fallback title is invented | Diverted to `<output>_needs_review.mrc`, unchanged | n/a (only with `--no-add-default-245` or `--guarantee-importable`) | `diverted_for_review` | NOT FIXED | **Yes** | `--no-add-default-245` or `--guarantee-importable` (either is enough to fire this); `--ensure-field` (takes priority per-record, same as for `added_default_245`); shared with any future "--no-fix-X diverts instead of leaving it half-fixed" check, each with its own reason text |
 | Placeholder 008 added | Added default field | Yes, always | `added_default_008` | FIXED/REQUIRES ATTENTION | **Yes** | -- (no switch -- every MARC21 record must have an 008); `--ensure-field` (takes priority per-record) |
+| Misaligned 008 (language code not at 35-37) realigned | Realigned field (blanks at 008/11 removed/added) | Yes (`--no-fix-misaligned-008`) | `fixed_misaligned_008` | INFORMATIONAL | No -- INFORMATIONAL categories are never listed in full, not even via --log-full | `--no-fix-misaligned-008` |
 | 008 length pad/truncate (40 bytes) | Padded/truncated field | Yes (`--no-fix-008-length`) | `fixed_008_length` | FIXED/REQUIRES ATTENTION | No (header + count always shown; full per-record list via --log-full fixed_008_length) | `--no-fix-008-length` |
 | Orphaned trailing field (present in the file, no directory entry of its own) reattached as `700` | Merged into the preceding record, as a new field | Yes (`--no-reattach-orphaned-fields`) | `reattached_orphaned_field` | FIXED/REQUIRES ATTENTION | **Yes** | `--no-reattach-orphaned-fields` (leaves it `unfixable`/`UNFIXABLE` instead) |
 | Invalid (non-numeric) tag -> 9XX rename | Renamed field tag | Yes (`--no-fix-invalid-tags`) | `invalid_tag` | INFORMATIONAL | No -- INFORMATIONAL categories are never listed in full, not even via --log-full | `--no-fix-invalid-tags` |
@@ -118,6 +119,10 @@ infer it from a category's DATA LOSS/POSSIBLE DATA LOSS label alone.
 | Invalid indicator *value* (present but not digit/blank) | Flagged only, no change | detect-only | `invalid_indicator_value` | NEEDS REVIEW | **Yes** | -- (detect-only, no switch) |
 | Invalid bibliographic level (leader byte 07) | Defaulted to 'm' (Monograph/Item) | Yes, always | `invalid_bibliographic_level` | FIXED/REQUIRES ATTENTION | **Yes** | -- (no switch -- always runs and always logged) |
 | Dangling 880 $6 link | Flagged only, no change | **No** (`--check-dangling-880-links` to enable) | `dangling_880_link` | INFORMATIONAL | No -- INFORMATIONAL categories are never listed in full, not even via --log-full | `--check-dangling-880-links` |
+| Language code (008/35-37) not an approved MARC language code | Flagged only, no change | Yes (`--no-check-008-language`) | `invalid_008_language_code` | NEEDS REVIEW | **Yes** | `--no-check-008-language` |
+| Language code differing only by case (008/35-37, 041) | Lowercased code | Yes (`--no-fix-language-code-case`) | `fixed_language_code_case` | INFORMATIONAL | No -- INFORMATIONAL categories are never listed in full, not even via --log-full | `--no-fix-language-code-case` |
+| Geographic area code in a 041 language subfield (belongs in 043 $a) | Flagged only, no change | Yes (`--no-check-041-area-code`) | `area_code_in_041` | NEEDS REVIEW | **Yes** | `--no-check-041-area-code` |
+| 041 language subfield not an approved MARC language code | Flagged only, no change | Yes (`--no-check-041-language`) | `invalid_041_language_code` | NEEDS REVIEW | **Yes** | `--no-check-041-language` |
 | Invalid ISBN/ISSN checksum | Flagged only, no change | **No** (`--check-isbn-issn-checksum` to enable) | `invalid_isbn_issn_checksum` | INFORMATIONAL | No -- INFORMATIONAL categories are never listed in full, not even via --log-full | `--check-isbn-issn-checksum` |
 | Non-standard MARC field (tag not in standard_marc_fields.txt) | Flagged only, no change | **Yes** | `non_standard_marc_fields` | INFORMATION ONLY | No -- every occurrence goes to the separate `<log>_non_standard_fields.txt` report | `--no-check-non-standard-fields` (list: `--standard-marc-fields-file`) |
 | Duplicate identifier across records | Flagged only, no change | detect-only | `duplicate_identifier` | DUPLICATE RECORDS | **Yes** | -- (detect-only, no switch) |
@@ -201,6 +206,7 @@ invalid-subfield-code removal, `unfixable` diversion and its fallbacks.
 | `--truncate-oversized-field` | both | on | `truncate_oversized_field` | `truncated_oversized_field` |  |
 | `--trim-oversized-record` | both | on | `trim_oversized_record` | `trimmed_oversized_record` |  |
 | `--check-duplicate-identifiers` | both | on | `check_duplicate_identifiers` | `duplicate_identifier` |  |
+| `--fix-misaligned-008` | bib | on | `fix_misaligned_008` | `fixed_misaligned_008` |  |
 | `--transcode-marc8` | bib | on | `transcode_marc8` | `transcoded_marc8`, `transcode_marc8_failed`, `removed_untranscodable_subfield` |  |
 | `--fix-marc8-diacritic-escapes` | bib | on | `fix_marc8_diacritic_escapes` | `fixed_marc8_diacritic` |  |
 | `--marc8-corpus-lookup` | bib | on | `marc8_corpus_lookup` |  |  |
@@ -221,6 +227,10 @@ invalid-subfield-code removal, `unfixable` diversion and its fallbacks.
 | `--fix-856-missing-u` | bib | on | `fix_856_missing_u` | `bib_856_missing_u` |  |
 | `--reattach-orphaned-fields` | bib | on | `reattach_orphaned_fields` | `reattached_orphaned_field` |  |
 | `--fix-invalid-bibliographic-level` | bib | on | `fix_invalid_bibliographic_level` | `invalid_bibliographic_level` |  |
+| `--check-008-language` | bib | on | `check_008_language` | `invalid_008_language_code` |  |
+| `--fix-language-code-case` | bib | on | `fix_language_code_case` | `fixed_language_code_case` |  |
+| `--check-041-area-code` | bib | on | `check_041_area_code` | `area_code_in_041` |  |
+| `--check-041-language` | bib | on | `check_041_language` | `invalid_041_language_code` |  |
 | `--check-isbn-issn-checksum` | bib | off | `check_isbn_issn_checksum` | `invalid_isbn_issn_checksum` |  |
 | `--check-dangling-880-links` | bib | off | `check_dangling_880_links` | `dangling_880_link` |  |
 | `--check-non-standard-fields` | bib | on | `check_non_standard_fields` | `non_standard_marc_fields` |  |
@@ -254,11 +264,11 @@ invalid-subfield-code removal, `unfixable` diversion and its fallbacks.
 |---|---|
 | `--group-duplicate-fields` | `--merge-duplicate-040`, `--move-duplicate-100-to-700`, `--move-duplicate-240-to-730`, `--move-duplicate-245-to-246`, `--recode-misfiled-duplicate-245`, `--remove-duplicate-non-repeatable-fields`, `--merge-duplicate-010` |
 | `--group-marc8-encoding` | `--transcode-marc8`, `--fix-marc8-diacritic-escapes`, `--marc8-corpus-lookup`, `--fix-mojibake` |
-| `--group-normalization` | `--normalize-smart-characters`, `--normalize-subfield-9`, `--fix-bad-indicators`, `--fix-008-length`, `--fix-invalid-leader-bytes` |
+| `--group-normalization` | `--normalize-smart-characters`, `--normalize-subfield-9`, `--fix-bad-indicators`, `--fix-008-length`, `--fix-invalid-leader-bytes`, `--fix-misaligned-008`, `--fix-language-code-case` |
 | `--group-structural-salvage` | `--reattach-orphaned-fields`, `--fix-invalid-tags`, `--fix-misplaced-subfield-codes`, `--remove-empty-fields`, `--remove-null-identifiers` |
 | `--group-placeholders` | `--add-default-245`, `--add-default-008`, `--add-missing-852-location`, `--add-missing-852c` |
 | `--group-heading-cleanup` | `--recode-title-only-7xx`, `--recode-6xx-b-to-a`, `--remove-fields-missing-required-a`, `--remove-880-missing-6` |
 | `--group-oversized` | `--collapse-oversized-field-escapes`, `--truncate-oversized-field`, `--trim-oversized-record` |
 | `--group-holdings-852` | `--recode-852-b-to-i`, `--remove-extra-852-b`, `--remove-duplicate-852-nr-subfields`, `--fix-852-b-suspect-content`, `--remove-bad-call-number`, `--remove-empty-852-subfields` |
 | `--group-holdings-record-splitting` | `--split-multiple-852`, `--split-multiple-004` |
-| `--group-detect-only` | `--check-duplicate-identifiers`, `--check-isbn-issn-checksum`, `--check-dangling-880-links`, `--check-non-standard-fields`, `--check-suspect-marc8-escape`, `--check-doubled-proxy-url`, `--check-suspect-hex-encoded-marc8`, `--check-invalid-indicator-values`, `--check-missing-call-number`, `--check-853-missing-8`, `--check-holdings-escape-sequences`, `--check-holdings-missing-004` |
+| `--group-detect-only` | `--check-duplicate-identifiers`, `--check-008-language`, `--check-041-area-code`, `--check-041-language`, `--check-isbn-issn-checksum`, `--check-dangling-880-links`, `--check-non-standard-fields`, `--check-suspect-marc8-escape`, `--check-doubled-proxy-url`, `--check-suspect-hex-encoded-marc8`, `--check-invalid-indicator-values`, `--check-missing-call-number`, `--check-853-missing-8`, `--check-holdings-escape-sequences`, `--check-holdings-missing-004` |

@@ -8,6 +8,45 @@ current state and open items.
 
 ## Current state
 
+### DONE -- misaligned 008 realignment + language-code checks for 008 and 041 (2026-11-05, committed and pushed on `main`)
+
+Triggered by Carolina (`CUMARCExport110226.mrc`), where 146 bib 008s had their
+fixed fields after date1 shifted (blank run at 008/11 too long/short), so
+008/35-37 read as junk. Based on the customer's `fix008.py`, generalised.
+New data file `approved_language_codes.txt` (516 codes from the LC page; a
+leading `-` = obsolete but still known; shipped by `install.sh`). ISO 639-2
+was compared and adds nothing (MARC uses the bibliographic forms).
+
+| Category | Switch (default on) | Section |
+|---|---|---|
+| `fixed_misaligned_008` | `--fix-misaligned-008` (in `--group-normalization`) | INFORMATIONAL, count only |
+| `fixed_language_code_case` | `--fix-language-code-case` (in `--group-normalization`) | INFORMATIONAL, count only |
+| `invalid_008_language_code` | `--check-008-language` | NEEDS REVIEW, full |
+| `invalid_041_language_code` | `--check-041-language` | NEEDS REVIEW, full |
+| `area_code_in_041` | `--check-041-area-code` | NEEDS REVIEW, full |
+
+- `realign_008` (`patching.py`) runs BEFORE `fix_008_length` (which would cut
+  the `g` off `eng` on a 41-byte 008). It finds exactly ONE approved code
+  preceded by the "index, blank, lit form, biography" tail; none/several, or
+  a non-blank char that would be lost, leaves the field alone. `n.d.` date1 ->
+  type `n`, `uuuu`/`uuuu`; a trailing `en` is restored to `eng`. All 146
+  Carolina records fixed (136 len 40 + 10 len 41), no info lost.
+- 041: `$a $b $d $e $f $g $h $j $k $m $n`, checked in 3-char pieces (run-together
+  codes); skipped when ind2 = 7 or a `$2` is present. Geographic area codes
+  (`n-us`, `s-cl---`) go to `area_code_in_041` instead (they belong in 043).
+- Suggestions (`suggest_language_codes`, max 3): alias (`jap`->`jpn`),
+  "no language" text (`n/a` -> `zxx`, `und`), two-letter ISO 639-1 -> MARC,
+  blank/`|` wildcards (`ng ` -> `eng`), two-of-three letters / swap; ties broken
+  by how often each code occurs in THIS file (counted during the run, hints
+  appended at the end like the 852 `$c` suggestions), then a common-language
+  list. Detail messages never include the whole 008.
+- Results (before the case fix): Carolina 008: 1 bad (`pog`); GTU 008: 18
+  (`n/a`, `ng `, `er `, `|en`); WTS 008: 26 (24 `N/A`); 041: Carolina 1, GTU 344
+  in 290 records, WTS 179 in 118 (mostly upper-case codes, area codes, `jap`).
+- OPEN: `n/a` / `N/A` could be repaired to `zxx` or `und` (not done -- needs a
+  decision which); `pog` is probably `por`; 043 content itself is not checked;
+  no 008-vs-041 consistency check (would be noisy for translations).
+
 ### DONE -- holdings 856 recode + learned 852 `$c` suggestions (2026-11-02, committed and pushed on `main`: `410767e`, `83a798d`)
 
 **`holdings_856_missing_u` now recodes, like bib.** A holdings 856 with no `$u`
