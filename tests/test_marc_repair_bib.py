@@ -4564,7 +4564,65 @@ class TestStripDuplicateNonRepeatableFields:
         )
         details = m.strip_duplicate_non_repeatable_fields(parsed, {"245"})
         assert "2nd ed." in details[0]
-        assert "..." not in details[0]
+        removed_part = details[0].split("\tkept ")[0]
+        assert "..." not in removed_part
+
+    def test_other_duplicates_follow_the_winning_005(self):
+        # newest 005 is the 2nd one, so the 2nd 008 and 245 are kept too
+        # even though the 1st 008 has the later date-entered
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[
+                m.Field_("005", None, None, content="20100101000000.0"),
+                m.Field_("005", None, None, content="20200101000000.0"),
+                m.Field_("008", None, None, content="990101" + "a" * 34),
+                m.Field_("008", None, None, content="800101" + "b" * 34),
+                m.Field_("245", "10", [("a", "Old")]),
+                m.Field_("245", "10", [("a", "New")]),
+            ],
+        )
+        m.strip_duplicate_non_repeatable_fields(
+            parsed, {"005", "008", "245"})
+        by_tag = {f.tag: f for f in parsed.fields}
+        assert by_tag["005"].content == "20200101000000.0"
+        assert by_tag["008"].content.startswith("800101")
+        assert by_tag["245"].subfields == [("a", "New")]
+
+    def test_001_and_003_keep_own_rules_despite_005(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[
+                m.Field_("001", None, None, content="u12345"),
+                m.Field_("001", None, None, content="ocn999"),
+                m.Field_("003", None, None, content="OCoLC"),
+                m.Field_("003", None, None, content="301198"),
+                m.Field_("005", None, None, content="20100101000000.0"),
+                m.Field_("005", None, None, content="20200101000000.0"),
+            ],
+        )
+        m.strip_duplicate_non_repeatable_fields(
+            parsed, {"001", "003", "005"})
+        by_tag = {f.tag: f for f in parsed.fields}
+        assert by_tag["001"].content == "u12345"
+        assert by_tag["003"].content == "OCoLC"
+        assert by_tag["005"].content == "20200101000000.0"
+
+    def test_detail_names_kept_and_removed_field(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[
+                m.Field_("005", None, None, content="20160727050707.0"),
+                m.Field_("005", None, None, content="20131014022724.0"),
+            ],
+        )
+        details = m.strip_duplicate_non_repeatable_fields(parsed, {"005"})
+        assert details[0].startswith(
+            "removed duplicate =005  20131014022724.0"
+            "\tkept =005  20160727050707.0")
+        assert "(non-repeatable field)" not in details[0]
 
     def test_exact_duplicate_control_field_flagged_no_data_loss(self):
         parsed = m.ParsedRecord(

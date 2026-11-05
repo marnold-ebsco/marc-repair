@@ -1447,8 +1447,24 @@ def strip_duplicate_non_repeatable_fields(
         for f in parsed.fields
     )
     keep: dict[str, Field_] = {}
+    # A duplicated 005 normally means two records were merged into one,
+    # each contributing a parallel set of fields. Whichever 005 is the
+    # most recent identifies the winning record, so any other duplicated
+    # tag with the same number of occurrences keeps the occurrence at
+    # that same position (its data came from the same source record).
+    winner_index = None
+    dup_005 = occurrences.get("005", [])
+    if len(dup_005) > 1:
+        winner = _choose_kept_005(dup_005, is_sirsi)
+        winner_index = next(i for i, f in enumerate(dup_005) if f is winner)
+        keep["005"] = winner
     for tag, fields_for_tag in occurrences.items():
-        if len(fields_for_tag) <= 1:
+        if len(fields_for_tag) <= 1 or tag in keep:
+            continue
+        # 001/003 keep their own rules (identifier / org code quality)
+        if (winner_index is not None and tag not in ("001", "003")
+                and len(fields_for_tag) == len(dup_005)):
+            keep[tag] = fields_for_tag[winner_index]
             continue
         resolver = _DUPLICATE_FIELD_RESOLVERS.get(tag)
         keep[tag] = resolver(fields_for_tag, is_sirsi) if resolver else fields_for_tag[0]
@@ -1461,13 +1477,17 @@ def strip_duplicate_non_repeatable_fields(
             if f is keep[f.tag]:
                 kept_fields.append(f)
             else:
-                if f.is_control():
-                    body = f.content or ""
-                else:
-                    body = f.indicators + "".join(f"${c}{d}" for c, d in f.subfields)
-                if len(body) > _DUPLICATE_FIELD_BODY_TRUNCATE_LEN:
-                    body = body[:_DUPLICATE_FIELD_BODY_TRUNCATE_LEN] + "..."
-                detail = f"removed duplicate ={f.tag}  {body}\t(non-repeatable field)"
+                def _body(fld: Field_) -> str:
+                    if fld.is_control():
+                        text = fld.content or ""
+                    else:
+                        text = fld.indicators + "".join(f"${c}{d}" for c, d in fld.subfields)
+                    if len(text) > _DUPLICATE_FIELD_BODY_TRUNCATE_LEN:
+                        text = text[:_DUPLICATE_FIELD_BODY_TRUNCATE_LEN] + "..."
+                    return text
+
+                detail = (f"removed duplicate ={f.tag}  {_body(f)}"
+                          f"\tkept ={f.tag}  {_body(keep[f.tag])}")
                 original = duplicates[0]
                 if f is not original and _fields_content_equal(f, original):
                     detail += " -- NO DATA LOSS - fields are exact duplicates"
@@ -1563,7 +1583,7 @@ def move_duplicate_100_to_700(parsed: ParsedRecord) -> list[str]:
         new = Field_("700", ind1 + " ", subs)
         shown = f"={f.tag}  {f.indicators}{_subfield_preview(f.subfields)}"
         if any(x.subfields == subs and x.indicators == new.indicators for x in existing_700):
-            details.append(f"removed duplicate {shown} (non-repeatable field) -- already "
+            details.append(f"removed duplicate {shown} -- already "
                            "present as a 700 -- NO DATA LOSS")
             continue
         new_fields.append(new)
@@ -1640,7 +1660,7 @@ def move_duplicate_245_to_246(parsed: ParsedRecord) -> list[str]:
         shown = f"={f.tag}  {f.indicators}{_subfield_preview(f.subfields)}"
         key = _normalized_title("".join(d for c, d in subs if c in "ab"))
         if key in existing:
-            details.append(f"removed duplicate {shown} (non-repeatable field) -- already "
+            details.append(f"removed duplicate {shown} -- already "
                            "present as a 246 -- NO DATA LOSS")
             continue
         existing.add(key)
@@ -1847,7 +1867,7 @@ def move_duplicate_240_to_730(parsed: ParsedRecord) -> list[str]:
         shown = f"={f.tag}  {f.indicators}{_subfield_preview(f.subfields)}"
         gone.append(f)
         if key in seen:
-            details.append(f"removed duplicate {shown} (non-repeatable field) -- already "
+            details.append(f"removed duplicate {shown} -- already "
                            "present as a 730/246 -- NO DATA LOSS")
             continue
         seen.add(key)
@@ -1953,7 +1973,7 @@ def recode_misfiled_duplicate_245(parsed: ParsedRecord) -> list[str]:
         tail = f" (dropped ${', $'.join(dropped)})" if dropped else ""
         loss = "POSSIBLE DATA LOSS" if dropped else "NO DATA LOSS"
         if new is None:
-            return f"removed duplicate {shown} (non-repeatable field) -- {why} -- {loss}"
+            return f"removed duplicate {shown} -- {why} -- {loss}"
         return (f"moved duplicate {shown} to ={new.tag}  {new.indicators}"
                 f"{_subfield_preview(new.subfields)}{tail} -- {why} -- {loss}")
 
