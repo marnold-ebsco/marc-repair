@@ -3696,6 +3696,65 @@ class TestLooksLikeAbandonedRecord:
 # add_default_008 -- placeholder 008 for records missing one entirely
 # ---------------------------------------------------------------------------
 
+def _rec_773(*d_values, **kw):
+    fields = [m.Field_("001", None, None, content="rec773"), m.Field_("245", "00", [("a", "T.")])]
+    for d in d_values:
+        fields.append(m.Field_("773", "0 ", [("t", "Paper"), ("d", d)]))
+    if kw.get("f008"):
+        fields.append(m.Field_("008", None, None, content=kw["f008"]))
+    return m.ParsedRecord(leader=_SYNTHETIC_LEADER, entries=[], fields=fields)
+
+
+class TestDerive008DateFrom773:
+    def test_single_year_fills_date1_and_keeps_placeholder_elsewhere(self):
+        parsed = _rec_773("May 01, 1987")
+        details = m.derive_008_date_from_773(parsed)
+        assert len(details) == 1
+        c = next(f for f in parsed.fields if f.tag == "008").content
+        assert len(c) == 40
+        assert c[6:15] == "s1987    "
+        assert c[:6] == m.DEFAULT_008_CONTENT[:6]
+        assert c[15:] == m.DEFAULT_008_CONTENT[15:]
+
+    def test_same_year_in_two_773s_is_fine(self):
+        parsed = _rec_773("May 1, 1987", "June 2, 1987")
+        assert len(m.derive_008_date_from_773(parsed)) == 1
+
+    def test_range_or_conflicting_years_left_alone(self):
+        for ds in (("1987-1990",), ("1987", "1988")):
+            parsed = _rec_773(*ds)
+            assert m.derive_008_date_from_773(parsed) == []
+            assert not any(f.tag == "008" for f in parsed.fields)
+
+    def test_no_year_or_no_773_left_alone(self):
+        for parsed in (_rec_773("undated"), _rec_773()):
+            assert m.derive_008_date_from_773(parsed) == []
+
+    def test_existing_008_untouched(self):
+        parsed = _rec_773("1987", f008="x" * 40)
+        assert m.derive_008_date_from_773(parsed) == []
+        assert next(f for f in parsed.fields if f.tag == "008").content == "x" * 40
+
+    def test_cli_off_by_default_on_with_switch(self, tmp_path):
+        src = tmp_path / "s773.mrc"
+        src.write_bytes(m.assemble_marc(_rec_773("May 01, 1987")))
+        for flag, expect in (([], m.DEFAULT_008_CONTENT),
+                             (["--add-008-date-from-773"], None)):
+            out = tmp_path / f"o{bool(flag)}.mrc"
+            log = tmp_path / f"l{bool(flag)}.log"
+            assert m.main([str(src), "-o", str(out), "--log", str(log), *flag]) == 0
+            f008 = next(f for f in m.repair_text(m._read_text(str(out)))[0].fields
+                        if f.tag == "008")
+            text = _resolve_log(log).read_text(encoding="utf-8")
+            if expect:
+                assert f008.content == expect
+                assert "INFORMATIONAL: derived_008_date_from_773" not in text
+            else:
+                assert f008.content[6:15] == "s1987    "
+                assert "INFORMATIONAL: derived_008_date_from_773" in text
+                assert "INFORMATIONAL: added_default_008" not in text
+
+
 class TestAddDefault008:
     def test_inserts_default_when_missing(self):
         parsed = m.ParsedRecord(

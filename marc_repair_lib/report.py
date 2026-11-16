@@ -89,6 +89,7 @@ _FIXED_REQUIRES_ATTENTION = {
 #: FIXED.
 _INFORMATIONAL = {
     "added_default_008",
+    "derived_008_date_from_773",
     "added_default_holdings_008",
     "holdings_multiple_004",
     "removed_null_identifier",
@@ -423,6 +424,9 @@ _CHECK_DESCRIPTIONS: dict[str, str] = {
     "--no-move-999-to-949 turns it off). FOLIO reserves 999 with indicators ff for its own record "
     "identifiers ($i/$s), so a source system's own 999 (e.g. Sirsi/Sierra item data) "
     "conflicts with it and Data Import rejects the record; a real 999 ff is never touched.",
+    "derived_008_date_from_773": "Record had no 008 -- one was built with its date taken from "
+    "the 773 $d (host item date); other bytes are the placeholder. Only with "
+    "--add-008-date-from-773.",
     "remapped_999_to_945": 'A 999 field was retagged to 945 (indicators forced to "ff") -- only with '
     "--remap-999-to-945.",
     "trimmed_oversized_record": "A record was over 99999 bytes (the most ISO 2709's leader can "
@@ -532,6 +536,7 @@ _CHECK_DATA_LOSS: dict[str, str] = {
     "fixed_mojibake": "NO DATA LOSS",
     "fixed_marc8_b2_umlaut": "NO DATA LOSS",
     "fixed_marc8_diacritic": "NO DATA LOSS",
+    "derived_008_date_from_773": "NO DATA LOSS",
     "remapped_999_to_945": "NO DATA LOSS",
     "moved_999_to_949": "NO DATA LOSS",
     "fixed_misaligned_008": "NO DATA LOSS",

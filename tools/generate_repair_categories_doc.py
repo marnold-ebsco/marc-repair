@@ -170,6 +170,14 @@ BIB_ROWS = [
         '`--no-fix-invalid-leader-bytes`',
     ),
     CategoryRow(
+        "008 date from 773 $d", "Added field (derived)",
+        "**No** (`--add-008-date-from-773` to enable)", "`derived_008_date_from_773`",
+        "INFORMATIONAL", "No -- INFORMATIONAL categories are never listed in full, "
+        "not even via --log-full",
+        '`--add-008-date-from-773` (only for records with no 008 and exactly one year in 773 $d; '
+        'runs before the placeholder 008)',
+    ),
+    CategoryRow(
         "999 -> 945 remap", "Renamed field tag",
         "**No** (`--remap-999-to-945` to enable)", "`remapped_999_to_945`",
         "INFORMATIONAL", "No -- INFORMATIONAL categories are never listed in full, "

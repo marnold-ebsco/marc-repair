@@ -77,6 +77,7 @@ infer it from a category's DATA LOSS/POSSIBLE DATA LOSS label alone.
 | Transcode failure isolated to one subfield -- a data field's subfield whose MARC-8 content can't be transcoded is dropped on its own (the whole field too, if the dropped subfield was $a or nothing usable is left) instead of aborting the whole record; the rest of the record still transcodes and flips to UTF-8 normally | Removed subfield (and the field with it, if needed) | n/a (only if it occurs) | `removed_untranscodable_subfield` | FIXED/REQUIRES ATTENTION | **Yes** | `--no-transcode-marc8` (skips this entirely) |
 | Mojibake (double-encoded UTF-8) fix | Re-decoded field data | Yes (`--no-fix-mojibake`) | `fixed_mojibake` | INFORMATIONAL | No -- INFORMATIONAL categories are never listed in full, not even via --log-full | `--no-fix-mojibake` |
 | Leader bytes 05/06/08/17 defaulted | Defaulted leader byte | Yes (`--no-fix-invalid-leader-bytes`) | `leader_byte_defaulted` | INFORMATIONAL | No -- INFORMATIONAL categories are never listed in full, not even via --log-full | `--no-fix-invalid-leader-bytes` |
+| 008 date from 773 $d | Added field (derived) | **No** (`--add-008-date-from-773` to enable) | `derived_008_date_from_773` | INFORMATIONAL | No -- INFORMATIONAL categories are never listed in full, not even via --log-full | `--add-008-date-from-773` (only for records with no 008 and exactly one year in 773 $d; runs before the placeholder 008) |
 | 999 -> 945 remap | Renamed field tag | **No** (`--remap-999-to-945` to enable) | `remapped_999_to_945` | INFORMATIONAL | No -- INFORMATIONAL categories are never listed in full, not even via --log-full | `--remap-999-to-945` |
 | 999 -> 949 move | Renamed field tag | Yes (`--no-move-999-to-949`) | `moved_999_to_949` | INFORMATIONAL | No -- INFORMATIONAL categories are never listed in full, not even via --log-full | `--no-move-999-to-949` |
 | $9 -> $0 normalization | Renamed subfield code | Yes (`--no-normalize-subfield-9`) | `normalized_subfield_9_to_0` | INFORMATIONAL | No -- INFORMATIONAL categories are never listed in full, not even via --log-full | `--no-normalize-subfield-9` |
@@ -208,6 +209,7 @@ invalid-subfield-code removal, `unfixable` diversion and its fallbacks.
 | `--trim-oversized-record` | both | on | `trim_oversized_record` | `trimmed_oversized_record` |  |
 | `--check-duplicate-identifiers` | both | on | `check_duplicate_identifiers` | `duplicate_identifier` |  |
 | `--fix-misaligned-008` | bib | on | `fix_misaligned_008` | `fixed_misaligned_008` |  |
+| `--add-008-date-from-773` | bib | off | `add_008_date_from_773` | `derived_008_date_from_773` |  |
 | `--transcode-marc8` | bib | on | `transcode_marc8` | `transcoded_marc8`, `transcode_marc8_failed`, `removed_untranscodable_subfield` |  |
 | `--fix-marc8-diacritic-escapes` | bib | on | `fix_marc8_diacritic_escapes` | `fixed_marc8_diacritic` |  |
 | `--marc8-corpus-lookup` | bib | on | `marc8_corpus_lookup` |  |  |

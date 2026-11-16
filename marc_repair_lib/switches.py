@@ -69,6 +69,11 @@ SWITCHES: tuple[Switch, ...] = (
     _s("add_default_008", "add-default-008", True, "both",
        "added_default_008 added_default_holdings_008",
        help="add a blank placeholder 008 to a record that has none"),
+    _s("add_008_date_from_773", "add-008-date-from-773", False, "bib",
+       "derived_008_date_from_773",
+       help="for a record with no 008, build one with the date taken from 773 $d (only when "
+       "it gives exactly one year); other bytes stay the placeholder. Off: such a record gets "
+       "the plain placeholder 008"),
     _s("collapse_oversized_field_escapes", "collapse-oversized-field-escapes", True, "both",
        "collapsed_oversized_field_escapes",
        help="shrink a field over 9999 bytes by merging redundant MARC-8 escapes. Off: the "

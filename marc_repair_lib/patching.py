@@ -99,6 +99,40 @@ def add_default_008(parsed: ParsedRecord) -> list[str]:
     return []
 
 
+_YEAR_773D = re.compile(r"(?<!\d)(1[5-9]\d\d|20[0-2]\d)(?!\d)")
+
+
+def derive_008_date_from_773(parsed: ParsedRecord) -> list[str]:
+    """For a record with no 008, build one from `DEFAULT_008_CONTENT` with
+    the date filled in from the 773 $d (the host item's date, e.g. a
+    newspaper issue date for a clipping/article record): Date Type `s`,
+    Date 1 = the year, Date 2 blank. Everything else stays the placeholder.
+
+    Deliberately conservative: only when every 773 $d in the record yields
+    exactly ONE distinct four-digit year (1500-2029). No 773 $d, no year,
+    or more than one distinct year (a range, or conflicting hosts) leaves
+    the record alone so `add_default_008` supplies the plain placeholder.
+    No-op if an 008 is already present. Must run before `add_default_008`.
+    Off by default (--add-008-date-from-773) -- see the `_s` registry entry."""
+    if any(f.tag == "008" for f in parsed.fields):
+        return []
+    texts = [
+        value
+        for f in parsed.fields
+        if not f.is_control() and f.tag == "773"
+        for code, value in f.subfields
+        if code == "d"
+    ]
+    years = {y for t in texts for y in _YEAR_773D.findall(t)}
+    if len(years) != 1:
+        return []
+    year = years.pop()
+    content = DEFAULT_008_CONTENT[:6] + "s" + year + "    " + DEFAULT_008_CONTENT[15:]
+    if not ensure_field(parsed, "008", None, content):
+        return []
+    return [f"added 008 with date {year} taken from 773 $d {texts[0]!r}: {content!r}"]
+
+
 #: MARC21's Holdings format 008 is a different, shorter fixed field
 #: than the bibliographic/authority 008 (32 bytes, not 40 --
 #: https://www.loc.gov/marc/holdings/hd008.html; confirmed against real

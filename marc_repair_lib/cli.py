@@ -76,6 +76,7 @@ from .patching import (
     NonStandardFieldTally,
     _rewrite_stripping_invalid_tags,
     DEFAULT_008_CONTENT,
+    derive_008_date_from_773,
     add_default_008,
     add_default_245,
     add_default_holdings_008,
@@ -2747,6 +2748,9 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
                     n_diverted_review += 1
                     continue
                 rec_id = record_identifier(parsed)
+                if args.add_008_date_from_773:
+                    for detail in derive_008_date_from_773(parsed):
+                        log("derived_008_date_from_773", True, i, rec_id, detail)
                 if args.add_default_008:
                     for detail in add_default_008(parsed):
                         log("added_default_008", True, i, rec_id, detail)
@@ -3012,6 +3016,8 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
         active_categories.add("fixed_marc8_b2_umlaut")
     if args.fix_invalid_leader_bytes:
         active_categories.add("leader_byte_defaulted")
+    if args.add_008_date_from_773:
+        active_categories.add("derived_008_date_from_773")
     if args.remap_999_to_945:
         active_categories.add("remapped_999_to_945")
     if args.move_999_to_949:
