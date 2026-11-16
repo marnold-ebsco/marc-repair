@@ -341,7 +341,10 @@ def describe_switches(parser: argparse.ArgumentParser, args: argparse.Namespace,
             parts.append(flag)
         elif sw.dest not in in_group:
             parts.append(f"{flag} (profile)")
-    lines = ["Switches: " + (", ".join(parts) if parts else "all defaults")]
+    lines = [
+        "Source system: " + (getattr(args, "source_system", None) or "NOT SET"),
+        "Switches: " + (", ".join(parts) if parts else "all defaults"),
+    ]
     off = sorted(inactive_categories(values, pipeline))
     if off:
         lines.append("Checks switched off (no section in this log): " + ", ".join(off))

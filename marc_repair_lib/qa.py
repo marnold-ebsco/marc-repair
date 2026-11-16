@@ -382,19 +382,33 @@ def _is_sierra_number(value: str) -> bool:
     return value.lower().lstrip(".").startswith("b")
 
 
-def record_identifier(parsed: ParsedRecord) -> str:
-    """The record's own identifier, for use in log lines: subfield $a of
-    field 907 if it looks like a Sierra bib number (".b..." or "b..."),
-    otherwise field 001's content. Falls back to whichever of the two is
-    actually present if the preferred one is missing; empty string if
+_ACTIVE_SOURCE_SYSTEM: str | None = None
+
+
+def set_source_system(source_system: str | None) -> None:
+    """Tell `record_identifier` which system the run's records come from
+    (see SOURCE_SYSTEMS); None restores the guessing behavior."""
+    global _ACTIVE_SOURCE_SYSTEM
+    _ACTIVE_SOURCE_SYSTEM = source_system
+
+
+def record_identifier(parsed: ParsedRecord, source_system: str | None = None) -> str:
+    """The record's own identifier, for use in log lines. For Sierra
+    (`source_system`, else the one set by `set_source_system`) it is 907 $a
+    whatever its shape; for wms/other it is 001. If the source system is
+    unknown, 907 $a is used only when it looks like a Sierra bib number
+    (".b..." or "b..."), otherwise 001. Falls back to whichever of the two
+    is actually present if the preferred one is missing; empty string if
     neither is present at all."""
+    source_system = source_system or _ACTIVE_SOURCE_SYSTEM
     field_907 = next((f for f in parsed.fields if f.tag == "907"), None)
     value_907 = (
-        next((d for c, d in field_907.subfields if c == "a"), None)
+        next((d for c, d in field_907.subfields if c == "a" and d.strip()), None)
         if field_907 is not None
         else None
     )
-    if value_907 and _is_sierra_number(value_907):
+    if value_907 and (source_system == "sierra" or (
+            source_system is None and _is_sierra_number(value_907))):
         return value_907
 
     field_001 = next((f for f in parsed.fields if f.tag == "001"), None)

@@ -34,6 +34,7 @@ from .qa import (
     fix_invalid_bibliographic_level,
     fix_invalid_leader_bytes,
     missing_identifier_reason,
+    set_source_system,
     record_identifier,
 )
 from .core import (
@@ -2034,6 +2035,7 @@ def resolve_source_system(args: argparse.Namespace) -> None:
                 args.source_system = answer
             else:
                 print(f"please enter a number from 1 to {len(SOURCE_SYSTEMS)}", file=sys.stderr)
+    set_source_system(args.source_system)
     if args.source_system == "sierra":
         print("Source system: sierra (every bib record needs a 907 $a)")
     elif args.source_system == "wms":

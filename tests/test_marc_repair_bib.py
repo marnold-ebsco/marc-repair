@@ -1781,6 +1781,39 @@ class TestRecordIdentifier:
         )
         assert m.record_identifier(parsed) == ""
 
+    @staticmethod
+    def _both(a907):
+        return m.ParsedRecord(
+            leader="0" * 24,
+            entries=[],
+            fields=[
+                m.Field_("001", None, None, content="ocn317711891"),
+                m.Field_("907", "  ", [("a", a907)]),
+            ],
+        )
+
+    def test_sierra_uses_907a_whatever_its_shape(self):
+        assert m.record_identifier(self._both("1919566"), "sierra") == "1919566"
+
+    def test_sierra_falls_back_to_001_without_907a(self):
+        parsed = m.ParsedRecord(
+            leader="0" * 24, entries=[],
+            fields=[m.Field_("001", None, None, content="u476474")],
+        )
+        assert m.record_identifier(parsed, "sierra") == "u476474"
+
+    def test_wms_and_other_use_001(self):
+        for system in ("wms", "other"):
+            assert m.record_identifier(self._both(".b1234567"), system) == "ocn317711891"
+
+    def test_run_wide_source_system_is_used(self):
+        m.set_source_system("sierra")
+        try:
+            assert m.record_identifier(self._both("1919566")) == "1919566"
+        finally:
+            m.set_source_system(None)
+        assert m.record_identifier(self._both("1919566")) == "ocn317711891"
+
 
 # ---------------------------------------------------------------------------
 # strip_missing_required_a -- remove fields lacking a required $a

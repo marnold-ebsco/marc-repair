@@ -41,16 +41,19 @@ write the record: `area_code_in_041`, `invalid_041_language_code`,
 `unfixed_non_numeric_tag` (possible damaged text/tags). Need the user to say
 which categories belong in the new section.
 
-### OPEN -- Sierra records: log record id should come from 907 `$a` (2026-11-16)
+### DONE -- Sierra log record id comes from 907 `$a`; source system in the log header (2026-11-16)
 
-When analyzing Sierra records, the record id shown in the log should come from
-the 907 `$a`. The user thinks it currently comes from 001. Where to look:
-`record_identifier` in `marc_repair_lib/qa.py` uses 907 `$a` only when it looks
-like a Sierra bib number (`.b...`/`b...`, `_is_sierra_number`), otherwise 001 --
-so a 907 `$a` in another shape silently falls back to 001. It also ignores
-`--source-system` (`sierra` -> 907 `$a`, see `_SOURCE_SYSTEM_IDENTIFIER`). The
-big a_2026-11-13 log shows ids like `ocn317711891` (an 001-style id), so check
-that file's 907s first. Not yet investigated or changed.
+`record_identifier` (`marc_repair_lib/qa.py`) now follows the source system:
+`sierra` -> 907 `$a` whatever its shape (001 only if 907 `$a` is missing/blank),
+`wms`/`other` -> 001. With no source system set the old guess stays (907 `$a`
+only if it looks like `b...`/`.b...`). It reads a module-level setting
+(`set_source_system`), set by `resolve_source_system` in `cli.py`, so the ~50
+call sites are unchanged. Every log header now has `Source system: ...` (or
+`NOT SET`) above `Switches:` (`describe_switches`, `switches.py`). 4 new tests;
+full suite 895 passed, 4 skipped.
+Not confirmed: the a_2026-11-13 log (ids like `ocn317711891`) didn't record the
+source system and the source `.mrc` isn't on this machine, so it is unknown
+whether that run was Sierra. Re-run with `--source-system sierra` to check.
 
 ### DONE -- misaligned 008 realignment + language-code checks for 008 and 041 (2026-11-05, committed and pushed on `main`)
 
