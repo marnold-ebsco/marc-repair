@@ -8,6 +8,35 @@ current state and open items.
 
 ## Current state
 
+### DONE -- progress %, 856 recode, n/a -> und, flake8 clean (2026-11-16, pushed on `main`: `7a04b5c`, `932bcc1`, `6c22988`)
+
+- **Progress % / ETA** (`ProgressReporter`, `report.py`) now follow bytes of records
+  actually processed (`progress.bytes_consumed`, set in the bib loop and via the
+  holdings estimate hook), not the reader's 16-32 MB read-ahead, so the % moves with
+  the record count. The `--split-bib-holdings` split step still uses read-ahead.
+  Size is `len(rec_text)` (chars), slightly low for non-ASCII. Not run on real data.
+- **856 without `$u`**: `recode_856_missing_u` also restores a URL whose first letter
+  became the subfield code (`$https://x` = code `h` + `ttps://x`; `$www.x` = `w` +
+  `ww.x`), bib and holdings. `bib_856_missing_u` / `holdings_856_missing_u` now report
+  fixed records as one count line (`N record(s) recoded to $u -- NO DATA LOSS (not
+  listed)`), only unfixed ones listed (`_SUMMARIZE_FIXED_ENTRIES`, `report.py`). The
+  header count still adds both; category descriptions / `docs/REPAIR_CATEGORIES.md`
+  not updated for this.
+- **`n/a` / `N/A` -> `und`** in 008/35-37 and 041 language subfields, inside
+  `fix_language_code_case` (same switch, still count only). `pog` and `grk` are
+  deliberately NOT guessed (user's decision).
+- **flake8**: `.flake8` (120 columns, excludes venvs/`working`/`.claude`, per-file
+  ignores for the `tools/context_probe/polyglot_detector_marc.py` sample text); the
+  remaining warnings were fixed, `flake8` now reports nothing. A stray git-ignored
+  `venv2/` in the repo root is what made unconfigured flake8 report ~30k warnings.
+- **PSU file** `working/psu_a_2026-11-13.mrc` (703,688 bibs, same count as the
+  a_2026-11-13 run): 15,462 have no 001 (24 have two); 001s are a mix (`KSUC########`,
+  `ocm`/`ocn`, `Gutenberg-n`, `JOA...`, `MIU-...`, none `.b`); every record has a 907
+  `$a`, all plain digits (e.g. `1000297`: no `b`, no check digit, no `x`). Item records
+  carry `b` + number; the user will fix that at the item level and thinks it is OK.
+  A missing 001 is not flagged on a Sierra run (by design: `record_identifier_required`
+  needs 907 `$a` for `sierra`, 001 for `wms`/`other`).
+
 ### DONE -- PDF copy of every log; `removed_invalid_subfield` log text truncated (2026-11-16)
 
 Each bib/holdings log is also written as `<same name>.pdf` (on by default,
@@ -23,7 +52,7 @@ Also: `strip_invalid_subfield_codes` now quotes removed text via `_log_preview`
 (40 chars) -- it had put a 3,284-char subfield in the log. Full suite: 891
 passed, 4 skipped.
 
-### OPEN -- label "doesn't block loading" checks, and make them easy to strip (2026-11-16)
+### OPEN (DEFERRED by the user until they have researched FOLIO's behavior) -- label "doesn't block loading" checks, and make them easy to strip (2026-11-16)
 
 The URL checks (`doubled_proxy_url`, `bib_856_missing_u`,
 `holdings_856_missing_u`) never say in the log whether the record still loads;
@@ -98,8 +127,8 @@ was compared and adds nothing (MARC uses the bibliographic forms).
   area-code record.
 - OPEN: 041 leftovers seen: `grk` (gre or grc? not aliased), truncated
   `engfr`/`engga`, call-number-like text in one GTU 041 (record 30227);
-  `n/a` / `N/A` could be repaired to `zxx` or `und` (not done -- needs a
-  decision which); `pog` is probably `por`; 043 content itself is not checked;
+  `n/a` / `N/A` -> `und` is DONE (2026-11-16); `pog` / `grk` are left alone on
+  purpose (user: don't guess); 043 content itself is not checked;
   no 008-vs-041 consistency check (would be noisy for translations).
 
 ### DONE -- holdings 856 recode + learned 852 `$c` suggestions (2026-11-02, committed and pushed on `main`: `410767e`, `83a798d`)
@@ -559,7 +588,7 @@ not yet committed.** `deduped_010_lccn` used to merge several 010s by keeping on
   27021481 (z AFX34000080 -- the only one where the choice depends on validity);
   29021407 (z 14003305).
 
-### OUT OF SCOPE (for now) -- flag invalid 010 `$a` values on any record (2026-10-26)
+### DROPPED (user, 2026-11-16: not doing the work) -- flag invalid 010 `$a` values on any record (2026-10-26)
 
 The repair above only touches records with more than one `$a`. Under the strict
 LC rules, **1,379 GTU records (0.67% of those with a 010)** carry at least one
@@ -780,7 +809,7 @@ from a plain default run, which also refreshed content that had gone stale.
 Both categories are in `docs/REPAIR_CATEGORIES.md` (bib and holdings tables).
 Open: run a full GTU re-run to confirm nothing else changes.
 
-### OPEN (minor) -- flake8 config (2026-10-26)
+### DONE -- flake8 config (2026-11-16, see the top entry; text below is the old note)
 
 No flake8 config exists, so default `flake8` (79 cols) reports ~487 E501 in
 `marc_repair.py`; earlier sessions used `--max-line-length=100`. Ignoring E501,
