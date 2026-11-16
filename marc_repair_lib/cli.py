@@ -2151,8 +2151,9 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
                 f"{_error_output_path(holdings_repaired_path)})"
             )
             print(
-                f"holdings log (findings only; checks with none are listed at the end; --log-zero for all headers) written to "
-                f"{holdings_log_path} ({result['log_lines']} record-level finding(s): "
+                "holdings log (findings only; checks with none are listed at the end; "
+                f"--log-zero for all headers) written to {holdings_log_path} "
+                f"({result['log_lines']} record-level finding(s): "
                 f"{result['not_fixed']} not fixed, "
                 f"{result['log_lines'] - result['not_fixed']} fixed)",
                 file=sys.stderr,
@@ -2227,7 +2228,8 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
             f"in {elapsed:.2f}s"
         )
         print(
-            f"log (findings only; checks with none are listed at the end; --log-zero for all headers) written to {log_path} "
+            "log (findings only; checks with none are listed at the end; "
+            f"--log-zero for all headers) written to {log_path} "
             f"({result['log_lines']} record-level finding(s): {result['not_fixed']} not "
             f"fixed, {result['log_lines'] - result['not_fixed']} fixed)",
             file=sys.stderr,
@@ -2988,7 +2990,8 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
         "unfixed_non_numeric_tag", "invalid_indicator_value", "invalid_bibliographic_level",
         "leader_entry_map_fixed", "oversized_sentinel_fixed", "duplicate_identifier",
         "removed_null_identifier", "suspect_marc8_escape", "suspect_hex_encoded_marc8",
-        "removed_010_whitespace_a", "removed_880_missing_6", "truncated_oversized_field", "collapsed_oversized_field_escapes",
+        "removed_010_whitespace_a", "removed_880_missing_6", "truncated_oversized_field",
+        "collapsed_oversized_field_escapes",
         "trimmed_oversized_record", "bib_856_missing_u",
     }
     if args.fix_bad_indicators:
@@ -3109,7 +3112,8 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
     n_info_only = sum(1 for e in log_entries if e.category == NON_STANDARD_FIELD_CATEGORY)
     n_fixed = n_log_lines - n_not_fixed - n_info_only
     print(
-        f"log (findings only; checks with none are listed at the end; --log-zero for all headers) written to {log_path} "
+        "log (findings only; checks with none are listed at the end; "
+        f"--log-zero for all headers) written to {log_path} "
         f"({n_log_lines} record-level finding(s): {n_not_fixed} not fixed, "
         f"{n_fixed} fixed"
         + (f", {n_info_only} information only" if n_info_only else "")

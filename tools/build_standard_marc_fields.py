@@ -41,7 +41,7 @@ WMS_STANDARD = {
     "851": "PHYSICAL LOCATION",
     "891": "PUBLICATION PATTERN DATA",
 }
-FIELD_RE =re.compile(r"^(\d{3}) - (.+?)\s*$")
+FIELD_RE = re.compile(r"^(\d{3}) - (.+?)\s*$")
 # trailing (R)/(NR), format codes like (BK AM CF), [OBSOLETE]/[LOCAL], "-"
 TRAIL_RE = re.compile(
     r"\s*(\[[A-Z-]+\]|-|\((?:NR|R)\)|\((?:[A-Z]{2}\s?)+\))\s*$")

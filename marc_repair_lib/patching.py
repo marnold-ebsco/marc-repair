@@ -3098,6 +3098,7 @@ def fix_language_code_case(parsed: ParsedRecord) -> list[str]:
     """Lowercase a language code that is only wrong by case ("ENG", "Heb")
     in 008/35-37 and in 041 language subfields -- when the lowercased value
     is an approved MARC code (every 3-letter piece, for a 041 subfield).
+    "n/a" / "N/A" becomes "und" (undetermined) in the same places.
     Nothing is lost. One detail per field changed (category
     "fixed_language_code_case"; INFORMATIONAL)."""
     codes = approved_language_codes()
@@ -3105,12 +3106,16 @@ def fix_language_code_case(parsed: ParsedRecord) -> list[str]:
     for f in parsed.fields:
         if f.tag == "008" and f.is_control() and len(f.content or "") >= 38:
             cur = f.content[35:38]
-            if cur != cur.lower() and cur.lower() in codes:
-                f.content = f.content[:35] + cur.lower() + f.content[38:]
-                details.append(f"008/35-37 {cur!r} -> {cur.lower()!r}")
+            new = "und" if cur.lower() == "n/a" else cur.lower()
+            if cur != new and new in codes:
+                f.content = f.content[:35] + new + f.content[38:]
+                details.append(f"008/35-37 {cur!r} -> {new!r}")
     for f in _041_language_fields(parsed):
         for k, (sub_code, data) in enumerate(f.subfields):
-            if (
+            if sub_code in _041_LANGUAGE_SUBFIELDS and data.lower() == "n/a" and "und" in codes:
+                f.subfields[k] = (sub_code, "und")
+                details.append(f"041 ${sub_code} {data!r} -> 'und'")
+            elif (
                 sub_code in _041_LANGUAGE_SUBFIELDS and data and len(data) % 3 == 0
                 and data != data.lower()
                 and all(data.lower()[j:j + 3] in codes for j in range(0, len(data), 3))

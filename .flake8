@@ -1,0 +1,6 @@
+[flake8]
+max-line-length = 120
+exclude = .git,__pycache__,.venv,venv,venv*,working,.claude,node_modules
+# throwaway sample-text probe; long example lines are the point
+per-file-ignores =
+    tools/context_probe/polyglot_detector_marc.py:E501,E261,E302,E305

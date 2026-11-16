@@ -2,18 +2,18 @@ import re
 
 class MARCPolyglotDetector:
     """
-    A specialized polyglot detector optimized for cataloged metadata fields 
-    (such as MARC 1XX/245/5XX). It is highly resilient against stripped, missing, 
+    A specialized polyglot detector optimized for cataloged metadata fields
+    (such as MARC 1XX/245/5XX). It is highly resilient against stripped, missing,
     or corrupted diacritics/umlauts, and it filters out cataloging noise.
     """
-    
+
     def __init__(self):
         # 1. Compile native script patterns
         self.chinese_pattern = re.compile(r"[一-鿿]")
         self.japanese_pattern = re.compile(r"[぀-ゟ゠-ヿ]")
         self.korean_pattern = re.compile(r"[가-힣㄰-㆏]")
         self.russian_native_pattern = re.compile(r"[Ѐ-ӿ]")
-        
+
         # 2. Universal catalog subfield/punctuation noise cleaner
         # Removes subfield delimiters like $a, $b, $c, slashes, trailing periods, brackets
         self.noise_pattern = re.compile(r"\$[a-z0-9]|[a-z]|[.\[\]()/,:;=\-+•\s]+")
@@ -99,7 +99,7 @@ class MARCPolyglotDetector:
         # 2. Text Normalization for flattened Latin profiles (resilient against missing/corrupt diacritics)
         cleaned_text = self.clean_marc_field(raw_text.lower())
         words = cleaned_text.split()
-        
+
         if not words:
             return {"language": "Unknown/Short Metadata", "confidence": 0.0, "scores": {}}
 
@@ -112,13 +112,13 @@ class MARCPolyglotDetector:
 
         # 3. Match Evaluation
         scores = {lang: 0.0 for lang in self.profiles}
-        
+
         for lang, rules in self.profiles.items():
             # Check high-frequency core catalog words
             word_matches = sum(1 for w in words if w in rules["words"])
             # Check phonetic structural configurations
             trigram_matches = sum(1 for t in trigrams if t in rules["trigrams"])
-            
+
             # Weighted calculation factoring in language characteristics
             score = ((word_matches * 3.0) + (trigram_matches * 0.8)) * rules["weight"]
             scores[lang] = round(score, 2)
@@ -126,7 +126,7 @@ class MARCPolyglotDetector:
         # Sort and return best match
         sorted_scores = sorted(scores.items(), key=lambda x: x[1], reverse=True)
         top_lang, top_score = sorted_scores[0]
-        
+
         # Calculate localized confidence ratio
         total_score_sum = sum(scores.values())
         confidence = round(top_score / total_score_sum, 2) if total_score_sum > 0 else 0.0
@@ -152,7 +152,7 @@ class MARCPolyglotDetector:
 # Practical Demonstration with typical MARC fragments
 if __name__ == "__main__":
     detector = MARCPolyglotDetector()
-    
+
     test_fields = [
         "245 10 $a Histoire de la litterature francaise / $c par Jean Durand.",  # French
         "245 10 $a Introduction to algorithm design.",                          # English
@@ -162,7 +162,7 @@ if __name__ == "__main__":
         "245 10 $a 國語辭典 / $c 中華書局.",                                      # Chinese Native
         "504 ## $a Tartalomjegyzék és bibliográfia: p. 234-240.",                 # Hungarian (Corrupt/flat accents)
     ]
-    
+
     print("--- MARC FIELD DETECTION RESULTS ---")
     for field in test_fields:
         res = detector.detect(field)

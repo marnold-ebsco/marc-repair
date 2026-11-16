@@ -402,7 +402,8 @@ _CHECK_DESCRIPTIONS: dict[str, str] = {
     "(\"fre eng\") was split into one repeated subfield per code, when every piece is an approved "
     "MARC language code (on by default; --no-split-041-language-codes turns it off). Nothing is lost.",
     "fixed_language_code_case": "A language code differing from an approved MARC code only by case "
-    "(ENG, Heb) in 008/35-37 or a 041 language subfield was lowercased (on by default; "
+    "(ENG, Heb) in 008/35-37 or a 041 language subfield was lowercased, and \"n/a\" was changed "
+    "to \"und\" (on by default; "
     "--no-fix-language-code-case turns it off). Nothing is lost.",
     "invalid_041_language_code": "A 041 language subfield ($a $b $d $e $f $g $h $j $k $m $n) holds "
     "something that is not an approved MARC language code (approved_language_codes.txt), or a "
@@ -414,7 +415,8 @@ _CHECK_DESCRIPTIONS: dict[str, str] = {
     "-- nothing was changed (on by default; --no-check-008-language turns it off).",
     "fixed_misaligned_008": "A bibliographic 008 had its fixed fields after date1 shifted (the "
     "run of blanks at 008/11 was too long or short), so the language code was not at 35-37 and "
-    "read as junk (found by looking for exactly one approved MARC language code). Blanks at 008/11 were removed/added to put the language code back at 35-37 "
+    "read as junk (found by looking for exactly one approved MARC language code). "
+    "Blanks at 008/11 were removed/added to put the language code back at 35-37 "
     "(on by default; --no-fix-misaligned-008 turns it off). Only blanks are ever discarded. "
     "Runs before the 008 length fix.",
     "moved_999_to_949": "A 999 field (not indicators ff) was retagged to 949 (on by default; "

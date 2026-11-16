@@ -4044,6 +4044,18 @@ class TestLanguageCaseAndAreaCode:
             ("a", "heb"), ("b", "engfre"), ("d", "xqz"), ("h", "ger")]
         assert rec.fields[2].subfields[0] == ("a", "GER")  # other scheme, untouched
 
+    def test_n_a_becomes_und(self):
+        rec = self._rec(
+            m.Field_("008", None, None, content="780615s1999" + " " * 20 + "0 0 N/A" + "  "),
+            m.Field_("041", "0 ", [("a", "n/a"), ("b", "pog")]),
+            m.Field_("041", "07", [("a", "N/A"), ("2", "x")]),
+        )
+        details = m.fix_language_code_case(rec)
+        assert len(details) == 2
+        assert rec.fields[0].content[35:38] == "und"
+        assert rec.fields[1].subfields == [("a", "und"), ("b", "pog")]  # pog not guessed
+        assert rec.fields[2].subfields[0] == ("a", "N/A")  # other scheme, untouched
+
     def test_jap_alias(self):
         assert m.suggest_language_codes("jap") == ["jpn"]
 
@@ -5242,7 +5254,8 @@ class TestNonStandardMarcFields:
         assert "non_standard_marc_fields" not in content
         sup = open(glob.glob(str(tmp_path / "run_*_non_standard_fields.txt"))[0],
                    encoding="utf-8").read()
-        assert sup.index("--- 241 [OBSOLETE]: 8 instance(s) in 8 record(s) ---") <             sup.index("--- 605: 1 instance(s) in 1 record(s) ---")
+        assert sup.index("--- 241 [OBSOLETE]: 8 instance(s) in 8 record(s) ---") < \
+            sup.index("--- 605: 1 instance(s) in 1 record(s) ---")
         # report only: output still has the fields
         data = out.read_bytes()
         assert data.count(b"Series ") == 8 and b"Methodism" in data
