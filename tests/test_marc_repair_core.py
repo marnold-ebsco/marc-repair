@@ -742,6 +742,25 @@ class TestWriteLog:
 
 
 # ---------------------------------------------------------------------------
+# ProgressReporter percent follows records processed, not read-ahead
+# ---------------------------------------------------------------------------
+
+def test_progress_percent_uses_bytes_consumed_not_read_ahead(capsys):
+    reporter = m.ProgressReporter(total_bytes=1000, min_interval=0)
+    reporter.on_progress(1000)  # reader already buffered the whole file
+    reporter.bytes_consumed = 250
+    reporter.maybe_print(10)
+    assert " 25.0% of input" in capsys.readouterr().err
+
+
+def test_progress_percent_falls_back_to_bytes_read(capsys):
+    reporter = m.ProgressReporter(total_bytes=1000, min_interval=0)
+    reporter.on_progress(400)
+    reporter.maybe_print(10)
+    assert " 40.0% of input" in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------------------
 # ProgressReporter.maybe_print_estimate -- early one-time runtime estimate
 # ---------------------------------------------------------------------------
 

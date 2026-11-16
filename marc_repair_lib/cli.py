@@ -2472,6 +2472,11 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
                     rec_text.encode(encoding_used, errors="surrogateescape")
                 )
                 progress.maybe_print_estimate(n_total, bytes_consumed_for_estimate)
+            else:
+                # keep counting (len of text in hand, no encode) so the % and
+                # ETA follow records processed, not the reader's read-ahead
+                bytes_consumed_for_estimate += len(rec_text)
+            progress.bytes_consumed = bytes_consumed_for_estimate
             progress.maybe_print(n_total)
             ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
             log_entries_before_record = len(log_entries)

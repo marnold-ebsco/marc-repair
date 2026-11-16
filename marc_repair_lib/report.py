@@ -1069,6 +1069,10 @@ class ProgressReporter:
         self.start_time = time.perf_counter()
         self.last_print_time = 0.0
         self.bytes_read = 0
+        # Bytes of the records actually processed so far, when the caller
+        # tracks it; the % and ETA prefer it over `bytes_read`, which jumps a
+        # whole chunk at a time and runs ahead of the work.
+        self.bytes_consumed = 0
         self.printed_anything = False
         self.estimate_shown = False
         # Set once `_ESTIMATE_WARMUP_RECORDS` records have gone by -- the
@@ -1114,6 +1118,7 @@ class ProgressReporter:
         of actually-finished records, understating the true average
         record size by two orders of magnitude.
         """
+        self.bytes_consumed = bytes_consumed
         if self.estimate_shown or not self.total_bytes or bytes_consumed <= 0:
             return
         if n_records < self._ESTIMATE_WARMUP_RECORDS:
@@ -1162,10 +1167,11 @@ class ProgressReporter:
             f"elapsed {_format_duration(elapsed)}",
         ]
         if self.total_bytes:
-            pct = 100 * self.bytes_read / self.total_bytes
+            done = min(self.bytes_consumed or self.bytes_read, self.total_bytes)
+            pct = 100 * done / self.total_bytes
             parts.insert(1, f"{pct:4.1f}% of input")
-            if self.bytes_read > 0 and pct < 100:
-                eta = elapsed * (self.total_bytes - self.bytes_read) / self.bytes_read
+            if done > 0 and pct < 100:
+                eta = elapsed * (self.total_bytes - done) / done
                 parts.append(f"ETA {_format_duration(eta)}")
         line = " | ".join(parts)
         end = "\r" if self.is_tty else "\n"
