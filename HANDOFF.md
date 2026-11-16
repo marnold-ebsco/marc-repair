@@ -8,6 +8,50 @@ current state and open items.
 
 ## Current state
 
+### DONE -- PDF copy of every log; `removed_invalid_subfield` log text truncated (2026-11-16)
+
+Each bib/holdings log is also written as `<same name>.pdf` (on by default,
+`--no-pdf-log` skips). `marc_repair_lib/pdf_log.py` parses the finished `.log`
+(contract with `report.write_log` checked by `tests/test_pdf_log.py`) and lays
+it out with reportlab: run summary, clickable table of contents (kind ->
+category, page numbers), headings, PDF bookmarks, "Page X of Y" footers. A
+703,688-record run's 30k-line log -> 589 pages in ~2.4 s. A failure or missing
+reportlab only warns. Uses DejaVu fonts if installed (else Courier/Helvetica,
+non-Latin-1 shows as `?`, counted on page 1). `install.sh` fetches `pdf_log.py`;
+reportlab is in `requirements.txt`/`pyproject.toml`. `--sample-log` has no PDF.
+Also: `strip_invalid_subfield_codes` now quotes removed text via `_log_preview`
+(40 chars) -- it had put a 3,284-char subfield in the log. Full suite: 891
+passed, 4 skipped.
+
+### OPEN -- label "doesn't block loading" checks, and make them easy to strip (2026-11-16)
+
+The URL checks (`doubled_proxy_url`, `bib_856_missing_u`,
+`holdings_856_missing_u`) never say in the log whether the record still loads;
+only `unfixable` mentions loading. The code leaves these records in the main
+output unchanged, but nothing here confirms how FOLIO Data Import treats an 856
+with no `$u` -- confirm before writing it into the descriptions. Proposal: a new
+log section (e.g. "DOES NOT BLOCK LOADING") plus a sentence in each
+description, and a `--no-group-link-checks` switch for just the URL ones.
+`--no-group-detect-only` already exists but covers only `check-*` switches; the
+856 ones are fix-plus-flag (`fix-856-missing-u`), so turning those off also
+stops the `$u` recode. Other NEEDS REVIEW checks that are detect-only and still
+write the record: `area_code_in_041`, `invalid_041_language_code`,
+`invalid_008_language_code`, `invalid_indicator_value`. NOT the same:
+`suspect_marc8_escape`, `suspect_hex_encoded_marc8`, `transcode_marc8_failed`,
+`unfixed_non_numeric_tag` (possible damaged text/tags). Need the user to say
+which categories belong in the new section.
+
+### OPEN -- Sierra records: log record id should come from 907 `$a` (2026-11-16)
+
+When analyzing Sierra records, the record id shown in the log should come from
+the 907 `$a`. The user thinks it currently comes from 001. Where to look:
+`record_identifier` in `marc_repair_lib/qa.py` uses 907 `$a` only when it looks
+like a Sierra bib number (`.b...`/`b...`, `_is_sierra_number`), otherwise 001 --
+so a 907 `$a` in another shape silently falls back to 001. It also ignores
+`--source-system` (`sierra` -> 907 `$a`, see `_SOURCE_SYSTEM_IDENTIFIER`). The
+big a_2026-11-13 log shows ids like `ocn317711891` (an 001-style id), so check
+that file's 907s first. Not yet investigated or changed.
+
 ### DONE -- misaligned 008 realignment + language-code checks for 008 and 041 (2026-11-05, committed and pushed on `main`)
 
 Triggered by Carolina (`CUMARCExport110226.mrc`), where 146 bib 008s had their

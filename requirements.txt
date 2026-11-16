@@ -3,3 +3,7 @@
 # only. Kept here for installs that use `pip install -r requirements.txt`
 # directly instead of `pip install .` (see pyproject.toml).
 pymarc>=5,<6
+
+# PDF copy of each log (marc_repair_lib/pdf_log.py). If it is missing the run
+# still succeeds -- the PDF is skipped with a warning (or pass --no-pdf-log).
+reportlab>=4

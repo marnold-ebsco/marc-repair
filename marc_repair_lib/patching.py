@@ -2732,7 +2732,7 @@ def strip_invalid_subfield_codes(parsed: ParsedRecord) -> list[str]:
         good = [(c, d) for c, d in f.subfields if c in VALID_SUBFIELD_CODE_CHARS]
         bad = [(c, d) for c, d in f.subfields if c not in VALID_SUBFIELD_CODE_CHARS]
         if bad:
-            removed = "".join(f"${c}{d}" for c, d in bad)
+            removed = _subfield_preview(bad)
             details.append(
                 f"removed invalid subfield(s) {removed!r} from ={f.tag}"
                 "\t(invalid subfield code; content discarded)"

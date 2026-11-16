@@ -129,6 +129,7 @@ from .patching import (
     strip_whitespace_only_010_a,
     write_non_standard_supplement,
 )
+from .pdf_log import write_pdf_log_safe
 from .report import (
     ProgressReporter,
     _ALWAYS_FULL_CATEGORIES,
@@ -1570,6 +1571,17 @@ def build_parser() -> argparse.ArgumentParser:
         "full scope of what was tested",
     )
     parser.add_argument(
+        "--pdf-log",
+        dest="pdf_log",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="also write each log as a PDF next to it (same name, .pdf): a "
+        "clickable table of contents, a heading per section and page "
+        "numbers. On by default; --no-pdf-log skips it. Needs reportlab -- "
+        "if that is missing the PDF is skipped with a warning and the run "
+        "still succeeds",
+    )
+    parser.add_argument(
         "--sample-problems",
         nargs="?",
         const="",
@@ -2143,6 +2155,8 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
                 f"{result['log_lines'] - result['not_fixed']} fixed)",
                 file=sys.stderr,
             )
+            if args.pdf_log:
+                write_pdf_log_safe(holdings_log_path)
             if result["additional_004_written"]:
                 print(
                     f"{result['additional_004_written']} additional holdings record(s) "
@@ -2216,6 +2230,8 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
             f"fixed, {result['log_lines'] - result['not_fixed']} fixed)",
             file=sys.stderr,
         )
+        if args.pdf_log:
+            write_pdf_log_safe(log_path)
         if result["additional_004_written"]:
             print(
                 f"{result['additional_004_written']} additional holdings record(s) "
@@ -3062,6 +3078,8 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
         full_categories=resolved_full_categories,
         include_zero=args.log_zero,
     )
+    if args.pdf_log:
+        write_pdf_log_safe(log_path)
     if non_standard_tally is not None:
         supplement_path = os.path.splitext(log_path)[0] + "_non_standard_fields.txt"
         if write_non_standard_supplement(supplement_path, non_standard_tally):

@@ -322,6 +322,21 @@ header + `0 record(s)` block for every category instead (`--sample-log`
 always does this). Checks that didn't run (off-by-default flags) appear in
 neither place.
 
+**PDF copy of each log (`--no-pdf-log` to skip):** every bib and holdings
+log is also written as a PDF next to it, with the same name apart from
+`.pdf`. It has a run-summary page, a clickable table of contents (section
+-> category, with page numbers), a heading per section and category, PDF
+bookmarks, and "Page X of Y" footers (each footer also links back to the
+contents). It is built from the finished `.log` (`marc_repair_lib/pdf_log.py`),
+so the two always agree; the `.log` stays the source of truth. A 700,000-record
+run's ~30,000-line log takes about 2-3 seconds and ~600 pages. Needs
+`reportlab` (in `requirements.txt`); if it's missing, or the PDF fails for
+any reason, the run still succeeds and prints a warning. Text the PDF font
+can't draw (anything outside the DejaVu/Latin-1 range) shows as `?`, with a
+count on the first page. Install DejaVu fonts on the host for the widest
+coverage (`fonts-dejavu-core` on Ubuntu, `dejavu-sans-mono-fonts` on Amazon
+Linux/RHEL); otherwise it falls back to Courier/Helvetica.
+
 Two detect-only checks don't even run by default, since they're pure
 overhead with no fix attached unless you're actually looking for their
 specific finding: `--check-dangling-880-links` and
