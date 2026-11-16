@@ -1312,15 +1312,23 @@ def recode_856_missing_u(parsed: ParsedRecord) -> list[str]:
                 what = "$a 'u' + $h recombined into $u"
                 break
         if what is None:
-            urls = [
-                n for n, (code, data) in enumerate(subs)
-                if _BARE_URL_RE.fullmatch(data)
+            # a URL whose first letter was read as the subfield code
+            # ("$https://x" = code "h" + "ttps://x"; "$www.x" = "w" + "ww.x")
+            # is rebuilt as code + data
+            texts = [
+                data if _BARE_URL_RE.fullmatch(data)
+                else (code + data if code in "hw" and _BARE_URL_RE.fullmatch(code + data)
+                      else None)
+                for code, data in subs
             ]
+            urls = [n for n, t in enumerate(texts) if t is not None]
             if len(urls) != 1:
                 continue
             code, data = subs[urls[0]]
-            url = data.strip()
+            url = texts[urls[0]].strip()
             what = f"${code} recoded to $u"
+            if url != data.strip():
+                what += ", lost first letter restored"
             if url.startswith("www."):
                 url = "https://" + url
                 what += ", https:// scheme added"

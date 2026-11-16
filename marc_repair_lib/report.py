@@ -642,6 +642,13 @@ _ALWAYS_FULL_CATEGORIES = {
 #: line instead of listing each one, since an exact-duplicate removal
 #: needs no individual review and would otherwise bury the POSSIBLE
 #: DATA LOSS entries that do.
+#: Categories where entries that were fixed are only counted (value = what
+#: the count line says was done) and just the ones NOT fixed are listed.
+_SUMMARIZE_FIXED_ENTRIES = {
+    "bib_856_missing_u": "recoded to $u",
+    "holdings_856_missing_u": "recoded to $u",
+}
+
 _SUMMARIZE_NO_DATA_LOSS_ENTRIES = {
     "removed_non_repeatable_duplicate",
     "deduped_010_lccn",
@@ -997,6 +1004,14 @@ def write_log(
                         e.record_id or f"record {e.record_idx}" for e in group
                     )
                     fh.write(", ".join(ids) + "\n")
+                elif category in _SUMMARIZE_FIXED_ENTRIES:
+                    fixed_count = sum(1 for e in group if e.fixed)
+                    if fixed_count:
+                        fh.write(f"\t{fixed_count} record(s) {_SUMMARIZE_FIXED_ENTRIES[category]}"
+                                 " -- NO DATA LOSS (not listed)\n")
+                    for e in group:
+                        if not e.fixed:
+                            fh.write(e.render() + "\n")
                 elif category in _SUMMARIZE_NO_DATA_LOSS_ENTRIES:
                     no_loss_count = sum(1 for e in group if "NO DATA LOSS" in e.detail)
                     if no_loss_count:

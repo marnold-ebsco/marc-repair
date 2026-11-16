@@ -5034,6 +5034,24 @@ class TestDetectOnlyChecks:
         _, subs = self._recode([("a", "u"), ("h", "ttps://x.org/a"), ("z", "n")])
         assert subs == [("u", "https://x.org/a"), ("z", "n")]
 
+    def test_recodes_url_whose_first_letter_became_the_subfield_code(self):
+        details, subs = self._recode([("h", "ttps://quod.lib.umich.edu/u/x"), ("3", "Online")])
+        assert subs == [("u", "https://quod.lib.umich.edu/u/x"), ("3", "Online")]
+        assert "lost first letter restored" in details[0]
+        assert self._recode([("w", "ww.x.org/a")])[1] == [("u", "https://www.x.org/a")]
+
+    def test_fixed_856_entries_are_counted_not_listed(self, tmp_path):
+        path = str(tmp_path / "log.log")
+        entries = [
+            m.LogEntry("bib_856_missing_u", True, "t", 1, "b1", "=856 fixed -- NO DATA LOSS"),
+            m.LogEntry("bib_856_missing_u", True, "t", 2, "b2", "=856 fixed -- NO DATA LOSS"),
+            m.LogEntry("bib_856_missing_u", False, "t", 3, "b3", "=856 stuck -- DATA LOSS"),
+        ]
+        m.write_log(path, entries, active_categories={"bib_856_missing_u"})
+        content = open(path, encoding="utf-8").read()
+        assert "2 record(s) recoded to $u -- NO DATA LOSS (not listed)" in content
+        assert "b3" in content and "b1" not in content and "b2" not in content
+
     def test_recodes_bare_url_in_a_or_z(self):
         assert self._recode([("a", "http://x.org/a"), ("z", "note")])[1][0] == (
             "u", "http://x.org/a")
