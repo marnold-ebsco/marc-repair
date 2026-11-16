@@ -1128,9 +1128,14 @@ class TestMissingSubfieldAPatchedInPlace:
         # listed in full by default
         content = _resolve_log(log).read_text(encoding="utf-8")
         assert "FIXED/REQUIRES ATTENTION: added_default_245" in content
-        assert "FIXED/REQUIRES ATTENTION: added_default_008" in content
+        assert "INFORMATIONAL: added_default_008" in content
         assert _detail_line_marker("added_default_245").search(content)
-        assert _detail_line_marker("added_default_008").search(content)
+        # added_default_008 is summarised in the main log; the record list
+        # lives in its own file
+        assert "records were missing the required 008" in content
+        detail = list(tmp_path.glob("*_added_default_008.txt"))
+        assert len(detail) == 1
+        assert "added default 008 (was missing)" in detail[0].read_text(encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------

@@ -66,7 +66,6 @@ _FIXED_REQUIRES_ATTENTION = {
     "holdings_852_duplicate_nr_subfield",
     "split_holdings_multiple_852",
     "added_default_245",
-    "added_default_008",
     "padded_indicators",
     "incomplete_852",
     "invalid_bibliographic_level",
@@ -89,6 +88,7 @@ _FIXED_REQUIRES_ATTENTION = {
 #: with spaces) -- or a detect-only finding not urgent enough for NOT
 #: FIXED.
 _INFORMATIONAL = {
+    "added_default_008",
     "added_default_holdings_008",
     "holdings_multiple_004",
     "removed_null_identifier",
@@ -882,6 +882,7 @@ def write_log(
     full_categories: set[str] | None = None,
     count_notes: dict[str, str] | None = None,
     include_zero: bool = False,
+    separate_file_notes: dict[str, str] | None = None,
 ) -> None:
     """Write `entries` grouped into sections -- NOT FIXED, then FIXED/
     REQUIRES ATTENTION, then DUPLICATE RECORDS, then INFORMATIONAL at
@@ -1000,7 +1001,9 @@ def write_log(
             if count_note:
                 count_line += f" - {count_note}"
             fh.write(f"=== {count_line} ===\n")
-            if category in full_categories and label != "INFORMATIONAL":
+            if category in (separate_file_notes or {}):
+                fh.write(separate_file_notes[category] + "\n")
+            elif category in full_categories and label != "INFORMATIONAL":
                 if category in _ID_LIST_ONLY_CATEGORIES:
                     ids = dict.fromkeys(
                         e.record_id or f"record {e.record_idx}" for e in group
@@ -1042,6 +1045,21 @@ def write_log(
             for label, category in skipped:
                 description = _CHECK_DESCRIPTIONS.get(category, "(no description available)")
                 fh.write(f"{label}: {category} -- {_first_sentence(description)}\n")
+
+
+def write_category_detail_file(path: str, entries: list[LogEntry], category: str) -> bool:
+    """Write every `category` entry to its own file (the main log carries
+    only a count and a note). Returns False, writing nothing, if there
+    were none."""
+    group = [e for e in entries if e.category == category]
+    if not group:
+        return False
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(f"=== {category}: all occurrences ===\n")
+        fh.write(f"=== {len(group)} record(s) ===\n")
+        for e in group:
+            fh.write(e.render() + "\n")
+    return True
 
 
 def _data_loss_rank(entry) -> int:

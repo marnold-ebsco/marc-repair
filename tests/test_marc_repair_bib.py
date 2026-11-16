@@ -5551,8 +5551,9 @@ _FIXED_REQUIRES_ATTENTION_CASES = [
             fields=[m.Field_("001", None, None, content="case4"), m.Field_("245", "00", [("a", "Title.")])],
         )),
         required_log_substrings=[
-            "=== FIXED/REQUIRES ATTENTION: added_default_008 ===",
-            _detail_line_marker("added_default_008"),
+            "=== INFORMATIONAL: added_default_008 ===",
+            "records were missing the required 008. This was added:",
+            "available by request",
         ],
         verify=lambda results: (
             next(f for f in results[0].fields if f.tag == "008").content

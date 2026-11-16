@@ -75,6 +75,7 @@ from .patching import (
     NON_STANDARD_FIELD_CATEGORY,
     NonStandardFieldTally,
     _rewrite_stripping_invalid_tags,
+    DEFAULT_008_CONTENT,
     add_default_008,
     add_default_245,
     add_default_holdings_008,
@@ -139,6 +140,7 @@ from .report import (
     _timestamped_log_path,
     _write_run_timing_header,
     write_log,
+    write_category_detail_file,
 )
 
 
@@ -3083,11 +3085,24 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
         review_count=n_diverted_review,
         extra_lines=describe_switches(parser, args, "bib"),
     )
+    n_default_008 = sum(1 for e in log_entries if e.category == "added_default_008")
+    separate_file_notes = {}
+    if n_default_008:
+        separate_file_notes["added_default_008"] = (
+            f"{n_default_008} records were missing the required 008. "
+            f"This was added: {DEFAULT_008_CONTENT!r}. "
+            "A complete list of impacted records is available by request."
+        )
     write_log(
         log_path, log_entries, active_categories=active_categories,
         full_categories=resolved_full_categories,
         include_zero=args.log_zero,
+        separate_file_notes=separate_file_notes,
     )
+    if n_default_008:
+        detail_path = os.path.splitext(log_path)[0] + "_added_default_008.txt"
+        if write_category_detail_file(detail_path, log_entries, "added_default_008"):
+            print(f"added_default_008 record list written to {detail_path}", file=sys.stderr)
     if args.pdf_log:
         write_pdf_log_safe(log_path)
     if non_standard_tally is not None:

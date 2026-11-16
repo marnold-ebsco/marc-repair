@@ -392,7 +392,7 @@ BIB_ROWS = [
     CategoryRow(
         "Placeholder 008 added", "Added default field",
         "Yes, always", "`added_default_008`",
-        "FIXED/REQUIRES ATTENTION", "**Yes**",
+        "INFORMATIONAL (summary line; record list in `<log>_added_default_008.txt`)", "**Yes**",
         "-- (no switch -- every MARC21 record must have an 008); "
         "`--ensure-field` (takes priority per-record)",
     ),
