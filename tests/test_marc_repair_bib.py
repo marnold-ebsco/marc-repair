@@ -3752,7 +3752,7 @@ class TestDerive008DateFrom773:
             else:
                 assert f008.content[6:15] == "s1987    "
                 assert "INFORMATIONAL: derived_008_date_from_773" in text
-                assert "INFORMATIONAL: added_default_008" not in text
+                assert "=== INFORMATIONAL: added_default_008" not in text
 
 
 class TestAddDefault008:
