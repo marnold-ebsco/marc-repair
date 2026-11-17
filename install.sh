@@ -44,6 +44,7 @@ FILES=(
   "marc_repair_lib/patching.py"
   "marc_repair_lib/report.py"
   "marc_repair_lib/pdf_log.py"
+  "marc_repair_lib/self_update.py"
   "marc_repair_lib/switches.py"
   "marc_repair_lib/cli.py"
   "marc_repair_profile.py"

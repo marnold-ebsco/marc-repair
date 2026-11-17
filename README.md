@@ -322,6 +322,16 @@ header + `0 record(s)` block for every category instead (`--sample-log`
 always does this). Checks that didn't run (off-by-default flags) appear in
 neither place.
 
+**Update notice and `--self-update` (`--no-update-check` to skip the notice):**
+on an `install.sh` installation, each run starts by comparing the installed
+commit with the latest on GitHub and prints a one-line notice when a newer
+one exists. With `--self-update` it instead runs the installer against the
+same install directory and then restarts the same command line with the new
+code (Python can't swap its own modules mid-run, so it restarts rather than
+carrying on). A git checkout is never touched (use `git pull`); being offline,
+or an install with no version record, is silent; a failed update warns and
+the run continues with the installed version. Code: `marc_repair_lib/self_update.py`.
+
 **PDF copy of each log (`--no-pdf-log` to skip):** every bib and holdings
 log is also written as a PDF next to it, with the same name apart from
 `.pdf`. It has a run-summary page, a clickable table of contents (section

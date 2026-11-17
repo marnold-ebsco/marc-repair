@@ -132,6 +132,7 @@ from .patching import (
     strip_whitespace_only_010_a,
     write_non_standard_supplement,
 )
+from . import self_update
 from .pdf_log import write_pdf_log_safe, write_pdf_supplement_safe
 from .report import (
     ProgressReporter,
@@ -1586,6 +1587,25 @@ def build_parser() -> argparse.ArgumentParser:
         "still succeeds",
     )
     parser.add_argument(
+        "--update-check",
+        dest="update_check",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="at startup, print a one-line notice when a newer commit of an "
+        "install.sh installation exists on GitHub. On by default; "
+        "--no-update-check skips it. Silent for a git checkout, offline, or "
+        "an install with no version record",
+    )
+    parser.add_argument(
+        "--self-update",
+        dest="self_update",
+        action="store_true",
+        help="if a newer commit exists, run the installer against this "
+        "installation and then restart the same command line with the new "
+        "code. A git checkout is never touched (use git pull). If the update "
+        "fails the run continues with the installed version",
+    )
+    parser.add_argument(
         "--sample-problems",
         nargs="?",
         const="",
@@ -2008,6 +2028,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args, _ = parser.parse_known_args(argv)
+    self_update.handle(args, argv)
     if args.list_profiles:
         return list_profiles_command(parser, args)
     if not (args.count or args.sample_log is not None):
