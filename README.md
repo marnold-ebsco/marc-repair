@@ -767,6 +767,7 @@ marc_repair --list-profiles
 | `tests/test_marc_repair_holdings.py` | pytest suite — holdings-only repair categories |
 | `tests/fixtures/` | Real (anonymized) MARC extracts exercising each defect class |
 | `tools/generate_repair_categories_doc.py` | Source of truth for `docs/REPAIR_CATEGORIES.md` — edit the row data here and re-run it, not the markdown file directly |
+| `tools/find_probable_ebooks.py` | Standalone helper (needs `pymarc`): `python tools/find_probable_ebooks.py <in.mrc> <out.tsv>` lists records that are probably ebooks -- language material with an 856 `$u` plus an online/electronic indicator (008/23, 006, 007) -- as a tab-separated file with the evidence. Read-only; not part of the repair pipeline |
 
 ## Testing
 
