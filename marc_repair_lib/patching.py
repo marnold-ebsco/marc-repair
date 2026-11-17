@@ -1124,6 +1124,54 @@ NON_STANDARD_FIELD_DETAIL_LIMIT = 5
 _NON_STANDARD_PREVIEW_CHARS = 20
 
 
+def load_field_hints(path: str) -> dict[str, str]:
+    """Load the optional `[hints]` section of standard_marc_fields.txt:
+    `TAG | text` lines giving a per-tag label for the non-standard fields
+    report. For an obsolete tag the text is the suggested replacement
+    ("020 $c"); for any other tag it is the whole label."""
+    hints: dict[str, str] = {}
+    current = None
+    with open(path, encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if line.startswith("["):
+                current = line[1:-1]
+            elif current == "hints" and "|" in line:
+                tag, text = line.split("|", 1)
+                hints[tag.strip()] = text.strip()
+    return hints
+
+
+_LANG_CODE_RE = re.compile(r"^[a-z]{3}$")
+
+
+_DEWEY_RE = re.compile(r"^\d{3}(\.\d+)?\s*$")
+
+
+def content_hint(f: Field_) -> str:
+    """A label for one non-standard field judged from its data (empty
+    when nothing is suggested). Report only."""
+    if f.is_control() or not f.subfields:
+        return ""
+    if f.tag == "014" and all(_LANG_CODE_RE.match(d.strip()) for _, d in f.subfields):
+        return "Should this be 041 (language codes)?"
+    if f.tag == "592" and _DEWEY_RE.match(f.subfields[0][1]):
+        return "Looks like a call number; should this be 092?"
+    if f.tag == "509" and re.match(r"^\d{10,}", f.subfields[0][1].strip()):
+        return "Looks like an item barcode; should this be item data?"
+    return ""
+
+
+def tag_hint(tag: str, obsolete: bool, hints: dict[str, str]) -> str:
+    """The per-tag label line text for the report, or ''."""
+    text = hints.get(tag)
+    if obsolete:
+        return f"Obsolete tag, consider moving to {text}." if text else ""
+    return text or ""
+
+
 def load_standard_marc_fields(
     path: str, source_system: str | None = None
 ) -> tuple[set[str], set[str]]:
@@ -1133,14 +1181,16 @@ def load_standard_marc_fields(
     The `[wms]` tags (standard in OCLC WMS only) count as standard only
     when `source_system` is "wms". A tag in no standard section is
     non-standard."""
-    sections: dict[str, set[str]] = {"standard": set(), "obsolete": set(), "wms": set()}
+    sections: dict[str, set[str]] = {
+        "standard": set(), "obsolete": set(), "wms": set(), "hints": set(),
+    }
     current = None
     with open(path, encoding="utf-8") as fh:
         for line in fh:
             line = line.strip()
             if not line or line.startswith("#"):
                 continue
-            if line in ("[standard]", "[obsolete]", "[wms]"):
+            if line in ("[standard]", "[obsolete]", "[wms]", "[hints]"):
                 current = line[1:-1]
                 continue
             if current is None:
@@ -1174,7 +1224,9 @@ class NonStandardFieldTally:
     counts for each tag's heading and its "and N more" line."""
 
     def __init__(self, standard: set[str], obsolete: set[str],
-                 limit: int = NON_STANDARD_FIELD_DETAIL_LIMIT):
+                 limit: int = NON_STANDARD_FIELD_DETAIL_LIMIT,
+                 hints: dict[str, str] | None = None):
+        self.hints = hints or {}
         self.standard = standard
         self.obsolete = obsolete - standard
         self.limit = limit
@@ -1219,7 +1271,9 @@ class NonStandardFieldTally:
             rec = f"record {record_idx}" + (f" ({rec_id})" if rec_id else "")
             self._spool.seek(0, os.SEEK_END)
             self._offsets.setdefault(tag, array("Q")).append(self._spool.tell())
-            self._spool.write(f"{rec}\t{detail}".replace("\n", " ") + "\n")
+            label = content_hint(f)
+            line = f"{rec}\t{detail}" + (f"  <== {label}" if label else "")
+            self._spool.write(line.replace("\n", " ") + "\n")
             if self.listed.get(tag, 0) < self.limit:
                 self.listed[tag] = self.listed.get(tag, 0) + 1
                 details.append(detail)
@@ -1257,6 +1311,9 @@ def write_non_standard_supplement(path: str, tally: NonStandardFieldTally) -> bo
                 f"\n--- {tag}{obsolete}: {tally.instances[tag]:,} instance(s) "
                 f"in {tally.records[tag]:,} record(s) ---\n"
             )
+            label = tag_hint(tag, tag in tally.obsolete, tally.hints)
+            if label:
+                fh.write(f"\t>> {label}\n")
             for line in tally.spooled_lines(tag):
                 fh.write(f"\t{line}\n")
     return True

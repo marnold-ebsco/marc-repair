@@ -5333,6 +5333,29 @@ class TestNonStandardMarcFields:
         assert sup.count("\trecord ") == 8
         assert "more 241" not in sup
 
+    def test_content_hint_and_tag_hint_labels(self):
+        lang = m.Field_("014", "  ", [("a", "ger"), ("h", "fre")])
+        assert "041" in m.content_hint(lang)
+        assert m.content_hint(m.Field_("014", "  ", [("a", "12345")])) == ""
+        assert "092" in m.content_hint(m.Field_("592", "  ", [("a", "813.6")]))
+        hints = {"350": "020 $c", "691": "Local subject."}
+        assert m.tag_hint("350", True, hints) == "Obsolete tag, consider moving to 020 $c."
+        assert m.tag_hint("691", False, hints) == "Local subject."
+        assert m.tag_hint("305", True, hints) == ""
+
+    def test_378_is_standard(self):
+        std, _ = m.load_standard_marc_fields(m.DEFAULT_STANDARD_MARC_FIELDS_FILE)
+        assert {"371", "378"} <= std
+
+    def test_cli_supplement_has_labels(self, tmp_path):
+        recs = [self._rec([m.Field_("350", "  ", [("a", "14.00")]),
+                           m.Field_("014", "  ", [("a", "ger"), ("h", "fre")])])]
+        self._run(tmp_path, recs)
+        sup = open(glob.glob(str(tmp_path / "run_*_non_standard_fields.txt"))[0],
+                   encoding="utf-8").read()
+        assert "	>> Obsolete tag, consider moving to 020 $c." in sup
+        assert "=014 $a ger $h fre  <== Should this be 041" in sup
+
     def test_cli_no_supplemental_file_when_nothing_non_standard(self, tmp_path):
         self._run(tmp_path, [self._rec([])])
         assert not glob.glob(str(tmp_path / "*_non_standard_fields.txt"))
@@ -6429,3 +6452,16 @@ class TestChooseKept003:
 
     def test_two_real_codes_keep_the_first(self):
         assert self._strip("DLC", "OCoLC")[0] == ["DLC"]
+
+
+def test_pdf_supplement_parses_thousands_separator_counts(tmp_path):
+    from marc_repair_lib.pdf_log import _parse_supplement
+    p = tmp_path / "x_non_standard_fields.txt"
+    p.write_text(
+        "=== x ===\n\nTags found:\n\t039: 4,337 instance(s)\n\n"
+        "--- 039: 4,337 instance(s) in 4,337 record(s) ---\n\trecord 1\t=039 $a 2\n"
+        "\n--- 059: 2 instance(s) in 2 record(s) ---\n\trecord 2\t=059 $a x\n",
+        encoding="utf-8",
+    )
+    _, secs = _parse_supplement(str(p))
+    assert [s["tag"] for s in secs] == ["039", "059"]

@@ -137,7 +137,14 @@
 365 | TRADE PRICE
 366 | TRADE AVAILABILITY INFORMATION
 370 | ASSOCIATED PLACE
+371 | ASSOCIATED ADDRESS
+372 | FIELD OF ACTIVITY
+373 | ASSOCIATED GROUP
+374 | OCCUPATION
+375 | GENDER
+376 | FAMILY INFORMATION
 377 | ASSOCIATED LANGUAGE
+378 | FULLER FORM OF PERSONAL NAME
 380 | FORM OF WORK
 381 | OTHER DISTINGUISHING CHARACTERISTICS OF WORK OR EXPRESSION
 382 | MEDIUM OF PERFORMANCE
@@ -284,6 +291,7 @@
 886 | FOREIGN MARC INFORMATION FIELD
 887 | NON-MARC INFORMATION FIELD
 
+
 # Standard only when the source system is wms (OCLC); hand-maintained.
 [wms]
 014 | LINKAGE NUMBER
@@ -353,3 +361,29 @@
 871 | VARIANT CORPORATE NAME
 872 | VARIANT CONFERENCE OR MEETING NAME
 873 | VARIANT UNIFORM TITLE HEADING
+
+# Labels for the non-standard fields report. For an [obsolete] tag the text is
+# the replacement ("Obsolete tag, consider moving to <text>."); for others it is
+# the whole label. Hand-maintained.
+[hints]
+039 | Local coded data.
+059 | Local flag (e.g. NO EXPORT).
+212 | 246
+241 | 242 or 246
+305 | 300
+315 | 310
+350 | 020 $c
+503 | 500
+512 | 500 or 362
+539 | Reproduction fixed data (OCLC); standard only for --source-system wms.
+570 | 500
+592 | Local field; may hold a note or a call number (consider 092).
+621 | Should this be 521 (audience / grade level)?
+652 | 650 or 651
+659 | Local subject heading; consider 650.
+691 | Local subject heading; consider 651.
+692 | Local subject heading; consider 650 or 600.
+733 | Vendor/ACLS e-book data; local.
+840 | 830
+890 | Holdings summary in a bib record; should this be 866?
+891 | Holdings captions/enumeration in a bib record ($0 holds the real tag, 853/863).

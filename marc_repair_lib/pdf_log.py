@@ -84,6 +84,7 @@ _LOSS_COLORS = {
 }
 _GREY = (0.40, 0.40, 0.40)
 _LINK = (0.05, 0.25, 0.60)
+_HINT = (0.80, 0.33, 0.00)
 
 
 def kind_title(kind: str) -> str:
@@ -344,7 +345,7 @@ class _Doc:
 
         return simpleSplit(self.f.clean(s), font, size, width) or [""]
 
-    def body_line(self, raw: str) -> None:
+    def body_line(self, raw: str, rgb=(0, 0, 0)) -> None:
         """One log line in monospace, wrapped at the page width."""
         s = raw[1:] if raw.startswith("\t") else raw
         s = s.replace("\t", "  ")
@@ -358,7 +359,7 @@ class _Doc:
             ) or [""]
         for part in parts:
             self.ensure(_BODY_LEAD)
-            self.set_font(self.f.mono, _BODY_SIZE)
+            self.set_font(self.f.mono, _BODY_SIZE, rgb)
             self.text(_LM, self.y - _BODY_SIZE, part)
             self.y -= _BODY_LEAD
 
@@ -590,7 +591,7 @@ def write_pdf_log_safe(log_path: str) -> str | None:
 # so it gets its own parser, but it is drawn with the same _Doc/_Fonts as the
 # main log: same fonts, footers, outline and clickable contents.
 
-_TAG_BLOCK_RE = re.compile(r"^--- (.+?): (\d+ instance.*?) ---$")
+_TAG_BLOCK_RE = re.compile(r"^--- (.+?): ([\d,]+ instance.*?) ---$")
 
 
 def _parse_supplement(path: str) -> tuple[list[str], list[dict]]:
@@ -661,7 +662,8 @@ def _render_supplement(c, fonts: _Fonts, head: list[str], secs: list[dict],
         doc.y -= 14
         doc.cont = s["tag"]
         for line in s["lines"]:
-            doc.body_line(line)
+            hinted = line.startswith("	>>") or "<==" in line
+            doc.body_line(line, _HINT if hinted else (0, 0, 0))
     doc.finish()
     return doc
 

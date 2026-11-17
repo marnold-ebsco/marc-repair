@@ -32,6 +32,14 @@ LOCAL_STANDARD = {
     "590": "LOCAL NOTE (local field, accepted)",
     "690": "LOCAL SUBJECT ADDED ENTRY (local field, accepted)",
     "799": "LOCAL ADDED ENTRY (local field, accepted)",
+    # real MARC 21 fields missing from LC's ECBD list page
+    "371": "ASSOCIATED ADDRESS",
+    "372": "FIELD OF ACTIVITY",
+    "373": "ASSOCIATED GROUP",
+    "374": "OCCUPATION",
+    "375": "GENDER",
+    "376": "FAMILY INFORMATION",
+    "378": "FULLER FORM OF PERSONAL NAME",
 }
 # standard only for --source-system wms (OCLC); written as a [wms] section
 WMS_STANDARD = {

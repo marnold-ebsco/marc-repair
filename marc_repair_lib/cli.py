@@ -130,6 +130,7 @@ from .patching import (
     strip_null_identifiers,
     strip_880_missing_6,
     strip_whitespace_only_010_a,
+    load_field_hints,
     write_non_standard_supplement,
 )
 from . import self_update
@@ -2376,7 +2377,8 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
     )
     non_standard_tally = (
         NonStandardFieldTally(
-            *load_standard_marc_fields(args.standard_marc_fields_file, args.source_system)
+            *load_standard_marc_fields(args.standard_marc_fields_file, args.source_system),
+            hints=load_field_hints(args.standard_marc_fields_file),
         )
         if args.check_non_standard_fields
         else None

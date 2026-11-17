@@ -6,13 +6,13 @@ LIST = Path(__file__).resolve().parent.parent / "standard_marc_fields.txt"
 
 
 def load():
-    sections = {"standard": {}, "obsolete": {}, "wms": {}}
+    sections = {"standard": {}, "obsolete": {}, "wms": {}, "hints": {}}
     cur = None
     for line in LIST.read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if not line or line.startswith("#"):
             continue
-        if line in ("[standard]", "[obsolete]", "[wms]"):
+        if line in ("[standard]", "[obsolete]", "[wms]", "[hints]"):
             cur = line[1:-1]
             continue
         tag, _, title = line.partition("|")
