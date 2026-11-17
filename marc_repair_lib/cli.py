@@ -132,7 +132,7 @@ from .patching import (
     strip_whitespace_only_010_a,
     write_non_standard_supplement,
 )
-from .pdf_log import write_pdf_log_safe
+from .pdf_log import write_pdf_log_safe, write_pdf_supplement_safe
 from .report import (
     ProgressReporter,
     _ALWAYS_FULL_CATEGORIES,
@@ -3118,6 +3118,8 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
                 f"all non-standard field occurrences written to {supplement_path}",
                 file=sys.stderr,
             )
+            if args.pdf_log:
+                write_pdf_supplement_safe(supplement_path)
         non_standard_tally.close()
     n_log_lines = len(log_entries)
     # Based on which section an entry actually lands in, not the raw

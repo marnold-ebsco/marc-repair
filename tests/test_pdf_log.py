@@ -148,3 +148,20 @@ def test_removed_invalid_subfield_log_line_is_truncated():
     assert len(line) < 200
     assert "..." in line and huge not in line
     assert parsed.fields[0].subfields == [("a", "kept")]
+
+
+def test_supplement_pdf_has_contents_and_pages(tmp_path):
+    txt = tmp_path / "x_non_standard_fields.txt"
+    txt.write_text(
+        "=== non_standard_marc_fields: all occurrences ===\n"
+        "=== 3 instance(s) in 2 record(s), 2 tag(s) ===\n\n"
+        "Tags found:\n\t002: 2 instance(s)\n\t004: 1 instance(s)\n\n"
+        "--- 002: 2 instance(s) in 1 record(s) ---\n"
+        "\trecord 1 (.b1)\t=002 a\n\trecord 1 (.b1)\t=002 b\n\n"
+        "--- 004: 1 instance(s) in 1 record(s) ---\n"
+        "\trecord 2 (.b2)\t=004 c\n",
+        encoding="utf-8",
+    )
+    pdf, n = pdf_log.write_pdf_supplement(str(txt))
+    assert pdf.endswith("x_non_standard_fields.pdf") and n >= 2
+    assert open(pdf, "rb").read().count(b"/Subtype /Link") >= 2 + n

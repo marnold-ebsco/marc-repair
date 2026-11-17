@@ -582,3 +582,123 @@ def write_pdf_log_safe(log_path: str) -> str | None:
         return None
     print(f"PDF log written to {pdf_path} ({pages} page(s))", file=sys.stderr)
     return pdf_path
+
+
+# -- non-standard fields supplement ---------------------------------------
+# The *_non_standard_fields.txt report has its own layout (a summary, a tag
+# tally, then one `--- TAG: n instance(s) in m record(s) ---` block per tag),
+# so it gets its own parser, but it is drawn with the same _Doc/_Fonts as the
+# main log: same fonts, footers, outline and clickable contents.
+
+_TAG_BLOCK_RE = re.compile(r"^--- (.+?): (\d+ instance.*?) ---$")
+
+
+def _parse_supplement(path: str) -> tuple[list[str], list[dict]]:
+    head: list[str] = []
+    secs: list[dict] = []
+    cur: dict | None = None
+    in_tally = False
+    with open(path, encoding="utf-8", errors="replace") as fh:
+        for raw in fh:
+            line = raw.rstrip("\n")
+            m = _TAG_BLOCK_RE.match(line)
+            if m:
+                cur = {"tag": m.group(1), "count": m.group(2), "lines": []}
+                secs.append(cur)
+            elif cur is not None:
+                cur["lines"].append(line)
+            elif line.startswith("Tags found"):
+                in_tally = True
+            elif not in_tally and line.strip():
+                head.append(line.strip("= ").strip())
+    for s in secs:
+        while s["lines"] and not s["lines"][-1].strip():
+            s["lines"].pop()
+    return head, secs
+
+
+def _render_supplement(c, fonts: _Fonts, head: list[str], secs: list[dict],
+                       label: str, total: int, marks_in: dict) -> _Doc:
+    doc = _Doc(c, fonts, label, total, marks_in)
+    f = fonts
+    right = _PAGE_W - _RM
+    doc.mark("top", "Summary", 0)
+    doc.set_font(f.sans_b, 18)
+    doc.text(_LM, doc.y - 18, "Non-standard MARC fields")
+    doc.y -= 26
+    doc.set_font(f.sans, 9, _GREY)
+    doc.text(_LM, doc.y - 9, label)
+    doc.y -= 22
+    for line in head:
+        doc.body_line(line)
+    doc.y -= 12
+    doc.ensure(60)
+    doc.mark("toc", "Contents", 0)
+    doc.set_font(f.sans_b, 12)
+    doc.text(_LM, doc.y - 12, "Contents")
+    doc.y -= 22
+    for i, s in enumerate(secs):
+        doc.ensure(13)
+        doc.set_font(f.sans, 9, _LINK)
+        doc.text(_LM + 14, doc.y - 9, s["tag"])
+        doc.set_font(f.sans, 8, _GREY)
+        doc.rtext(right - 40, doc.y - 9, s["count"].split(" in ")[0])
+        doc.set_font(f.sans, 9, _LINK)
+        doc.rtext(right, doc.y - 9, str(doc.page_of(f"t{i}")))
+        doc.link(f"t{i}", _LM + 14, doc.y - 11, right, doc.y + 2)
+        doc.y -= 13
+    doc.new_page()
+    for i, s in enumerate(secs):
+        doc.cont = None
+        doc.ensure(40 + 3 * _BODY_LEAD)
+        doc.y -= 6
+        doc.mark(f"t{i}", s["tag"], 0)
+        doc.set_font(f.sans_b, 11)
+        doc.text(_LM, doc.y - 11, s["tag"])
+        doc.y -= 15
+        doc.set_font(f.sans, 8.5, _GREY)
+        doc.text(_LM, doc.y - 8.5, s["count"])
+        doc.y -= 14
+        doc.cont = s["tag"]
+        for line in s["lines"]:
+            doc.body_line(line)
+    doc.finish()
+    return doc
+
+
+def write_pdf_supplement(txt_path: str) -> tuple[str, int]:
+    """Render a *_non_standard_fields.txt report as a PDF next to it."""
+    from reportlab.pdfgen import canvas as rl_canvas
+
+    fonts = _Fonts()
+    head, secs = _parse_supplement(txt_path)
+    pdf_path = pdf_path_for(txt_path)
+    label = os.path.basename(pdf_path)
+    plan = _render_supplement(None, fonts, head, secs, label, 0, {})
+    tmp = pdf_path + ".tmp"
+    try:
+        c = rl_canvas.Canvas(
+            tmp, pagesize=(_PAGE_W, _PAGE_H), pageCompression=1, invariant=1,
+        )
+        c.setTitle(label)
+        c.setCreator("marc_repair")
+        _render_supplement(c, fonts, head, secs, label, plan.page, plan.marks)
+        os.replace(tmp, pdf_path)
+    finally:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+    return pdf_path, plan.page
+
+
+def write_pdf_supplement_safe(txt_path: str) -> str | None:
+    """`write_pdf_supplement` for the CLI: failure is a warning, never an error."""
+    try:
+        pdf_path, pages = write_pdf_supplement(txt_path)
+    except ImportError:
+        print("PDF skipped: reportlab is not installed", file=sys.stderr)
+        return None
+    except Exception as exc:  # noqa: BLE001
+        print(f"PDF skipped: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return None
+    print(f"PDF written to {pdf_path} ({pages} page(s))", file=sys.stderr)
+    return pdf_path
