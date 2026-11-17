@@ -1591,9 +1591,10 @@ def build_parser() -> argparse.ArgumentParser:
         dest="update_check",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="at startup, print a one-line notice when a newer commit of an "
-        "install.sh installation exists on GitHub. On by default; "
-        "--no-update-check skips it. Silent for a git checkout, offline, or "
+        help="at startup, print a one-line status for an install.sh "
+        "installation: a newer commit exists on GitHub, it is up to date, "
+        "or the check was skipped because GitHub was unreachable. On by "
+        "default; --no-update-check skips it. Silent for a git checkout or "
         "an install with no version record",
     )
     parser.add_argument(

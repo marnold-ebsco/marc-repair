@@ -79,3 +79,15 @@ def test_git_checkout_never_updates(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(su, "run_installer", _boom)
     su.handle(_args(self_update=True), [])
     assert "git checkout" in capsys.readouterr().err
+
+
+def test_up_to_date_says_so(tmp_path, monkeypatch, capsys):
+    _setup(tmp_path, monkeypatch, remote="aaa111aaa111")
+    su.handle(_args(), [])
+    assert "marc_repair is up to date (aaa111aaa111)" in capsys.readouterr().err
+
+
+def test_unreachable_says_skipped(tmp_path, monkeypatch, capsys):
+    _setup(tmp_path, monkeypatch, remote=None)
+    su.handle(_args(), [])
+    assert "update check skipped (GitHub unreachable)" in capsys.readouterr().err

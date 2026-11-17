@@ -329,7 +329,7 @@ one exists. With `--self-update` it instead runs the installer against the
 same install directory and then restarts the same command line with the new
 code (Python can't swap its own modules mid-run, so it restarts rather than
 carrying on). A git checkout is never touched (use `git pull`); being offline,
-or an install with no version record, is silent; a failed update warns and
+or an install with no version record, is silent. A current install prints "up to date", and an unreachable GitHub prints "update check skipped". A failed update warns and
 the run continues with the installed version. Code: `marc_repair_lib/self_update.py`.
 
 **PDF copy of each log (`--no-pdf-log` to skip):** every bib and holdings

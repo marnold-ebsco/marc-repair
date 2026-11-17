@@ -117,12 +117,16 @@ def handle(args, argv: list[str] | None) -> None:
             print("--self-update: this is a git checkout; update it with git pull",
                   file=sys.stderr)
         return
-    found = check(base)
-    if found is None:
-        if want_update:
-            print("--self-update: already up to date (or GitHub unreachable)", file=sys.stderr)
+    local, ref = installed_commit(base)
+    if not local:
         return
-    local, remote, ref = found
+    remote = latest_commit(ref)
+    if remote is None:
+        print("update check skipped (GitHub unreachable)", file=sys.stderr)
+        return
+    if remote == local:
+        print(f"marc_repair is up to date ({local[:12]})", file=sys.stderr)
+        return
     if not want_update:
         print(
             f"update available: {local[:12]} -> {remote[:12]} ({ref}); "
