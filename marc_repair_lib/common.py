@@ -222,6 +222,32 @@ class ParsedRecord:
     truncated_oversized_fields: list[tuple[str, int, int, str]] = field(default_factory=list)
 
 
+class RecordId(str):
+    """A record identifier that was taken from 907 $a (a Sierra bib number). Only these are
+    ever reformatted for display; an id from 001 (or anywhere else) is a plain str."""
+
+
+def join_004(record_id: str, suffix: str) -> str:
+    """`record_id` + " / " + the 004 value(s), keeping a RecordId a RecordId."""
+    joined = f"{record_id} / {suffix}"
+    return RecordId(joined) if isinstance(record_id, RecordId) else joined
+
+
+_RECORD_ID_DISPLAY = None
+
+
+def set_record_id_display(func) -> None:
+    """Register (or, with None, clear) the function that rewrites a record id for display
+    in the log/reports only."""
+    global _RECORD_ID_DISPLAY
+    _RECORD_ID_DISPLAY = func
+
+
+def display_record_id(record_id: str) -> str:
+    """A record id as shown in the log/reports (see `set_record_id_display`)."""
+    return _RECORD_ID_DISPLAY(record_id) if _RECORD_ID_DISPLAY and record_id else record_id
+
+
 @dataclass
 class LogEntry:
     """One line destined for the run's combined log. `category` is a
@@ -245,5 +271,5 @@ class LogEntry:
         # every single row is pure noise for a human reading the log.
         rec = f"record {self.record_idx}"
         if self.record_id:
-            rec += f" ({self.record_id})"
+            rec += f" ({display_record_id(self.record_id)})"
         return f"\t{rec}\t{self.detail}"

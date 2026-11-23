@@ -87,6 +87,10 @@ SWITCHES: tuple[Switch, ...] = (
        "duplicate_identifier",
        help="flag records that share an identifier within the file"),
     # ---- bib only -------------------------------------------------------
+    _s("normalize_sierra_bib_number", "normalize-sierra-bib-number", True, "bib",
+       help="display only: on a --source-system sierra run, show each bib's 907 $a in reports "
+       "as .b + 7 digits + check digit (adds a missing .b and a missing check digit; the "
+       "record itself is never changed)"),
     _s("transcode_marc8", "transcode-marc8", True, "bib",
        "transcoded_marc8 transcode_marc8_failed removed_untranscodable_subfield"),
     _s("fix_marc8_diacritic_escapes", "fix-marc8-diacritic-escapes", True, "bib",

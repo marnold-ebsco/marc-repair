@@ -564,6 +564,31 @@ def build_bib_records() -> list[bytes]:
         m.Field_("245", "00", [("a", "Title.")]),
     ]))
 
+    # --source-system sirsi (see TestSirsiSourceSystem): no 001, so a run
+    # with that flag builds one from the first 035 $a containing "Sirsi"
+    # (any casing, label and spaces removed) -> added_001_from_sirsi_035.
+    # Without the flag these are ordinary records, left alone.
+    records.append(_record(_BIB_LEADER, [
+        m.Field_("008", None, None, content="x" * 40),
+        m.Field_("035", "  ", [("a", "(Sirsi) a445304")]),
+        m.Field_("245", "00", [("a", "Title from Sirsi 035.")]),
+    ]))
+    # several Sirsi 035s, lower-cased, no space: the first one wins.
+    records.append(_record(_BIB_LEADER, [
+        m.Field_("008", None, None, content="x" * 40),
+        m.Field_("035", "  ", [("a", "(OCoLC)ocm12345")]),
+        m.Field_("035", "  ", [("a", "(sirsi)i9780801479823")]),
+        m.Field_("035", "  ", [("a", "(SIRSI) a999")]),
+        m.Field_("245", "00", [("a", "Title from first of several Sirsi 035s.")]),
+    ]))
+    # no 001 and no Sirsi 035 at all: UNFIXABLE (record_identifier_required)
+    # under --source-system sirsi.
+    records.append(_record(_BIB_LEADER, [
+        m.Field_("008", None, None, content="x" * 40),
+        m.Field_("035", "  ", [("a", "(OCoLC)ocm54321")]),
+        m.Field_("245", "00", [("a", "Title with no Sirsi 035.")]),
+    ]))
+
     # fixed_008_length: 008 padded/truncated to 40 bytes (here: too short).
     records.append(_record(_BIB_LEADER, [
         m.Field_("001", None, None, content="ks-short008"),

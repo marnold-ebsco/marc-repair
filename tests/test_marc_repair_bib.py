@@ -6465,3 +6465,93 @@ def test_pdf_supplement_parses_thousands_separator_counts(tmp_path):
     )
     _, secs = _parse_supplement(str(p))
     assert [s["tag"] for s in secs] == ["039", "059"]
+
+
+class TestSirsiSourceSystem:
+    """--source-system sirsi: a record with no (or a blank) 001 gets one built
+    from the first 035 $a containing 'Sirsi' in any casing, label and spaces
+    removed; with no such 035 it is UNFIXABLE like any other source system."""
+
+    @staticmethod
+    def _rec(*extra):
+        fields = [m.Field_("008", None, None, content="x" * 40),
+                  m.Field_("245", "00", [("a", "Title.")])]
+        fields += [m.Field_("035", "  ", [("a", v)]) if t == "035"
+                   else m.Field_(t, None, None, content=v) for t, v in extra]
+        fields.sort(key=lambda f: f.tag)
+        return m.ParsedRecord(leader=_SYNTHETIC_LEADER, entries=[], fields=fields)
+
+    @staticmethod
+    def _id(parsed):
+        return next(f.content for f in parsed.fields if f.tag == "001")
+
+    @pytest.mark.parametrize("raw, expected", [
+        ("(Sirsi) a445304", "a445304"),
+        ("(sirsi)i9780801479823", "i9780801479823"),
+        ("(SIRSI)   a 44 5304 ", "a445304"),
+        ("Sirsi a1", "a1"),
+    ])
+    def test_id_extraction(self, raw, expected):
+        found = m.sirsi_id_from_035(self._rec(("035", raw)))
+        assert found == (expected, raw, 0)
+
+    def test_label_only_035_has_no_data(self):
+        assert m.sirsi_id_from_035(self._rec(("035", "(Sirsi)"), ("035", "(OCoLC)1"))) is None
+
+    def test_adds_001_in_tag_order_and_keeps_035(self):
+        parsed = self._rec(("035", "(Sirsi) a445304"))
+        details = m.add_001_from_sirsi_035(parsed)
+        assert len(details) == 1 and "'a445304'" in details[0]
+        assert parsed.fields[0].tag == "001" and self._id(parsed) == "a445304"
+        assert any(f.tag == "035" for f in parsed.fields)
+
+    def test_blank_001_is_replaced(self):
+        parsed = self._rec(("001", "  "), ("035", "(Sirsi) a7"))
+        assert m.add_001_from_sirsi_035(parsed)
+        assert self._id(parsed) == "a7"
+
+    def test_existing_001_untouched(self):
+        parsed = self._rec(("001", "keep"), ("035", "(Sirsi) a7"))
+        assert m.add_001_from_sirsi_035(parsed) == []
+        assert self._id(parsed) == "keep"
+
+    def test_first_of_several_wins_and_others_noted(self):
+        parsed = self._rec(("035", "(OCoLC)1"), ("035", "(Sirsi) a1"), ("035", "(SIRSI) a2"))
+        (detail,) = m.add_001_from_sirsi_035(parsed)
+        assert self._id(parsed) == "a1" and "first of 2" in detail
+
+    def test_reason_sirsi(self):
+        assert m.missing_identifier_reason(self._rec(("035", "(OCoLC)1")), "sirsi")
+        assert m.missing_identifier_reason(self._rec(("035", "(Sirsi) a1")), "sirsi") is None
+        assert m.missing_identifier_reason(self._rec(("001", "x")), "sirsi") is None
+
+    def test_cli_repairs_or_diverts(self, tmp_path):
+        src = tmp_path / "in.mrc"
+        src.write_bytes(
+            m.assemble_marc(self._rec(("035", "(Sirsi) a445304")))
+            + m.assemble_marc(self._rec(("001", "has-001")))
+            + m.assemble_marc(self._rec(("035", "(OCoLC)1")))
+        )
+        out = tmp_path / "out.mrc"
+        rc = m.main([str(src), "-o", str(out), "--source-system", "sirsi",
+                     "--log", str(tmp_path / "run.log"), "--log-zero"])
+        assert rc == 1
+        assert m.count_records(str(out)) == 2
+        assert b"a445304" in out.read_bytes()
+        assert m.count_records(str(tmp_path / "out_error.mrc")) == 1
+        log_text = next(tmp_path.glob("run_*.log")).read_text()
+        assert "=== FIXED/REQUIRES ATTENTION: added_001_from_sirsi_035 ===" in log_text
+        assert "001 was missing; set to 'a445304'" in log_text
+        assert "=== UNFIXABLE: record_identifier_required ===" in log_text
+        assert "no 035 $a contains 'Sirsi'" in log_text
+
+    def test_kitchen_sink_with_sirsi(self, tmp_path):
+        src = tmp_path / "kitchen_sink_bib.mrc"
+        src.write_bytes(_read("kitchen_sink_bib.mrc").encode("utf-8"))
+        out = tmp_path / "out.mrc"
+        m.main([str(src), "-o", str(out), "--source-system", "sirsi",
+                "--log", str(tmp_path / "run.log")])
+        data = out.read_bytes()
+        assert b"a445304" in data and b"i9780801479823" in data
+        assert b"Title with no Sirsi 035." not in data
+        assert b"Title with no Sirsi 035." in (tmp_path / "out_error.mrc").read_bytes()

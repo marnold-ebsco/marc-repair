@@ -509,12 +509,22 @@ BIB_ROWS = [
         "widens which of these land here instead of being auto-repaired",
     ),
     CategoryRow(
+        "Sirsi record with no 001 but a 035 $a containing 'Sirsi' (any casing)",
+        "001 built from the first such 035 $a with the 'Sirsi' label and all "
+        "spaces removed (`(Sirsi) a445304` -> `a445304`); the 035 is kept, any "
+        "further Sirsi 035s are ignored",
+        "Only with `--source-system sirsi`",
+        "`added_001_from_sirsi_035`", "FIXED/REQUIRES ATTENTION", "**Yes**",
+        "`--source-system sirsi`",
+    ),
+    CategoryRow(
         "Record with no identifier for its source system (Sierra: no 907 $a, "
-        "no fallback to 001; any other system: no 001) -- can't be loaded",
+        "no fallback to 001; any other system: no 001; Sirsi: no 001 and no "
+        "035 $a containing 'Sirsi') -- can't be loaded",
         "Diverted to `<output>_error.mrc`, unchanged",
         "Only when `--source-system` is given (or answered at the prompt)",
         "`record_identifier_required`", "UNFIXABLE", "**Yes**",
-        "`--source-system sierra|other`",
+        "`--source-system sierra|wms|other|sirsi`",
     ),
     CategoryRow(
         "MARC-8 diacritic recovered -- either a bogus script-switching "

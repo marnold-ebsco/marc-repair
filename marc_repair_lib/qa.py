@@ -9,6 +9,8 @@ import re
 from .common import (
     LogEntry,
     ParsedRecord,
+    RecordId,
+    set_record_id_display,
 )
 
 
@@ -384,6 +386,47 @@ def _is_sierra_number(value: str) -> bool:
 
 _ACTIVE_SOURCE_SYSTEM: str | None = None
 
+_SIERRA_BIB_RE = re.compile(r"^(\.?b)?(\d{7})([0-9x])?$", re.IGNORECASE)
+
+
+def sierra_check_digit(number: str) -> str:
+    """The Sierra/Millennium record-number check digit for a digit string: weight the
+    digits 2, 3, 4, ... from the rightmost, sum, mod 11; a remainder of 10 is "x"."""
+    total = sum(int(d) * w for w, d in enumerate(reversed(number), start=2))
+    remainder = total % 11
+    return "x" if remainder == 10 else str(remainder)
+
+
+def format_sierra_bib_number(value: str) -> str:
+    """Display form of a Sierra 907 $a: ".b" + 7 digits + check digit. Adds a missing ".b"
+    prefix and a missing check digit. When a check digit is already present (including a
+    bare 8-digit number) it is verified, never replaced: if it is wrong the value is shown as
+    is, followed by a note giving the expected digit. Anything else is returned unchanged."""
+    m = _SIERRA_BIB_RE.match(value.strip())
+    if not m:
+        return value
+    _, digits, check = m.groups()
+    expected = sierra_check_digit(digits)
+    if check is None or check.lower() == expected:
+        return f".b{digits}{expected}"
+    return f"{value} [check digit mismatch, expected {expected}]"
+
+
+def _report_record_id(record_id: str) -> str:
+    """Report-time display of a record id: on a Sierra run, format the 907 $a part (any
+    " / 004" suffix is kept as is)."""
+    if _ACTIVE_SOURCE_SYSTEM != "sierra" or not isinstance(record_id, RecordId):
+        return record_id
+    head, sep, tail = record_id.partition(" / ")
+    return format_sierra_bib_number(head) + sep + tail
+
+
+def set_sierra_bib_format(enabled: bool) -> None:
+    """Turn the `.b` + check digit display formatting of Sierra bib numbers on or off. It is
+    applied only when log/report text is written (`common.display_record_id`); record
+    identifiers used during repair, and the records themselves, are never changed."""
+    set_record_id_display(_report_record_id if enabled else None)
+
 
 def set_source_system(source_system: str | None) -> None:
     """Tell `record_identifier` which system the run's records come from
@@ -409,7 +452,7 @@ def record_identifier(parsed: ParsedRecord, source_system: str | None = None) ->
     )
     if value_907 and (source_system == "sierra" or (
             source_system is None and _is_sierra_number(value_907))):
-        return value_907
+        return RecordId(value_907)
 
     field_001 = next((f for f in parsed.fields if f.tag == "001"), None)
     if field_001 is not None and field_001.content:
@@ -418,10 +461,36 @@ def record_identifier(parsed: ParsedRecord, source_system: str | None = None) ->
     return value_907 or ""
 
 
-SOURCE_SYSTEMS = ("sierra", "wms", "other")
+SOURCE_SYSTEMS = ("sierra", "wms", "other", "sirsi")
 
 
-_SOURCE_SYSTEM_IDENTIFIER = {"sierra": "907 $a", "wms": "001", "other": "001"}
+_SOURCE_SYSTEM_IDENTIFIER = {
+    "sierra": "907 $a", "wms": "001", "other": "001",
+    "sirsi": "001, or failing that a 035 $a containing 'Sirsi'",
+}
+
+_SIRSI_LABEL = re.compile(r"\(?\s*sirsi\s*\)?", re.IGNORECASE)
+
+
+def sirsi_id_from_035(parsed: ParsedRecord) -> tuple[str, str, int] | None:
+    """For a Sirsi record: (identifier, source 035 $a text, number of OTHER
+    usable Sirsi 035 $a values) taken from the FIRST 035 $a that contains
+    'sirsi' in any casing. The identifier is that $a with the 'Sirsi' label
+    (and its parentheses, if any) and every space removed, e.g.
+    '(Sirsi) a445304' -> 'a445304'. An 035 $a that is nothing but the label
+    has no data and is skipped. None if there is no usable one."""
+    found: list[tuple[str, str]] = []
+    for f in parsed.fields:
+        if f.tag != "035" or f.subfields is None:
+            continue
+        for code, data in f.subfields:
+            if code == "a" and "sirsi" in data.lower():
+                ident = "".join(_SIRSI_LABEL.sub("", data).split())
+                if ident:
+                    found.append((ident, data))
+    if not found:
+        return None
+    return found[0][0], found[0][1], len(found) - 1
 
 
 def missing_identifier_reason(parsed: ParsedRecord, source_system: str | None) -> str | None:
@@ -442,6 +511,14 @@ def missing_identifier_reason(parsed: ParsedRecord, source_system: str | None) -
         field_001 = next((f for f in parsed.fields if f.tag == "001"), None)
         if field_001 is None or not (field_001.content or "").strip():
             return "001 is missing, although it is required for non-Sierra migrations"
+    elif source_system == "sirsi":
+        field_001 = next((f for f in parsed.fields if f.tag == "001"), None)
+        if (field_001 is None or not (field_001.content or "").strip()) \
+                and sirsi_id_from_035(parsed) is None:
+            return (
+                "001 is missing and no 035 $a contains 'Sirsi', "
+                "so there is no Sirsi identifier to use"
+            )
     return None
 
 

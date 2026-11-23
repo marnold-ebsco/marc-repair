@@ -18,6 +18,7 @@ from .switches import (
 )
 from .common import (
     LogEntry,
+    join_004,
     ParsedRecord,
     RepairError,
 )
@@ -34,6 +35,7 @@ from .qa import (
     fix_invalid_bibliographic_level,
     fix_invalid_leader_bytes,
     missing_identifier_reason,
+    set_sierra_bib_format,
     set_source_system,
     record_identifier,
 )
@@ -77,6 +79,7 @@ from .patching import (
     _rewrite_stripping_invalid_tags,
     DEFAULT_008_CONTENT,
     derive_008_date_from_773,
+    add_001_from_sirsi_035,
     add_default_008,
     add_default_245,
     add_default_holdings_008,
@@ -685,7 +688,7 @@ def repair_holdings_records(
     def log(category: str, fixed: bool, record_idx: int, rec_id: str, detail: str) -> None:
         ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         if rec_id and current_004[0]:
-            rec_id = f"{rec_id} / {current_004[0]}"
+            rec_id = join_004(rec_id, current_004[0])
         log_entries.append(LogEntry(category, fixed, ts, record_idx, rec_id, detail))
 
     with open(output_path, "wb") as out_fh, _LazyBinaryWriter(error_path) as error_fh, \
@@ -976,7 +979,7 @@ def repair_holdings_records(
                         f.content for f in rec.fields if f.tag == "004" and f.content
                     )
                     if rec_id and rec_004:
-                        rec_id = f"{rec_id} / {rec_004}"
+                        rec_id = join_004(rec_id, rec_004)
                     for detail in fix_invalid_tags(rec, replacement_tag):
                         log_entries.append(
                             LogEntry("invalid_tag", True, fix_ts, record_idx, rec_id, detail)
@@ -999,7 +1002,7 @@ def repair_holdings_records(
         for entry in dup_entries:
             suffix = id_004.get(entry.record_idx)
             if suffix:
-                entry.record_id = f"{entry.record_id} / {suffix}"
+                entry.record_id = join_004(entry.record_id, suffix)
         log_entries.extend(dup_entries)
 
     active_categories = set(_HOLDINGS_ALWAYS_ACTIVE_CATEGORIES) | {"duplicate_identifier"}
@@ -1922,7 +1925,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="source system of the bib records: 'sierra' requires a 907 $a on "
         "every record (no fallback to 001), 'wms' and 'other' require a 001 "
         "('wms' also treats the [wms] tags in standard_marc_fields.txt as "
-        "standard); a record "
+        "standard); 'sirsi' requires a 001 too, but builds a missing one "
+        "from the first 035 $a containing 'Sirsi' (logged as "
+        "added_001_from_sirsi_035); a record "
         "without one is UNFIXABLE (diverted to the _error file). Asked for "
         "interactively when not given; skipped when stdin isn't a terminal.",
     )
@@ -2062,16 +2067,22 @@ def resolve_source_system(args: argparse.Namespace) -> None:
             else:
                 print(f"please enter a number from 1 to {len(SOURCE_SYSTEMS)}", file=sys.stderr)
     set_source_system(args.source_system)
+    set_sierra_bib_format(getattr(args, "normalize_sierra_bib_number", True))
     if args.source_system == "sierra":
         print("Source system: sierra (every bib record needs a 907 $a)")
     elif args.source_system == "wms":
         print("Source system: wms (every bib record needs a 001)")
     elif args.source_system == "other":
         print("Source system: other (every bib record needs a 001)")
+    elif args.source_system == "sirsi":
+        print(
+            "Source system: sirsi (every bib record needs a 001; a missing one is "
+            "built from the first 035 $a containing 'Sirsi')"
+        )
     else:
         print(
             "Source system: NOT SET -- the required-identifier check is skipped "
-            "(pass --source-system sierra|wms|other, or run from a terminal to be asked)"
+            "(pass --source-system sierra|wms|other|sirsi, or run from a terminal to be asked)"
         )
 
 
@@ -2509,6 +2520,13 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
             progress.maybe_print(n_total)
             ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
             log_entries_before_record = len(log_entries)
+
+            if source_system == "sirsi" and not parsed.unresolved:
+                # Sirsi: build a missing 001 from the first 035 $a containing
+                # 'Sirsi' *before* the identifier check below, so a record
+                # this can repair is not diverted as UNFIXABLE.
+                for detail in add_001_from_sirsi_035(parsed):
+                    log("added_001_from_sirsi_035", True, i, record_identifier(parsed), detail)
 
             if parsed.unresolved:
                 reason = parsed.unresolved[0][3]
@@ -3040,6 +3058,8 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
         active_categories.add("fixed_marc8_b2_umlaut")
     if args.fix_invalid_leader_bytes:
         active_categories.add("leader_byte_defaulted")
+    if args.source_system == "sirsi":
+        active_categories.add("added_001_from_sirsi_035")
     if args.add_008_date_from_773:
         active_categories.add("derived_008_date_from_773")
     if args.remap_999_to_945:

@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 
 from .common import (
     LogEntry,
+    display_record_id,
 )
 from .patching import (
     DEFAULT_852_LOCATION_CONTENT,
@@ -66,6 +67,7 @@ _FIXED_REQUIRES_ATTENTION = {
     "holdings_852_duplicate_nr_subfield",
     "split_holdings_multiple_852",
     "added_default_245",
+    "added_001_from_sirsi_035",
     "padded_indicators",
     "incomplete_852",
     "invalid_bibliographic_level",
@@ -346,6 +348,9 @@ _CHECK_DESCRIPTIONS: dict[str, str] = {
     "currently skipped for holdings).",
     "transcode_marc8_failed": "MARC-8-to-UTF-8 transcoding failed for this record's content -- left as "
     "MARC-8, error recorded.",
+    "added_001_from_sirsi_035": "--source-system sirsi: the record had no 001, so one was built from "
+    "its first 035 $a containing 'Sirsi' (any casing), with the label and spaces removed. The "
+    "035 is left in place; check that the value is the Sirsi record number.",
     "added_default_008": "Record had no 008 -- a fixed generic placeholder was inserted.",
     "added_default_holdings_008": "Holdings record had no 008 -- a fixed generic 32-byte placeholder was "
     "inserted.",
@@ -517,6 +522,7 @@ _CHECK_DATA_LOSS: dict[str, str] = {
     "invalid_isbn_issn_checksum": "NO DATA LOSS",
     "holdings_escape_sequence": "NO DATA LOSS",
     "transcode_marc8_failed": "POSSIBLE DATA LOSS",
+    "added_001_from_sirsi_035": "NO DATA LOSS",
     "added_default_008": "NO DATA LOSS",
     "added_default_holdings_008": "NO DATA LOSS",
     "added_default_245": "NO DATA LOSS",
@@ -633,6 +639,7 @@ _ALWAYS_FULL_CATEGORIES = {
     "holdings_852_duplicate_nr_subfield",
     "added_missing_852_location",
     "added_default_245",
+    "added_001_from_sirsi_035",
     "added_default_008",
     "padded_indicators",
     "unfixed_non_numeric_tag",
@@ -1011,7 +1018,7 @@ def write_log(
             elif category in full_categories and label != "INFORMATIONAL":
                 if category in _ID_LIST_ONLY_CATEGORIES:
                     ids = dict.fromkeys(
-                        e.record_id or f"record {e.record_idx}" for e in group
+                        display_record_id(e.record_id) or f"record {e.record_idx}" for e in group
                     )
                     fh.write(", ".join(ids) + "\n")
                 elif category in _SUMMARIZE_FIXED_ENTRIES:

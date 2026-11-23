@@ -19,12 +19,14 @@ from .common import (
     FIELDTERM,
     Field_,
     LogEntry,
+    join_004,
     ParsedRecord,
     SUBFIELD,
 )
 from .qa import (
     VALID_SUBFIELD_CODE_CHARS,
     record_identifier,
+    sirsi_id_from_035,
 )
 from .core import (
     assemble_marc,
@@ -97,6 +99,30 @@ def add_default_008(parsed: ParsedRecord) -> list[str]:
     if ensure_field(parsed, "008", None, DEFAULT_008_CONTENT):
         return [f"added default 008 (was missing): {DEFAULT_008_CONTENT!r}"]
     return []
+
+
+def add_001_from_sirsi_035(parsed: ParsedRecord) -> list[str]:
+    """--source-system sirsi: a record with no 001 (or a blank one) gets
+    one built from its first 035 $a containing 'Sirsi' in any casing, with
+    the label and all spaces removed ('(Sirsi) a445304' -> 'a445304'). The
+    035 itself is left as it was. No-op if a non-blank 001 exists or no
+    usable Sirsi 035 $a is found (the record is then UNFIXABLE, see
+    `missing_identifier_reason`). Logged as "added_001_from_sirsi_035"."""
+    existing = next((f for f in parsed.fields if f.tag == "001"), None)
+    if existing is not None and (existing.content or "").strip():
+        return []
+    found = sirsi_id_from_035(parsed)
+    if found is None:
+        return []
+    ident, source, others = found
+    if existing is not None:
+        existing.content = ident
+    else:
+        ensure_field(parsed, "001", None, ident)
+    detail = f"001 was missing; set to {ident!r} from 035 $a {source!r}"
+    if others:
+        detail += f" (first of {others + 1} Sirsi 035 $a values; the others were ignored)"
+    return [detail]
 
 
 _YEAR_773D = re.compile(r"(?<!\d)(1[5-9]\d\d|20[0-2]\d)(?!\d)")
@@ -3443,7 +3469,7 @@ def _rewrite_stripping_invalid_tags(
                         f.content for f in rec.fields if f.tag == "004" and f.content
                     )
                     if rec_004:
-                        rec_id = f"{rec_id} / {rec_004}"
+                        rec_id = join_004(rec_id, rec_004)
                 for detail in strip_invalid_tags(rec):
                     log_entries.append(
                         LogEntry(

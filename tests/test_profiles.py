@@ -242,7 +242,7 @@ def test_missing_input_path_prompts_on_a_terminal(tmp_path, monkeypatch, capsys)
 
 def test_source_system_is_asked_then_displayed_once(monkeypatch, capsys):
     monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
-    answers = iter(["bogus", "4", "0", "1"])
+    answers = iter(["bogus", "5", "0", "1"])
     monkeypatch.setattr("builtins.input", lambda _p: next(answers))
     args = m.build_parser().parse_args([])
     m.resolve_source_system(args)
@@ -250,13 +250,14 @@ def test_source_system_is_asked_then_displayed_once(monkeypatch, capsys):
     assert args.source_system == "sierra"
     assert "1. sierra (907 $a required)" in out.out and "2. wms (001 required)" in out.out
     assert "3. other (001 required)" in out.out
+    assert "4. sirsi (" in out.out
     assert "Source system: sierra" in out.out
-    assert out.err.count("please enter a number from 1 to 3") == 3
+    assert out.err.count("please enter a number from 1 to 4") == 3
     m.resolve_source_system(args)  # once per invocation
     assert capsys.readouterr().out == ""
 
 
-@pytest.mark.parametrize("answer, expected", [("2", "wms"), ("3", "other")])
+@pytest.mark.parametrize("answer, expected", [("2", "wms"), ("3", "other"), ("4", "sirsi")])
 def test_source_system_numbers_two_and_three(monkeypatch, answer, expected):
     monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr("builtins.input", lambda _p: answer)
