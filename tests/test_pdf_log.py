@@ -165,3 +165,9 @@ def test_supplement_pdf_has_contents_and_pages(tmp_path):
     pdf, n = pdf_log.write_pdf_supplement(str(txt))
     assert pdf.endswith("x_non_standard_fields.pdf") and n >= 2
     assert open(pdf, "rb").read().count(b"/Subtype /Link") >= 2 + n
+
+
+def test_identifier_count_line_is_a_section_count():
+    """duplicate_identifier's "N identifier(s) on M record(s)" line must be read
+    as the section count (so the ToC shows it), not as body text."""
+    assert pdf_log._COUNT_RE.match("2 identifier(s) on 5 record(s)")

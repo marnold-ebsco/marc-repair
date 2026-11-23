@@ -63,7 +63,7 @@ _KIND_TITLES = {
 
 _SECTION_RE = re.compile(r"^=== ([A-Z][A-Z ,/]*[A-Z]): (.+) ===$")
 _NO_FINDINGS_RE = re.compile(r"^=== CHECKS PERFORMED WITH NO FINDINGS \((\d+)\) ===$")
-_COUNT_RE = re.compile(r"^\d+ (record|instance)")
+_COUNT_RE = re.compile(r"^\d+ (record|instance|identifier)")
 _LOSS_CALLS = ("DATA LOSS", "POSSIBLE DATA LOSS", "NO DATA LOSS")
 _NO_FINDINGS_KIND = "CHECKS PERFORMED WITH NO FINDINGS"
 
