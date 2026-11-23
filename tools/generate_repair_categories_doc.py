@@ -185,7 +185,7 @@ BIB_ROWS = [
         '`--remap-999-to-945`',
     ),
     CategoryRow(
-        "999 -> 949 move", "Renamed field tag",
+        "999 -> 949 move (never with `--source-system sirsi`)", "Renamed field tag",
         "Yes (`--no-move-999-to-949`)", "`moved_999_to_949`",
         "INFORMATIONAL", "No -- INFORMATIONAL categories are never listed in full, "
         "not even via --log-full",
@@ -636,7 +636,7 @@ BIB_ROWS = [
     CategoryRow(
         "Field tag FOLIO's default MARC-to-instance mapping does not map (tag not in "
         "instance_mapped_marc_fields.txt; 00X, 9XX and the file's `[ignored]` tags, 010-199, "
-        "300-399, 700-789 and 800-889 by default, never listed; "
+        "300-399, 700-729, 731-739, 741-789 and 800-889 by default, never listed; "
         "local-use ranges 59x, 69x and 79x starred). The field stays on the MARC "
         "record but does not show in the instance record or in Locate search",
         "Listed only (tag, instance and record counts), no change", "**Yes**",

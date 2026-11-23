@@ -1787,6 +1787,7 @@ def build_parser() -> argparse.ArgumentParser:
         "it and makes Data Import reject the record. A genuine 999 ff "
         "is never touched. On by default (999 is normally only a Sirsi "
         "Dynix item field); pass --no-move-999-to-949 to leave them. "
+        "Never done with --source-system sirsi (the 999s stay as they are). "
         "Header + count only in the log (INFORMATIONAL)",
     )
     parser.add_argument(
@@ -2092,7 +2093,8 @@ def resolve_source_system(args: argparse.Namespace) -> None:
     elif args.source_system == "sirsi":
         print(
             "Source system: sirsi (every bib record needs a 001; a missing one is "
-            "built from the first 035 $a containing 'Sirsi')"
+            "built from the first 035 $a containing 'Sirsi'; 999 fields are left in place, "
+            "not moved to 949)"
         )
     else:
         print(
@@ -2678,7 +2680,7 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
                     rec_id = record_identifier(parsed)
                     for detail in remap_999_to_945(parsed):
                         log("remapped_999_to_945", True, i, rec_id, detail)
-                if args.move_999_to_949:
+                if args.move_999_to_949 and args.source_system != "sirsi":
                     rec_id = record_identifier(parsed)
                     for detail in move_999_to_949(parsed):
                         log("moved_999_to_949", True, i, rec_id, detail)
@@ -3104,7 +3106,7 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
         active_categories.add("derived_008_date_from_773")
     if args.remap_999_to_945:
         active_categories.add("remapped_999_to_945")
-    if args.move_999_to_949:
+    if args.move_999_to_949 and args.source_system != "sirsi":
         active_categories.add("moved_999_to_949")
     if args.normalize_subfield_9:
         active_categories.add("normalized_subfield_9_to_0")

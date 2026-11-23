@@ -4177,6 +4177,26 @@ class TestMove999To949:
             assert want in tags
             assert ("999" in tags) == (want == "999")
 
+    def test_sirsi_source_system_leaves_999_alone(self, tmp_path):
+        parsed = m.ParsedRecord(
+            leader=_SYNTHETIC_LEADER,
+            entries=[],
+            fields=[
+                m.Field_("001", None, None, content="rec13"),
+                m.Field_("008", None, None, content="x" * 40),
+                m.Field_("999", "  ", [("i", "12345")]),
+            ],
+        )
+        src = tmp_path / "s999.mrc"
+        src.write_bytes(m.assemble_marc(parsed))
+        out = tmp_path / "out.mrc"
+        log = tmp_path / "run.log"
+        assert m.main([str(src), "-o", str(out), "--log", str(log),
+                       "--source-system", "sirsi"]) == 0
+        tags = [f.tag for f in m.repair_text(m._read_text(str(out)))[0].fields]
+        assert "999" in tags and "949" not in tags
+        assert "moved_999_to_949" not in _resolve_log(log).read_text(encoding="utf-8")
+
 
 class TestRemap999To945:
     def test_retags_999_to_945_with_ff_indicators(self):
@@ -6698,8 +6718,8 @@ class TestUnmappedMarcFields:
     def test_shipped_snapshot_loads(self):
         mapped, ignored = m.load_instance_mapped_fields(m.DEFAULT_INSTANCE_MAPPED_FIELDS_FILE)
         assert {"001", "245", "856", "880"} <= mapped
-        assert {"010", "040", "099", "337", "399", "730", "789", "800", "889"} <= ignored
-        assert not {"210", "400", "440", "490", "790", "890"} & ignored
+        assert {"010", "040", "099", "337", "399", "729", "731", "789", "800", "889"} <= ignored
+        assert not {"210", "400", "440", "490", "730", "740", "790", "890"} & ignored
         # the local ranges that get a star are not mapped
         assert not any(t.startswith(("59", "69", "79")) for t in mapped if t != "590")
 

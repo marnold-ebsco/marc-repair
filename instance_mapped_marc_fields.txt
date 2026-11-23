@@ -131,5 +131,7 @@
 # line (optionally followed by | comment). Edit freely: regenerating keeps this section.
 010-199 | control numbers, coded data, call numbers and classification (01x-19x)
 300-399 | RDA attributes (3xx)
-700-789 | added entries and linking entries (the 79x local range stays listed)
+700-729 | added entries and linking entries (730 and 740 stay listed)
+731-739 | added entries and linking entries
+741-789 | added entries and linking entries (the 79x local range stays listed)
 800-889 | series added entries and holdings/alternate graphics (89x local range stays listed)
