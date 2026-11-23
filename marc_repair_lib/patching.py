@@ -1356,28 +1356,48 @@ DEFAULT_INSTANCE_MAPPED_FIELDS_FILE = os.path.join(
 UNMAPPED_FIELD_CATEGORY = "unmapped_marc_fields"
 
 
-def load_instance_mapped_fields(path: str) -> set[str]:
-    """Load instance_mapped_marc_fields.txt: the set of tags FOLIO's default
-    MARC-bib-to-instance rules map (one `TAG | targets` line each under
-    `[mapped]`; blank lines and lines starting with # are ignored)."""
-    tags: set[str] = set()
+#: Tags (as a prefix) starred in the unmapped-fields list: the local-use ranges.
+UNMAPPED_LOCAL_RANGE_PREFIXES = ("59", "69", "79")
+
+
+def load_instance_mapped_fields(path: str) -> tuple[set[str], set[str]]:
+    """Load instance_mapped_marc_fields.txt: returns (mapped, ignored) tag sets.
+    `[mapped]` holds the tags FOLIO's default MARC-bib-to-instance rules map
+    (one `TAG | targets` line each). `[ignored]` holds tags never listed as
+    unmapped: one `TAG` or `FIRST-LAST` range (e.g. `010-099`) per line,
+    optionally followed by `| comment`. Blank lines and lines starting with #
+    are skipped."""
+    sections: dict[str, set[str]] = {"mapped": set(), "ignored": set()}
+    current = None
     with open(path, encoding="utf-8") as fh:
         for line in fh:
             line = line.strip()
-            if not line or line.startswith("#") or line.startswith("["):
+            if not line or line.startswith("#"):
                 continue
-            tags.add(line.split("|", 1)[0].strip())
-    return tags
+            if line in ("[mapped]", "[ignored]"):
+                current = line[1:-1]
+                continue
+            if current is None:
+                raise ValueError(f"{path}: {line!r} appears before a [section] heading")
+            spec = line.split("|", 1)[0].strip()
+            if current == "ignored" and "-" in spec:
+                first, last = (p.strip() for p in spec.split("-", 1))
+                sections[current].update(f"{n:03d}" for n in range(int(first), int(last) + 1))
+            else:
+                sections[current].add(spec)
+    return sections["mapped"], sections["ignored"]
 
 
 class UnmappedFieldTally:
     """Information-only check: counts, per tag, the fields whose tag has no
     rule in FOLIO's default MARC-bib-to-instance mapping (so they stay on the
     MARC record but never show in the instance record). 00X, 9XX and
-    non-numeric tags are never counted. Never modifies a record."""
+    non-numeric tags, and the `ignored` tags, are never counted. Never
+    modifies a record."""
 
-    def __init__(self, mapped: set[str]):
+    def __init__(self, mapped: set[str], ignored: set[str] | frozenset[str] = frozenset()):
         self.mapped = mapped
+        self.ignored = ignored
         self.instances: dict[str, int] = {}
         self.records: dict[str, int] = {}
         self.records_with_any = 0
@@ -1387,7 +1407,7 @@ class UnmappedFieldTally:
         for f in parsed.fields:
             tag = f.tag
             if (len(tag) != 3 or not tag.isdigit() or tag[0] == "9" or tag[:2] == "00"
-                    or tag in self.mapped):
+                    or tag in self.mapped or tag in self.ignored):
                 continue
             self.instances[tag] = self.instances.get(tag, 0) + 1
             if tag not in seen:
@@ -1404,11 +1424,16 @@ class UnmappedFieldTally:
             f"{len(self.instances)} tag(s)"
         )
         lines = []
+        starred = False
         for tag in sorted(self.instances):
+            star = "*" if tag.startswith(UNMAPPED_LOCAL_RANGE_PREFIXES) else ""
+            starred = starred or bool(star)
             lines.append(
-                f"\t{tag}: {self.instances[tag]:,} instance(s) in "
+                f"\t{tag}{star}: {self.instances[tag]:,} instance(s) in "
                 f"{self.records[tag]:,} record(s)"
             )
+        if starred:
+            lines.append("\t* Local-use field range (59x, 69x, 79x).")
         return count, "\n".join(lines)
 
 

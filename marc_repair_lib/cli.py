@@ -2410,7 +2410,7 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
         else None
     )
     unmapped_tally = (
-        UnmappedFieldTally(load_instance_mapped_fields(args.instance_mapped_fields_file))
+        UnmappedFieldTally(*load_instance_mapped_fields(args.instance_mapped_fields_file))
         if args.check_unmapped_fields
         else None
     )

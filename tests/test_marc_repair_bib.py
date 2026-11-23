@@ -6696,12 +6696,33 @@ class TestUnmappedMarcFields:
         return _resolve_log(log).read_text(encoding="utf-8"), out, src
 
     def test_shipped_snapshot_loads(self):
-        mapped = m.load_instance_mapped_fields(m.DEFAULT_INSTANCE_MAPPED_FIELDS_FILE)
+        mapped, ignored = m.load_instance_mapped_fields(m.DEFAULT_INSTANCE_MAPPED_FIELDS_FILE)
         assert {"001", "245", "856", "880"} <= mapped
-        # the local ranges the report warns about are not mapped
-        assert not any(t.startswith(("56", "69", "79", "89")) for t in mapped
-                       if t not in {"561", "562", "563", "565", "567", "800", "810", "811",
-                                    "830", "856", "880"})
+        assert {"010", "040", "099"} <= ignored and "100" not in ignored
+        # the local ranges that get a star are not mapped
+        assert not any(t.startswith(("59", "69", "79")) for t in mapped if t != "590")
+
+    def test_loader_ranges_and_single_tags(self, tmp_path):
+        p = tmp_path / "f.txt"
+        p.write_text("# c\n[mapped]\n245 | title\n\n[ignored]\n010-012 | x\n337\n")
+        assert m.load_instance_mapped_fields(str(p)) == (
+            {"245"}, {"010", "011", "012", "337"})
+
+    def test_tally_skips_ignored_tags(self):
+        t = m.UnmappedFieldTally({"245"}, {"040"})
+        t.check(self._rec([m.Field_("040", "  ", [("a", "x")]), m.Field_("490", "0 ", [("a", "S")])]))
+        assert t.instances == {"490": 1}
+
+    def test_summary_stars_local_ranges_with_footnote(self):
+        t = m.UnmappedFieldTally({"245"})
+        t.check(self._rec([m.Field_("596", "  ", [("a", "x")]), m.Field_("490", "0 ", [("a", "S")])]))
+        count, body = t.summary()
+        assert "\t596*: 1 instance(s) in 1 record(s)" in body
+        assert "\t490: 1 instance(s) in 1 record(s)" in body
+        assert body.endswith("\t* Local-use field range (59x, 69x, 79x).")
+        t2 = m.UnmappedFieldTally({"245"})
+        t2.check(self._rec([m.Field_("490", "0 ", [("a", "S")])]))
+        assert "*" not in t2.summary()[1]
 
     def test_tally_counts_and_skips_mapped_9xx_nonnumeric(self):
         t = m.UnmappedFieldTally({"001", "008", "245"})
@@ -6726,7 +6747,8 @@ class TestUnmappedMarcFields:
         content, out, src = self._run(tmp_path, recs)
         assert "=== INFORMATION ONLY: unmapped_marc_fields ===" in content
         assert "will still be on the MARC records" in content
-        assert "\t790: 2 instance(s) in 2 record(s)\n" in content
+        assert "\t790*: 2 instance(s) in 2 record(s)\n" in content
+        assert "\t* Local-use field range (59x, 69x, 79x)." in content
         assert "\t490: 1 instance(s) in 1 record(s)\n" in content
         section = content.split("INFORMATION ONLY: unmapped_marc_fields", 1)[1]
         section = section.split("\n=== ", 3)[3].split("\n\n", 1)[0]
