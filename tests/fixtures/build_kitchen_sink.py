@@ -985,14 +985,14 @@ def build_holdings_records() -> list[bytes]:
         m.Field_("852", "  ", [("Z", "bad code"), ("a", "Main Library")]),
     ]))
 
-    # added_default_holdings_008: no 008 at all -- a blank 32-byte
+    # added_default_008: no 008 at all -- a blank 32-byte
     # placeholder is inserted.
     records.append(_record(_HOLDINGS_LEADER, [
         m.Field_("004", None, None, content="ks-hol-no008"),
         m.Field_("852", "  ", [("a", "Main Library")]),
     ]))
 
-    # fixed_holdings_008_length: 008 is 40 bytes (bib length), padded/
+    # fixed_008_length: 008 is 40 bytes (bib length), padded/
     # truncated to holdings' own 32.
     records.append(_record(_HOLDINGS_LEADER, [
         m.Field_("004", None, None, content="ks-hol-wronglen008"),

@@ -170,14 +170,6 @@ BIB_ROWS = [
         '`--no-fix-invalid-leader-bytes`',
     ),
     CategoryRow(
-        "008 date from 773 $d", "Added field (derived)",
-        "**No** (`--add-008-date-from-773` to enable)", "`derived_008_date_from_773`",
-        "INFORMATIONAL", "No -- INFORMATIONAL categories are never listed in full, "
-        "not even via --log-full",
-        '`--add-008-date-from-773` (only for records with no 008 and exactly one year in 773 $d; '
-        'runs before the placeholder 008)',
-    ),
-    CategoryRow(
         "999 -> 945 remap", "Renamed field tag",
         "**No** (`--remap-999-to-945` to enable)", "`remapped_999_to_945`",
         "INFORMATIONAL", "No -- INFORMATIONAL categories are never listed in full, "
@@ -398,21 +390,29 @@ BIB_ROWS = [
         "instead of leaving it half-fixed\" check, each with its own reason text",
     ),
     CategoryRow(
-        "Placeholder 008 added", "Added default field",
-        "Yes, always", "`added_default_008`",
+        "Placeholder 008 added (holdings: 32-byte blank; bib with `--add-008-date-from-773`: "
+        "date taken from 773 $d when it gives exactly one year, otherwise the plain placeholder)",
+        "Added default field",
+        "Yes, always (the 773 $d date is opt-in via `--add-008-date-from-773`)",
+        "`added_default_008`",
         "INFORMATIONAL (summary line; record list in `<log>_added_default_008.txt`)", "**Yes**",
         "-- (no switch -- every MARC21 record must have an 008); "
-        "`--ensure-field` (takes priority per-record)",
+        "`--ensure-field` (takes priority per-record); `--add-008-date-from-773` (only for bib "
+        "records with exactly one year in 773 $d; runs before the placeholder 008)",
     ),
     CategoryRow(
-        "Misaligned 008 (language code not at 35-37) realigned", "Realigned field (blanks at 008/11 removed/added)",
+        "Misaligned 008 (language code not at 35-37) realigned: (1) blanks at 008/11 too long "
+        "or short; (2) 4 extra blanks at 15-18 with the last 4 bytes cut off (only the "
+        "language's first letter survives at 39)",
+        "(1) blanks at 008/11 removed/added; (2) blanks removed, language set from 041 $a / 040 "
+        "$b when it starts with the surviving letter, else `|||`, modified record blank, "
+        "cataloging source `|`",
         "Yes (`--no-fix-misaligned-008`)", "`fixed_misaligned_008`",
-        "INFORMATIONAL", "No -- INFORMATIONAL categories are never listed in full, "
-        "not even via --log-full",
+        "FIXED/REQUIRES ATTENTION", "(1) counted only; (2) **every record listed**",
         '`--no-fix-misaligned-008`',
     ),
     CategoryRow(
-        "008 length pad/truncate (40 bytes)", "Padded/truncated field",
+        "008 length pad/truncate (40 bytes; holdings 32 bytes)", "Padded/truncated field",
         "Yes (`--no-fix-008-length`)", "`fixed_008_length`",
         "FIXED/REQUIRES ATTENTION", "No (header + count always shown; full per-record list via "
                                     "--log-full fixed_008_length)", "`--no-fix-008-length`",
@@ -730,20 +730,6 @@ HOLDINGS_ROWS = [
     CategoryRow(
         "Empty-field removal", "Removed field", "Yes, always",
         "-- (unlogged)", "--", "--", "-- (no switch -- always runs)",
-    ),
-    CategoryRow(
-        "Placeholder 008 added (32-byte blank)", "Added default field",
-        "Yes, always", "`added_default_holdings_008`", "INFORMATIONAL",
-        "No -- INFORMATIONAL categories are never listed in full, "
-        "not even via --log-full",
-        "-- (no switch -- always runs and always logged)",
-    ),
-    CategoryRow(
-        "008 length pad/truncate (32 bytes)", "Padded/truncated field",
-        "Yes, always", "`fixed_holdings_008_length`",
-        "FIXED/REQUIRES ATTENTION", "No (header + count always shown; full per-record list via "
-                                    "--log-full fixed_holdings_008_length)",
-        "-- (no switch -- always runs and always logged)",
     ),
     CategoryRow(
         "863/864/865/866/867/868 (Enumeration and Chronology / Textual "

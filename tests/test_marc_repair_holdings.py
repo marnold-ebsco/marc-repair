@@ -250,7 +250,7 @@ class TestRepairHoldingsRecords:
         assert result["log_lines"] == 2
         assert result["not_fixed"] == 0
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert "added_default_holdings_008" in content
+        assert "added_default_008" in content
         raw = out.read_bytes()
         parsed = m.read_intact_record(raw.decode("utf-8"))
         field008 = next(f for f in parsed.fields if f.tag == "008")
@@ -263,7 +263,7 @@ class TestRepairHoldingsRecords:
         ]
         result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert "fixed_holdings_008_length" in content
+        assert "fixed_008_length" in content
         parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
         field008 = next(f for f in parsed.fields if f.tag == "008")
         assert len(field008.content) == m.HOLDINGS_008_LENGTH
@@ -873,7 +873,7 @@ class TestRepairHoldingsRecords:
         logs = list(tmp_path.glob("holdings_only_repaired_log_*.log"))
         assert len(logs) == 1
         content = logs[0].read_text(encoding="utf-8")
-        assert "added_default_holdings_008" in content
+        assert "added_default_008" in content
 
     def test_cli_repair_holdings_flag_respects_out_and_fix_852c(self, tmp_path):
         fields = [

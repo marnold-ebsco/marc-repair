@@ -884,7 +884,7 @@ def add_missing_852c(parsed: ParsedRecord) -> list[str]:
 def add_default_holdings_008(parsed: ParsedRecord) -> list[str]:
     """Insert `DEFAULT_HOLDINGS_008_CONTENT` for a holdings record with
     no 008 field at all. No-op if 008 is already present. Logged
-    (category "added_default_holdings_008") since the inserted value is
+    (category "added_default_008") since the inserted value is
     a blank placeholder, not a real one -- see
     `DEFAULT_HOLDINGS_008_CONTENT`.
     """
@@ -3397,6 +3397,67 @@ def find_invalid_008_language(
                 f"008/35-37 is {code!r}, not an approved MARC language code",
             ))
     return out
+
+
+#: Tail (008/35-38) of a bibliographic 008 whose last 4 bytes were cut off after its
+#: fixed fields shifted 4 right: index, blank, literary form, biography.
+_008_SHIFTED_TAIL = re.compile(r"[01|] [0-9A-Za-z|][ abcd|]")
+
+
+def realign_008_trailing_shift(
+    value: str, hints: list[tuple[str, str]], codes: frozenset[str] | None = None,
+) -> tuple[str | None, str, str]:
+    """Fix a bibliographic 008 (40 bytes) that has 4 extra blanks at 15-18 (where the place
+    code belongs) and so has every later byte 4 positions too far right, with its last four
+    bytes (language, modified record, cataloging source) cut off -- all that is left of the
+    language is its first letter, at 39. Returns (new 008, language code, where the language
+    came from), or (None, reason, "") when the value is not this pattern.
+
+    The 4 blanks are removed. The language is the first of `hints` (approved codes from 041 $a,
+    then 040 $b) that starts with the surviving letter; with none, "|||" (no attempt to code).
+    The modified-record byte is set blank and the cataloging source to "|", since neither can
+    be recovered. Nothing but blanks is discarded."""
+    codes = codes or approved_language_codes()
+    if len(value) != 40 or value[15:19] != "    " or not value[19:22].strip():
+        return None, "not the trailing-shift pattern", ""
+    if not value[39].isalpha() or _valid_008_language(value[35:38], codes):
+        return None, "not the trailing-shift pattern", ""
+    if not _008_SHIFTED_TAIL.fullmatch(value[35:39]):
+        return None, "tail does not look shifted", ""
+    lang, source = "|||", "not recoverable"
+    for label, code in hints:
+        if code in codes and code[0] == value[39]:
+            lang, source = code, label
+            break
+    return value[:15] + value[19:39] + lang + " |", lang, source
+
+
+def fix_008_trailing_shift(parsed: ParsedRecord) -> list[str]:
+    """Apply `realign_008_trailing_shift` in place (category "fixed_misaligned_008";
+    FIXED/REQUIRES ATTENTION, listed in full because the language is inferred). Must run
+    BEFORE `fix_misaligned_008` and `fix_008_length`."""
+    hints: list[tuple[str, str]] = []
+    for f in _041_language_fields(parsed):
+        for sub_code, data in f.subfields:
+            if sub_code == "a" and len(data) >= 3:
+                hints.append(("041 $a", data[:3]))
+    for f in parsed.fields:
+        if f.tag == "040" and not f.is_control():
+            hints.extend(("040 $b", d) for c, d in f.subfields if c == "b")
+    details = []
+    for f in parsed.fields:
+        if f.tag != "008" or not f.is_control() or not f.content:
+            continue
+        old = f.content
+        new, lang, source = realign_008_trailing_shift(old, hints)
+        if new is None:
+            continue
+        f.content = new
+        details.append(
+            f"008 had 4 extra blanks at 15-18 and its last 4 bytes cut off (was {old!r}); "
+            f"blanks removed, language set to {lang!r} ({source}), modified-record byte set "
+            "blank and cataloging source set to '|' (not recoverable)")
+    return details
 
 
 def fix_misaligned_008(parsed: ParsedRecord) -> list[str]:

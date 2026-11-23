@@ -698,7 +698,7 @@ class TestWriteLog:
             m.LogEntry("added_field", True, "t2", 0, "u1", "added 245"),
             m.LogEntry("duplicate_identifier", False, "t3", 1, "u2", "dup"),
             m.LogEntry(
-                "added_default_holdings_008", True, "t4", 2, "u3", "added placeholder 008",
+                "added_default_008", True, "t4", 2, "u3", "added placeholder 008",
             ),
             m.LogEntry("leader_byte_defaulted", True, "t5", 2, "u3", "byte 05 defaulted"),
             m.LogEntry("leader_entry_map_fixed", True, "t6", 2, "u3", "entry map fixed"),
@@ -706,7 +706,7 @@ class TestWriteLog:
         ]
         log_path = tmp_path / "run.log"
         informational_categories = {
-            "added_default_holdings_008", "leader_byte_defaulted", "leader_entry_map_fixed",
+            "added_default_008", "leader_byte_defaulted", "leader_entry_map_fixed",
             "normalized_subfield_9_to_0",
         }
         m.write_log(str(log_path), entries, full_categories=informational_categories)
@@ -1311,7 +1311,7 @@ class TestSplitBibHoldings:
         logs = list(tmp_path.glob("mixed_holdings_repaired_log_*.log"))
         assert len(logs) == 1
         content = logs[0].read_text(encoding="utf-8")
-        assert "added_default_holdings_008" in content
+        assert "added_default_008" in content
         repaired = m.count_records(str(tmp_path / "mixed_holdings_repaired.mrc"))
         assert repaired == 1
 

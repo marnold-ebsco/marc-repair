@@ -48,7 +48,7 @@ _FIXED_REQUIRES_ATTENTION = {
     "merged_duplicate_040",
     "removed_non_repeatable_duplicate",
     "fixed_008_length",
-    "fixed_holdings_008_length",
+    "fixed_misaligned_008",
     "removed_invalid_subfield",
     "truncated_oversized_field",
     "trimmed_oversized_record",
@@ -91,8 +91,6 @@ _FIXED_REQUIRES_ATTENTION = {
 #: FIXED.
 _INFORMATIONAL = {
     "added_default_008",
-    "derived_008_date_from_773",
-    "added_default_holdings_008",
     "holdings_multiple_004",
     "removed_null_identifier",
     "missing_call_number",
@@ -110,7 +108,6 @@ _INFORMATIONAL = {
     "moved_999_to_949",
     "fixed_language_code_case",
     "split_041_language_codes",
-    "fixed_misaligned_008",
     "oversized_sentinel_fixed",
     "fixed_marc8_diacritic",
     "fixed_marc8_b2_umlaut",
@@ -157,7 +154,7 @@ _NEEDS_REVIEW = {
 _DEDICATED_SECTIONS: dict[str, tuple[int, str]] = {
     "unfixable": (-1, "UNFIXABLE"),
     "record_identifier_required": (-1, "UNFIXABLE"),
-    "duplicate_identifier": (3, "DUPLICATE RECORDS"),
+    "duplicate_identifier": (2, "DUPLICATE RECORDS"),
     # Report-only checks that never change a record; kept in INFORMATIONAL.
     "non_standard_marc_fields": (4, "INFORMATIONAL"),
     # One summary entry: the list of unmapped tags with counts (see UnmappedFieldTally).
@@ -170,7 +167,7 @@ for _cat in _FIXED_REQUIRES_ATTENTION:
 
 
 for _cat in _NEEDS_REVIEW:
-    _DEDICATED_SECTIONS[_cat] = (2, "NEEDS REVIEW")
+    _DEDICATED_SECTIONS[_cat] = (3, "NEEDS REVIEW")
 
 
 for _cat in _INFORMATIONAL:
@@ -182,10 +179,9 @@ del _cat
 
 def _section_for(entry: LogEntry) -> tuple[int, str]:
     """(sort_order, section_label) for `entry` -- UNFIXABLE, then NOT
-    FIXED, then FIXED/REQUIRES ATTENTION, then NEEDS REVIEW, then any
-    other dedicated sections (see `_DEDICATED_SECTIONS`) like DUPLICATE
-    RECORDS, then INFORMATIONAL. There is no plain "FIXED" section -- an
-    unrecognized category logged with fixed=True falls back to
+    FIXED, then FIXED/REQUIRES ATTENTION, then DUPLICATE RECORDS, then NEEDS
+    REVIEW, then any other dedicated sections (see `_DEDICATED_SECTIONS`), then
+    INFORMATIONAL. There is no plain "FIXED" section -- an unrecognized category logged with fixed=True falls back to
     INFORMATIONAL rather than a generic bucket, so every new fix
     category must be added to `_FIXED_REQUIRES_ATTENTION` or
     `_INFORMATIONAL` above to land somewhere deliberate."""
@@ -363,9 +359,9 @@ _CHECK_DESCRIPTIONS: dict[str, str] = {
     "added_001_from_sirsi_035": "--source-system sirsi: the record had no 001, so one was built from "
     "its first 035 $a containing 'Sirsi' (any casing), with the label and spaces removed. The "
     "035 is left in place; check that the value is the Sirsi record number.",
-    "added_default_008": "Record had no 008 -- a fixed generic placeholder was inserted.",
-    "added_default_holdings_008": "Holdings record had no 008 -- a fixed generic 32-byte placeholder was "
-    "inserted.",
+    "added_default_008": "Record had no 008 -- a fixed generic placeholder was inserted (a blank "
+    "32-byte one for a holdings record; with --add-008-date-from-773, a bib record's date is "
+    "taken from its 773 $d when that gives exactly one year).",
     "added_default_245": 'Record had no 245 -- a placeholder ($a "No title") was inserted.',
     "added_missing_852c": "852 (Location) had no $c (Shelving location) -- a placeholder was inserted "
     "(disable with --no-fix-missing-852c) -- only fills a gap that was already "
@@ -431,19 +427,21 @@ _CHECK_DESCRIPTIONS: dict[str, str] = {
     "invalid_008_language_code": "A bibliographic 008's language code (35-37) is not an approved "
     "MARC language code (approved_language_codes.txt; blank and \"|||\" are also valid). Detect-only "
     "-- nothing was changed (on by default; --no-check-008-language turns it off).",
-    "fixed_misaligned_008": "A bibliographic 008 had its fixed fields after date1 shifted (the "
-    "run of blanks at 008/11 was too long or short), so the language code was not at 35-37 and "
-    "read as junk (found by looking for exactly one approved MARC language code). "
-    "Blanks at 008/11 were removed/added to put the language code back at 35-37 "
-    "(on by default; --no-fix-misaligned-008 turns it off). Only blanks are ever discarded. "
-    "Runs before the 008 length fix.",
+    "fixed_misaligned_008": "A bibliographic 008 had its fixed fields shifted, so the language code "
+    "was not at 35-37 and read as junk. Two kinds: (1) the run of blanks at 008/11 was too long or "
+    "short -- blanks were removed/added to put the language code back (found by looking for exactly "
+    "one approved MARC language code; only blanks are ever discarded; counted, not listed); "
+    "(2) 4 extra blanks at 15-18 (where the place code belongs) pushed every later byte 4 "
+    "positions right and cut off the last 4 (language, modified record, cataloging source), "
+    "leaving only the language's first letter at 39 -- the blanks were removed and the 008 rebuilt: "
+    "the language is the first approved code from 041 $a or 040 $b starting with that letter, else "
+    "\"|||\"; modified record blank; cataloging source \"|\" (not recoverable); each listed, "
+    "check the language. On by default; --no-fix-misaligned-008 turns it off. Runs before the "
+    "008 length fix.",
     "moved_999_to_949": "A 999 field (not indicators ff) was retagged to 949 (on by default; "
     "--no-move-999-to-949 turns it off). FOLIO reserves 999 with indicators ff for its own record "
     "identifiers ($i/$s), so a source system's own 999 (e.g. Sirsi/Sierra item data) "
     "conflicts with it and Data Import rejects the record; a real 999 ff is never touched.",
-    "derived_008_date_from_773": "Record had no 008 -- one was built with its date taken from "
-    "the 773 $d (host item date); other bytes are the placeholder. Only with "
-    "--add-008-date-from-773.",
     "remapped_999_to_945": 'A 999 field was retagged to 945 (indicators forced to "ff") -- only with '
     "--remap-999-to-945.",
     "trimmed_oversized_record": "A record was over 99999 bytes (the most ISO 2709's leader can "
@@ -466,10 +464,8 @@ _CHECK_DESCRIPTIONS: dict[str, str] = {
     "_additional004s file.",
     "holdings_852_duplicate_nr_subfield": "852 (Location) had a Not-Repeatable subfield (e.g. $h) more than once -- "
     "every occurrence after the first removed.",
-    "fixed_008_length": "008 wasn't exactly 40 characters -- padded (no loss) or truncated "
-    "(discards the trailing bytes past 40) to fit.",
-    "fixed_holdings_008_length": "Holdings 008 wasn't exactly 32 characters -- padded (no loss) or truncated "
-    "(discards the trailing bytes past 32) to fit.",
+    "fixed_008_length": "008 wasn't exactly 40 characters (32 for a holdings record) -- padded (no "
+    "loss) or truncated (discards the trailing bytes past that length) to fit.",
     "added_field": "A field required via --ensure-field was missing entirely -- inserted with "
     "the given content.",
     "added_missing_852_location": "852 (Location) had none of $a/$b/$c -- a placeholder was inserted so the "
@@ -536,7 +532,6 @@ _CHECK_DATA_LOSS: dict[str, str] = {
     "transcode_marc8_failed": "POSSIBLE DATA LOSS",
     "added_001_from_sirsi_035": "NO DATA LOSS",
     "added_default_008": "NO DATA LOSS",
-    "added_default_holdings_008": "NO DATA LOSS",
     "added_default_245": "NO DATA LOSS",
     "added_missing_852c": "NO DATA LOSS",
     "normalized_subfield_9_to_0": "NO DATA LOSS",
@@ -554,7 +549,6 @@ _CHECK_DATA_LOSS: dict[str, str] = {
     "fixed_mojibake": "NO DATA LOSS",
     "fixed_marc8_b2_umlaut": "NO DATA LOSS",
     "fixed_marc8_diacritic": "NO DATA LOSS",
-    "derived_008_date_from_773": "NO DATA LOSS",
     "remapped_999_to_945": "NO DATA LOSS",
     "moved_999_to_949": "NO DATA LOSS",
     "fixed_misaligned_008": "NO DATA LOSS",
@@ -569,7 +563,6 @@ _CHECK_DATA_LOSS: dict[str, str] = {
     "holdings_multiple_004": "NO DATA LOSS",
     "holdings_852_duplicate_nr_subfield": "POSSIBLE DATA LOSS",
     "fixed_008_length": "POSSIBLE DATA LOSS",
-    "fixed_holdings_008_length": "POSSIBLE DATA LOSS",
     "added_field": "NO DATA LOSS",
     "added_missing_852_location": "NO DATA LOSS",
     "reattached_orphaned_field": "NO DATA LOSS",
@@ -616,6 +609,7 @@ _ALWAYS_FULL_CATEGORIES = {
     "area_code_in_041",
     "invalid_041_language_code",
     "invalid_008_language_code",
+    "fixed_misaligned_008",
     "unfixable",
     "record_identifier_required",
     "diverted_for_review",
@@ -674,6 +668,12 @@ _ALWAYS_FULL_CATEGORIES = {
 _SUMMARIZE_FIXED_ENTRIES = {
     "bib_856_missing_u": "recoded to $u",
     "holdings_856_missing_u": "recoded to $u",
+}
+
+#: Categories listed in full except for entries whose detail does NOT start with the given
+#: text, which are only counted (category -> (listed prefix, what the count line says)).
+_COUNT_UNLESS_DETAIL_STARTS = {
+    "fixed_misaligned_008": ("008 had 4 extra blanks", "realigned at 008/11"),
 }
 
 _SUMMARIZE_NO_DATA_LOSS_ENTRIES = {
@@ -911,7 +911,7 @@ def write_log(
     count_lines: dict[str, str] | None = None,
 ) -> None:
     """Write `entries` grouped into sections -- NOT FIXED, then FIXED/
-    REQUIRES ATTENTION, then DUPLICATE RECORDS, then INFORMATIONAL at
+    REQUIRES ATTENTION, then DUPLICATE RECORDS, NEEDS REVIEW, then INFORMATIONAL at
     the bottom (there is no plain "FIXED" section -- see
     `_section_for`) -- and then by category within each.
 
@@ -1049,6 +1049,15 @@ def write_log(
                                  " -- NO DATA LOSS (not listed)\n")
                     for e in group:
                         if not e.fixed:
+                            fh.write(e.render() + "\n")
+                elif category in _COUNT_UNLESS_DETAIL_STARTS:
+                    prefix, counted_as = _COUNT_UNLESS_DETAIL_STARTS[category]
+                    n_counted = sum(1 for e in group if not e.detail.startswith(prefix))
+                    if n_counted:
+                        fh.write(f"\t{n_counted} record(s) {counted_as} -- NO DATA LOSS "
+                                 "(not listed)\n")
+                    for e in group:
+                        if e.detail.startswith(prefix):
                             fh.write(e.render() + "\n")
                 elif category in _SUMMARIZE_NO_DATA_LOSS_ENTRIES:
                     no_loss_count = sum(1 for e in group if "NO DATA LOSS" in e.detail)

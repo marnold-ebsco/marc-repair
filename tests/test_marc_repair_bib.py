@@ -3748,11 +3748,9 @@ class TestDerive008DateFrom773:
             text = _resolve_log(log).read_text(encoding="utf-8")
             if expect:
                 assert f008.content == expect
-                assert "INFORMATIONAL: derived_008_date_from_773" not in text
             else:
                 assert f008.content[6:15] == "s1987    "
-                assert "INFORMATIONAL: derived_008_date_from_773" in text
-                assert "=== INFORMATIONAL: added_default_008" not in text
+                assert "derived_008_date_from_773" not in text
 
 
 class TestAddDefault008:
@@ -4015,6 +4013,69 @@ class TestFixMisaligned008:
             f008 = [f for f in m.repair_text(m._read_text(str(out)))[0].fields
                     if f.tag == "008"][0]
             assert (f008.content[35:38] == "eng") == aligned
+
+
+class TestTrailingShift008:
+    BAD = "111110t20132013    nyua     b    001 0 e"
+    GOOD = "111110t20132013nyua     b    001 0 eng |"
+
+    def _rec(self, f040_b="eng", f008=None):
+        fields = [m.Field_("001", None, None, content="r1"),
+                  m.Field_("008", None, None, content=f008 or self.BAD)]
+        if f040_b:
+            fields.append(m.Field_("040", "  ", [("a", "DLC"), ("b", f040_b)]))
+        return m.ParsedRecord(leader=_SYNTHETIC_LEADER, entries=[], fields=fields)
+
+    def test_realigns_and_takes_language_from_040b(self):
+        rec = self._rec()
+        details = m.fix_008_trailing_shift(rec)
+        assert len(details) == 1 and "'eng' (040 $b)" in details[0]
+        assert next(f for f in rec.fields if f.tag == "008").content == self.GOOD
+
+    def test_language_not_matching_surviving_letter_becomes_fill(self):
+        rec = self._rec(f040_b="fre")
+        m.fix_008_trailing_shift(rec)
+        f008 = next(f for f in rec.fields if f.tag == "008").content
+        assert f008[35:38] == "|||" and len(f008) == 40 and f008[15:19] == "nyua"
+
+    def test_041_a_wins_over_040_b(self):
+        rec = self._rec()
+        rec.fields.append(m.Field_("041", "1 ", [("a", "eng"), ("h", "fre")]))
+        assert "(041 $a)" in m.fix_008_trailing_shift(rec)[0]
+
+    def test_good_and_other_008s_untouched(self):
+        for value in (self.GOOD, "140210t20142014nyua     6b   001 0 ent  "):
+            rec = self._rec(f008=value)
+            assert m.fix_008_trailing_shift(rec) == []
+
+    def test_cli_default_and_switch(self, tmp_path):
+        src = tmp_path / "s.mrc"
+        src.write_bytes(m.assemble_marc(self._rec()))
+        for flag, fixed in (([], True), (["--no-fix-misaligned-008"], False)):
+            out = tmp_path / f"o{fixed}.mrc"
+            log = tmp_path / f"l{fixed}.log"
+            assert m.main([str(src), "-o", str(out), "--log", str(log), *flag]) == 0
+            f008 = [f for f in m.repair_text(m._read_text(str(out)))[0].fields
+                    if f.tag == "008"][0]
+            assert (f008.content[35:38] == "eng") == fixed
+            if fixed:
+                text = next(tmp_path.glob("l*True*.log")).read_text()
+                assert "FIXED/REQUIRES ATTENTION: fixed_misaligned_008" in text
+                assert "008 had 4 extra blanks at 15-18" in text
+                assert "fixed_008_trailing_shift" not in text
+
+    def test_log_counts_misaligned_but_lists_trailing_shift(self, tmp_path):
+        old = "000000s1906                 eo   0 0 eng"      # blanks at 008/11
+        recs = [self._rec(), self._rec(f008=old, f040_b=None)]
+        recs[1].fields[0] = m.Field_("001", None, None, content="r2")
+        src = tmp_path / "s.mrc"
+        src.write_bytes(m.assemble_marc(recs[0]) + m.assemble_marc(recs[1]))
+        log = tmp_path / "l.log"
+        assert m.main([str(src), "-o", str(tmp_path / "o.mrc"), "--log", str(log)]) == 0
+        text = next(tmp_path.glob("l_*.log")).read_text()
+        assert "1 record(s) realigned at 008/11 -- NO DATA LOSS (not listed)" in text
+        assert text.count("008 had 4 extra blanks at 15-18") == 1
+        assert "=== 2 record(s) ===" in text
 
 
 class TestInvalid008Language:

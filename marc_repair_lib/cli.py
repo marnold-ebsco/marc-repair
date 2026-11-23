@@ -125,6 +125,7 @@ from .patching import (
     find_invalid_041_language,
     find_invalid_008_language,
     language_hint,
+    fix_008_trailing_shift,
     fix_misaligned_008,
     move_999_to_949,
     remap_999_to_945,
@@ -388,8 +389,8 @@ _HOLDINGS_ALWAYS_ACTIVE_CATEGORIES = {
     "fixed_misplaced_subfield_code",
     "removed_invalid_subfield",
     "field_removed_because_missing_a",
-    "added_default_holdings_008",
-    "fixed_holdings_008_length",
+    "added_default_008",
+    "fixed_008_length",
     "recoded_852_b_to_i",
     "removed_extra_852_b",
     "removed_bad_call_number",
@@ -804,10 +805,10 @@ def repair_holdings_records(
                 strip_empty_fields(parsed)
             if on("add_default_008"):
                 for detail in add_default_holdings_008(parsed):
-                    log("added_default_holdings_008", True, i, rec_id, detail)
+                    log("added_default_008", True, i, rec_id, detail)
             if on("fix_008_length"):
                 for detail in fix_008_length(parsed, expected_len=HOLDINGS_008_LENGTH):
-                    log("fixed_holdings_008_length", True, i, rec_id, detail)
+                    log("fixed_008_length", True, i, rec_id, detail)
             recoded_b_to_i, removed_extra_b = fix_852_multiple_b(
                 parsed, recode=on("recode_852_b_to_i"), remove=on("remove_extra_852_b"),
             )
@@ -2827,12 +2828,14 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
                 rec_id = record_identifier(parsed)
                 if args.add_008_date_from_773:
                     for detail in derive_008_date_from_773(parsed):
-                        log("derived_008_date_from_773", True, i, rec_id, detail)
+                        log("added_default_008", True, i, rec_id, detail)
                 if args.add_default_008:
                     for detail in add_default_008(parsed):
                         log("added_default_008", True, i, rec_id, detail)
                 if args.fix_misaligned_008:
                     rec_id = record_identifier(parsed)
+                    for detail in fix_008_trailing_shift(parsed):
+                        log("fixed_misaligned_008", True, i, rec_id, detail)
                     for detail in fix_misaligned_008(parsed):
                         log("fixed_misaligned_008", True, i, rec_id, detail)
                 if args.fix_008_length:
@@ -3099,8 +3102,6 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
         active_categories.add("leader_byte_defaulted")
     if args.source_system == "sirsi":
         active_categories.add("added_001_from_sirsi_035")
-    if args.add_008_date_from_773:
-        active_categories.add("derived_008_date_from_773")
     if args.remap_999_to_945:
         active_categories.add("remapped_999_to_945")
     if args.move_999_to_949 and args.source_system != "sirsi":
@@ -3190,7 +3191,8 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
     if n_default_008:
         separate_file_notes["added_default_008"] = (
             f"{n_default_008} records were missing the required 008. "
-            f"This was added: {DEFAULT_008_CONTENT!r}. "
+            f"This was added: {DEFAULT_008_CONTENT!r} (with --add-008-date-from-773, the date "
+            "is taken from the 773 $d where there is exactly one year). "
             "A complete list of impacted records is available by request."
         )
     write_log(

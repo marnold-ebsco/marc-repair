@@ -37,7 +37,7 @@
 === 1 record(s) ===
 	2026-09-22T21:55:17Z	record 22	removed =866    $zNote only, no statement	(missing required $a; content discarded)
 
-=== FIXED/REQUIRES ATTENTION: fixed_holdings_008_length ===
+=== FIXED/REQUIRES ATTENTION: fixed_008_length ===
 === Holdings 008 wasn't exactly 32 characters -- padded (no loss) or
 ===   truncated (discards the trailing bytes past 32) to fit. POSSIBLE
 ===   DATA LOSS. ===
@@ -208,7 +208,7 @@
 	2026-09-22T21:55:17Z	record 26 (ks-hol-dupe-id)	identifier used on 2 records total (also records [27]); this record's length (LDR 00-04) = 00160
 	2026-09-22T21:55:17Z	record 27 (ks-hol-dupe-id)	identifier used on 2 records total (also records [26]); this record's length (LDR 00-04) = 00154
 
-=== INFORMATIONAL: added_default_holdings_008 ===
+=== INFORMATIONAL: added_default_008 ===
 === Holdings record had no 008 -- a fixed generic 32-byte placeholder
 ===   was inserted. NO DATA LOSS. ===
 === 1 record(s) ===
