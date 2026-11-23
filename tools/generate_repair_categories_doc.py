@@ -634,6 +634,15 @@ BIB_ROWS = [
         "`--standard-marc-fields-file`)",
     ),
     CategoryRow(
+        "Field tag FOLIO's default MARC-to-instance mapping does not map (tag not in "
+        "instance_mapped_marc_fields.txt; 00X and 9XX never listed). The field stays on the MARC record "
+        "but does not show in the instance record; may affect how 56x, 69x, 79x and 89x display",
+        "Listed only (tag, instance and record counts), no change", "**Yes**",
+        "`unmapped_marc_fields`", "INFORMATION ONLY",
+        "One summary list in the log, not per record",
+        "`--no-check-unmapped-fields` (list: `--instance-mapped-fields-file`)",
+    ),
+    CategoryRow(
         "Sirsi record repeating an earlier record's 001 whose fields below 900 differ -- a "
         "true duplicate",
         "`-a`, `-b`, ... (`-aa` after `-z`) added to its 001 so it can be loaded; the first "

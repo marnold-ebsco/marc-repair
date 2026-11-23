@@ -1347,6 +1347,71 @@ def write_non_standard_supplement(path: str, tally: NonStandardFieldTally) -> bo
     return True
 
 
+DEFAULT_INSTANCE_MAPPED_FIELDS_FILE = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "instance_mapped_marc_fields.txt"
+)
+
+
+#: Category for `UnmappedFieldTally`'s one summary entry.
+UNMAPPED_FIELD_CATEGORY = "unmapped_marc_fields"
+
+
+def load_instance_mapped_fields(path: str) -> set[str]:
+    """Load instance_mapped_marc_fields.txt: the set of tags FOLIO's default
+    MARC-bib-to-instance rules map (one `TAG | targets` line each under
+    `[mapped]`; blank lines and lines starting with # are ignored)."""
+    tags: set[str] = set()
+    with open(path, encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line or line.startswith("#") or line.startswith("["):
+                continue
+            tags.add(line.split("|", 1)[0].strip())
+    return tags
+
+
+class UnmappedFieldTally:
+    """Information-only check: counts, per tag, the fields whose tag has no
+    rule in FOLIO's default MARC-bib-to-instance mapping (so they stay on the
+    MARC record but never show in the instance record). 00X, 9XX and
+    non-numeric tags are never counted. Never modifies a record."""
+
+    def __init__(self, mapped: set[str]):
+        self.mapped = mapped
+        self.instances: dict[str, int] = {}
+        self.records: dict[str, int] = {}
+        self.records_with_any = 0
+
+    def check(self, parsed: ParsedRecord) -> None:
+        seen: set[str] = set()
+        for f in parsed.fields:
+            tag = f.tag
+            if (len(tag) != 3 or not tag.isdigit() or tag[0] == "9" or tag[:2] == "00"
+                    or tag in self.mapped):
+                continue
+            self.instances[tag] = self.instances.get(tag, 0) + 1
+            if tag not in seen:
+                seen.add(tag)
+                self.records[tag] = self.records.get(tag, 0) + 1
+        if seen:
+            self.records_with_any += 1
+
+    def summary(self) -> tuple[str, str]:
+        """(count line, body text) for the log section: one line per tag."""
+        total = sum(self.instances.values())
+        count = (
+            f"{total:,} instance(s) in {self.records_with_any:,} record(s), "
+            f"{len(self.instances)} tag(s)"
+        )
+        lines = []
+        for tag in sorted(self.instances):
+            lines.append(
+                f"\t{tag}: {self.instances[tag]:,} instance(s) in "
+                f"{self.records[tag]:,} record(s)"
+            )
+        return count, "\n".join(lines)
+
+
 def find_853_missing_8(parsed: ParsedRecord) -> list[str]:
     """Detect (never fix) an 853 (Captions and Pattern -- Basic) field
     with no $8 (Field link and sequence number) -- the subfield that

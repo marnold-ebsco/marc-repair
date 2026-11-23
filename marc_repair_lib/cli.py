@@ -72,12 +72,15 @@ from .patching import (
     DEFAULT_HOLDINGS_REQUIRED_A_TAGS_FILE,
     DEFAULT_NON_REPEATABLE_TAGS_FILE,
     DEFAULT_REQUIRED_A_TAGS_FILE,
+    DEFAULT_INSTANCE_MAPPED_FIELDS_FILE,
     DEFAULT_STANDARD_MARC_FIELDS_FILE,
     HOLDINGS_008_LENGTH,
     HOLDINGS_CAPTION_PATTERN_TAGS,
     HOLDINGS_CAPTION_PATTERN_VALID_CODES,
     NON_STANDARD_FIELD_CATEGORY,
     NonStandardFieldTally,
+    UNMAPPED_FIELD_CATEGORY,
+    UnmappedFieldTally,
     _rewrite_stripping_invalid_tags,
     DEFAULT_008_CONTENT,
     derive_008_date_from_773,
@@ -98,6 +101,7 @@ from .patching import (
     fix_invalid_tags,
     fix_misplaced_subfield_codes,
     fix_missing_852_location,
+    load_instance_mapped_fields,
     load_standard_marc_fields,
     load_tag_list,
     merge_duplicate_040,
@@ -1892,6 +1896,14 @@ def build_parser() -> argparse.ArgumentParser:
         f"check, editable (default: {DEFAULT_STANDARD_MARC_FIELDS_FILE})",
     )
     parser.add_argument(
+        "--instance-mapped-fields-file",
+        default=DEFAULT_INSTANCE_MAPPED_FIELDS_FILE,
+        help="tags FOLIO maps to the instance record, for the unmapped-fields "
+        "information (regenerate from your tenant's mapping rules with "
+        "tools/build_instance_mapped_marc_fields.py "
+        f"(default: {DEFAULT_INSTANCE_MAPPED_FIELDS_FILE})",
+    )
+    parser.add_argument(
         "--allow-oversized-sentinel",
         action="store_true",
         default=False,
@@ -2397,6 +2409,11 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
         if args.check_non_standard_fields
         else None
     )
+    unmapped_tally = (
+        UnmappedFieldTally(load_instance_mapped_fields(args.instance_mapped_fields_file))
+        if args.check_unmapped_fields
+        else None
+    )
     ensure_specs = [parse_ensure_field_spec(s) for s in args.ensure_field]
 
     overrides = _load_overrides(args.overrides) if args.overrides else {}
@@ -2865,6 +2882,8 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
                         rec_id = record_identifier(parsed)
                         log("bib_856_missing_u", False, i, rec_id,
                             f"{detail} -- DATA LOSS")
+                if unmapped_tally is not None:
+                    unmapped_tally.check(parsed)
                 if non_standard_tally is not None:
                     rec_id = record_identifier(parsed)
                     for detail in non_standard_tally.check(parsed, i, rec_id):
@@ -3134,6 +3153,8 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
         active_categories.add("invalid_tag")
     if args.check_non_standard_fields:
         active_categories.add(NON_STANDARD_FIELD_CATEGORY)
+    if unmapped_tally is not None:
+        active_categories.add(UNMAPPED_FIELD_CATEGORY)
 
     active_categories -= inactive_categories(switch_values(args), "bib")
     resolved_full_categories = _ALWAYS_FULL_CATEGORIES | set(args.log_full)
@@ -3158,6 +3179,15 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
     )
     n_default_008 = sum(1 for e in log_entries if e.category == "added_default_008")
     separate_file_notes = {}
+    count_lines = {}
+    if unmapped_tally is not None and unmapped_tally.instances:
+        count_lines[UNMAPPED_FIELD_CATEGORY], separate_file_notes[UNMAPPED_FIELD_CATEGORY] = (
+            unmapped_tally.summary()
+        )
+        log_entries.append(LogEntry(
+            UNMAPPED_FIELD_CATEGORY, False,
+            datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), 0, "", "see summary",
+        ))
     if n_default_008:
         separate_file_notes["added_default_008"] = (
             f"{n_default_008} records were missing the required 008. "
@@ -3169,6 +3199,7 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
         full_categories=resolved_full_categories,
         include_zero=args.log_zero,
         separate_file_notes=separate_file_notes,
+        count_lines=count_lines,
     )
     if n_default_008:
         detail_path = os.path.splitext(log_path)[0] + "_added_default_008.txt"
@@ -3197,7 +3228,10 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
     n_not_fixed = sum(
         1 for e in log_entries if _section_for(e)[1] in ("NOT FIXED", "UNFIXABLE")
     )
-    n_info_only = sum(1 for e in log_entries if e.category == NON_STANDARD_FIELD_CATEGORY)
+    n_info_only = sum(
+        1 for e in log_entries
+        if e.category in (NON_STANDARD_FIELD_CATEGORY, UNMAPPED_FIELD_CATEGORY)
+    )
     n_fixed = n_log_lines - n_not_fixed - n_info_only
     print(
         "log (findings only; checks with none are listed at the end; "

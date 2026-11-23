@@ -6665,3 +6665,83 @@ class TestSirsiDuplicateIdentifiers:
         assert by_idx[1].category == "duplicate_identifier_suffixed"
         assert by_idx[2].category == "duplicate_identifier_suffixed"
         assert by_idx[3].category == "duplicate_identifier_item_carrier"
+
+
+class TestUnmappedMarcFields:
+    """unmapped_marc_fields: information only, on by default, bib records
+    only. One section listing each tag FOLIO's default MARC-to-instance
+    mapping doesn't map, with its counts; 9XX never listed."""
+
+    _ids = itertools.count(1)
+
+    @staticmethod
+    def _rec(extra):
+        return m.ParsedRecord(
+            leader=_SYNTHETIC_LEADER,
+            entries=[],
+            fields=[
+                m.Field_("001", None, None, content=f"unm{next(TestUnmappedMarcFields._ids)}"),
+                m.Field_("008", None, None, content="x" * 40),
+                m.Field_("245", "00", [("a", "Title.")]),
+                *extra,
+            ],
+        )
+
+    def _run(self, tmp_path, records, *extra_args):
+        src = tmp_path / "in.mrc"
+        src.write_bytes(b"".join(m.assemble_marc(r) for r in records))
+        out = tmp_path / "out.mrc"
+        log = tmp_path / "run.log"
+        assert m.main([str(src), "-o", str(out), "--log", str(log), *extra_args]) == 0
+        return _resolve_log(log).read_text(encoding="utf-8"), out, src
+
+    def test_shipped_snapshot_loads(self):
+        mapped = m.load_instance_mapped_fields(m.DEFAULT_INSTANCE_MAPPED_FIELDS_FILE)
+        assert {"001", "245", "856", "880"} <= mapped
+        # the local ranges the report warns about are not mapped
+        assert not any(t.startswith(("56", "69", "79", "89")) for t in mapped
+                       if t not in {"561", "562", "563", "565", "567", "800", "810", "811",
+                                    "830", "856", "880"})
+
+    def test_tally_counts_and_skips_mapped_9xx_nonnumeric(self):
+        t = m.UnmappedFieldTally({"001", "008", "245"})
+        t.check(self._rec([
+            m.Field_("999", "  ", [("a", "x")]),
+            m.Field_("AB1", "  ", [("a", "x")]),
+            m.Field_("003", None, None, content="OCoLC"),
+            m.Field_("790", "1 ", [("a", "x")]),
+            m.Field_("790", "1 ", [("a", "y")]),
+            m.Field_("490", "0 ", [("a", "z")]),
+        ]))
+        t.check(self._rec([m.Field_("790", "1 ", [("a", "x")])]))
+        assert t.instances == {"790": 3, "490": 1}
+        assert t.records == {"790": 2, "490": 1}
+        assert t.records_with_any == 2
+
+    def test_cli_section_lists_tags_and_message(self, tmp_path):
+        recs = [
+            self._rec([m.Field_("790", "1 ", [("a", "x")]), m.Field_("999", "  ", [("a", "x")])]),
+            self._rec([m.Field_("790", "1 ", [("a", "x")]), m.Field_("490", "0 ", [("a", "S")])]),
+        ]
+        content, out, src = self._run(tmp_path, recs)
+        assert "=== INFORMATION ONLY: unmapped_marc_fields ===" in content
+        assert "will still be on the MARC records" in content
+        assert "\t790: 2 instance(s) in 2 record(s)\n" in content
+        assert "\t490: 1 instance(s) in 1 record(s)\n" in content
+        section = content.split("INFORMATION ONLY: unmapped_marc_fields", 1)[1]
+        section = section.split("\n=== ", 3)[3].split("\n\n", 1)[0]
+        assert "999" not in section and "245" not in section and "003" not in section
+        # report only: the unmapped fields are still in the output
+        assert out.read_bytes().count(b"790") >= 2
+
+    def test_cli_nothing_unmapped_gets_no_findings_line(self, tmp_path):
+        content, _, _ = self._run(tmp_path, [self._rec([])])
+        assert "=== INFORMATION ONLY: unmapped_marc_fields" not in content
+        assert "unmapped_marc_fields --" in content
+
+    def test_cli_switch_off(self, tmp_path):
+        content, _, _ = self._run(
+            tmp_path, [self._rec([m.Field_("790", "1 ", [("a", "x")])])],
+            "--no-check-unmapped-fields",
+        )
+        assert "unmapped_marc_fields" not in content.split("\n\n", 1)[1]

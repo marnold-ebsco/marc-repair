@@ -138,6 +138,9 @@ SWITCHES: tuple[Switch, ...] = (
     _s("check_dangling_880_links", "check-dangling-880-links", False, "bib", "dangling_880_link"),
     _s("check_non_standard_fields", "check-non-standard-fields", True, "bib",
        "non_standard_marc_fields"),
+    _s("check_unmapped_fields", "check-unmapped-fields", True, "bib", "unmapped_marc_fields",
+       help="list the field tags FOLIO's default MARC-to-instance mapping does not map "
+       "(information only)"),
     _s("check_suspect_marc8_escape", "check-suspect-marc8-escape", True, "bib",
        "suspect_marc8_escape",
        help="flag a suspect (probably miskeyed) MARC-8 escape sequence"),

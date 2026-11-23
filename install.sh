@@ -60,6 +60,7 @@ FILES=(
   "holdings_required_a_tags.txt"
   "non_repeatable_tags.txt"
   "standard_marc_fields.txt"
+  "instance_mapped_marc_fields.txt"
   "approved_language_codes.txt"
   "README.md"
   "docs/REPAIR_CATEGORIES.md"

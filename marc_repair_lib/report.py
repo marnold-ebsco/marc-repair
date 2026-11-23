@@ -163,6 +163,8 @@ _DEDICATED_SECTIONS: dict[str, tuple[int, str]] = {
     # Below even INFORMATIONAL: report-only, but unlike INFORMATIONAL its
     # entries ARE listed (first few per tag -- see NonStandardFieldTally).
     "non_standard_marc_fields": (5, "INFORMATION ONLY"),
+    # One summary entry: the list of unmapped tags with counts (see UnmappedFieldTally).
+    "unmapped_marc_fields": (5, "INFORMATION ONLY"),
 }
 
 
@@ -296,6 +298,12 @@ _CHECK_DESCRIPTIONS: dict[str, str] = {
     "or is listed there as obsolete ([OBSOLETE]). 9XX fields are never reported. Report only -- "
     "nothing is changed or removed. Each tag is listed separately: its first 5 occurrences in "
     "detail, then \"and N more\".",
+    "unmapped_marc_fields": "These fields are not mapped to the FOLIO instance record by FOLIO's "
+    "default MARC-bib-to-instance mapping (instance_mapped_marc_fields.txt). They will still be "
+    "on the MARC records, but will not show up in the instance records. Unmapped fields will not "
+    "display on a FOLIO instance record and will not be searchable in Locate. 00X and 9XX "
+    "fields are never listed. Report only -- "
+    "nothing is changed or removed.",
     "suspect_marc8_escape": "A MARC-8 script-switching escape (Hebrew/Arabic/Cyrillic/Greek/CJK) "
     "produces only a single character, welded directly between two ASCII "
     "letters with no word boundary -- almost certainly a miskeyed accented "
@@ -581,6 +589,7 @@ _CHECK_DATA_LOSS: dict[str, str] = {
     "trimmed_oversized_record": "DATA LOSS",
     "collapsed_oversized_field_escapes": "POSSIBLE DATA LOSS",
     "non_standard_marc_fields": "NO DATA LOSS",
+    "unmapped_marc_fields": "NO DATA LOSS",
 }
 
 
@@ -907,6 +916,7 @@ def write_log(
     count_notes: dict[str, str] | None = None,
     include_zero: bool = False,
     separate_file_notes: dict[str, str] | None = None,
+    count_lines: dict[str, str] | None = None,
 ) -> None:
     """Write `entries` grouped into sections -- NOT FIXED, then FIXED/
     REQUIRES ATTENTION, then DUPLICATE RECORDS, then INFORMATIONAL at
@@ -1024,6 +1034,8 @@ def write_log(
                 count_line = f"{n_instances} instance(s) in {n_records} record(s)"
             if count_note:
                 count_line += f" - {count_note}"
+            if category in (count_lines or {}):
+                count_line = count_lines[category]
             fh.write(f"=== {count_line} ===\n")
             if category in (separate_file_notes or {}):
                 fh.write(separate_file_notes[category] + "\n")
