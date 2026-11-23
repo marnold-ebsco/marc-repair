@@ -37,7 +37,8 @@ def targets(rules: list) -> list[str]:
 DEFAULT_IGNORED = [
     "# Tags never listed by the unmapped_marc_fields check, one TAG or FIRST-LAST range per",
     "# line (optionally followed by | comment). Edit freely: regenerating keeps this section.",
-    "010-099 | control numbers, coded data, call numbers and classification",
+    "010-199 | control numbers, coded data, call numbers and classification (01x-19x)",
+    "300-399 | RDA attributes (3xx)",
 ]
 
 

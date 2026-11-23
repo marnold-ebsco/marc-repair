@@ -1364,7 +1364,7 @@ def load_instance_mapped_fields(path: str) -> tuple[set[str], set[str]]:
     """Load instance_mapped_marc_fields.txt: returns (mapped, ignored) tag sets.
     `[mapped]` holds the tags FOLIO's default MARC-bib-to-instance rules map
     (one `TAG | targets` line each). `[ignored]` holds tags never listed as
-    unmapped: one `TAG` or `FIRST-LAST` range (e.g. `010-099`) per line,
+    unmapped: one `TAG` or `FIRST-LAST` range (e.g. `300-399`) per line,
     optionally followed by `| comment`. Blank lines and lines starting with #
     are skipped."""
     sections: dict[str, set[str]] = {"mapped": set(), "ignored": set()}

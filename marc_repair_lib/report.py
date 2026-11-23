@@ -303,7 +303,7 @@ _CHECK_DESCRIPTIONS: dict[str, str] = {
     "on the MARC records, but will not show up in the instance records. Unmapped fields will not "
     "display on a FOLIO instance record and will not be searchable in Locate. 00X and 9XX "
     "fields are never listed, nor are the tags in the [ignored] section of "
-    "instance_mapped_marc_fields.txt (01x-09x by default). Report only -- "
+    "instance_mapped_marc_fields.txt (010-199 and 300-399 by default). Report only -- "
     "nothing is changed or removed.",
     "suspect_marc8_escape": "A MARC-8 script-switching escape (Hebrew/Arabic/Cyrillic/Greek/CJK) "
     "produces only a single character, welded directly between two ASCII "
