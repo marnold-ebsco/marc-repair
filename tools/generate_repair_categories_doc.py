@@ -41,7 +41,8 @@ currently in the INFORMATIONAL section, which is *never* listed in full
 actionable findings (typographic normalization, MARC-8 transcoding, and
 the like), so a header + count is genuinely all there is to say about
 them. If a category there needs the full per-record list, that's a sign
-it belongs in FIXED/REQUIRES ATTENTION or NEEDS REVIEW instead.
+it belongs in FIXED/REQUIRES ATTENTION, FLAGGED, NOT CHANGED or
+NEEDS REVIEW instead.
 
 In the bib pipeline, a record that's genuinely `unfixable` (see below) is
 never written into the main output at all -- it's diverted, byte-for-byte
@@ -128,8 +129,9 @@ BIB_ROWS = [
     CategoryRow(
         "Short-indicator padding", "Padded indicators to 2 chars",
         "Yes (`--no-fix-bad-indicators` to disable)", "`padded_indicators`",
-        "FIXED/REQUIRES ATTENTION",
-        "**Yes**",
+        "INFORMATIONAL",
+        "No -- INFORMATIONAL categories are never listed in full, "
+        "not even via --log-full",
         "`--no-fix-bad-indicators`",
     ),
     CategoryRow(
@@ -141,7 +143,7 @@ BIB_ROWS = [
     ),
     CategoryRow(
         "Transcode failure", "Left field untranscoded",
-        "n/a (only if it occurs)", "`transcode_marc8_failed`", "NEEDS REVIEW",
+        "n/a (only if it occurs)", "`transcode_marc8_failed`", "FLAGGED, NOT CHANGED",
         "**Yes**", "`--no-transcode-marc8` (skips this entirely)",
     ),
     CategoryRow(
@@ -235,11 +237,23 @@ BIB_ROWS = [
         "Merged into the first 040: $c/$d/$e added (a $d naming the same "
         "agency as $a/$c is skipped), a conflicting $a/$c demoted to $d, "
         "order $a $b $c $d $e. A 040 that is really a 041 (language codes) "
-        "is recoded as one; one holding a call number or ISBN is dropped "
-        "(flagged). Exact copies are left to the removal below",
+        "is recoded as one. A merge that has to drop something (a call number "
+        "or ISBN in an 040, a subfield with no place in the merged 040) is "
+        "logged as `merged_duplicate_040_dropped_data` instead. Exact copies are left to "
+        "the removal below",
         "Yes (`--no-merge-duplicate-040`)",
-        "`merged_duplicate_040`", "FIXED/REQUIRES ATTENTION",
+        "`merged_duplicate_040`", "NEEDS REVIEW",
         "Yes", "`--no-merge-duplicate-040`",
+    ),
+    CategoryRow(
+        "A second (or later) 040 that could not be merged without losing something: "
+        "an 040 that holds a call number or ISBN (dropped), or a subfield with no "
+        "place in the merged 040",
+        "Removed the dropped data; the rest is merged as above. Each entry lists "
+        "what was dropped",
+        "Yes (`--no-merge-duplicate-040`)",
+        "`merged_duplicate_040_dropped_data`", "FIXED/REQUIRES ATTENTION",
+        "**Yes**", "`--no-merge-duplicate-040`",
     ),
     CategoryRow(
         "A second (or later) 100, 240 or 245 -- all Not Repeatable",
@@ -259,8 +273,20 @@ BIB_ROWS = [
         "`--no-move-duplicate-245-to-246`, "
         "`--no-recode-misfiled-duplicate-245`, "
         "`--no-move-duplicate-240-to-730`)",
-        "`moved_duplicate_to_added_entry`", "FIXED/REQUIRES ATTENTION",
+        "`moved_duplicate_to_added_entry`", "NEEDS REVIEW",
         "Yes",
+        "`--no-move-duplicate-100-to-700`, `--no-move-duplicate-245-to-246`, "
+        "`--no-recode-misfiled-duplicate-245`, "
+        "`--no-move-duplicate-240-to-730`",
+    ),
+    CategoryRow(
+        "A second (or later) 100, 240 or 245 recoded as an added entry that cannot "
+        "carry one of its subfields ($6, $c, $k, ... are dropped)",
+        "Recoded as above, minus the dropped subfield(s), which each entry lists",
+        "Yes (`--no-move-duplicate-100-to-700`, `--no-move-duplicate-245-to-246`, "
+        "`--no-recode-misfiled-duplicate-245`, `--no-move-duplicate-240-to-730`)",
+        "`moved_duplicate_dropped_subfield`", "FIXED/REQUIRES ATTENTION",
+        "**Yes**",
         "`--no-move-duplicate-100-to-700`, `--no-move-duplicate-245-to-246`, "
         "`--no-recode-misfiled-duplicate-245`, "
         "`--no-move-duplicate-240-to-730`",
@@ -277,8 +303,9 @@ BIB_ROWS = [
         "(analytical). Runs before the missing-required-$a removal below, "
         "so the title is kept instead of lost",
         "Yes (`--no-recode-title-only-7xx`)",
-        "`recoded_title_only_7xx_to_730`", "FIXED/REQUIRES ATTENTION",
-        "**Yes** (first field recoded per record, plus 'and N more')",
+        "`recoded_title_only_7xx_to_730`", "INFORMATIONAL",
+        "No -- INFORMATIONAL categories are never listed in full, "
+        "not even via --log-full",
         "`--no-recode-title-only-7xx`",
     ),
     CategoryRow(
@@ -288,8 +315,9 @@ BIB_ROWS = [
         "$b recoded to $a. Runs before the missing-required-$a removal "
         "below, so the heading is kept instead of lost",
         "Yes (`--no-recode-6xx-b-to-a`)",
-        "`recoded_6xx_b_to_a`", "FIXED/REQUIRES ATTENTION",
-        "**Yes**",
+        "`recoded_6xx_b_to_a`", "INFORMATIONAL",
+        "No -- INFORMATIONAL categories are never listed in full, "
+        "not even via --log-full",
         "`--no-recode-6xx-b-to-a`",
     ),
     CategoryRow(
@@ -334,9 +362,9 @@ BIB_ROWS = [
         "whole discarded duplicate field",
         "Merged all 010 fields into one (see non_repeatable_tags.txt "
         "note)",
-        "Yes, always", "`deduped_010_lccn`", "FIXED/REQUIRES ATTENTION",
-        "**Yes** (only records where a different LCCN was moved to $z; "
-        "identical-except-whitespace merges are summarized as a count)",
+        "Yes, always", "`deduped_010_lccn`", "INFORMATIONAL",
+        "No -- INFORMATIONAL categories are never listed in full, "
+        "not even via --log-full",
         "-- (no switch -- always runs and always logged)",
     ),
     CategoryRow(
@@ -366,14 +394,14 @@ BIB_ROWS = [
     CategoryRow(
         "`--ensure-field` insertion", "Added field",
         "n/a (only if flag given)", "`added_field`",
-        "FIXED/REQUIRES ATTENTION", "No (header + count always shown; full per-record list via "
-                                    "--log-full added_field)", "`--ensure-field`",
+        "INFORMATIONAL", "No -- INFORMATIONAL categories are never listed in full, "
+        "not even via --log-full", "`--ensure-field`",
     ),
     CategoryRow(
         "Missing 245 backfilled from 130/240/246/242/222/880, or "
         "placeholder 245 added", "Added default field",
         "Yes (`--no-add-default-245`, `--guarantee-importable`)", "`added_default_245`",
-        "FIXED/REQUIRES ATTENTION", "**Yes**",
+        "NEEDS REVIEW", "**Yes**",
         "`--no-add-default-245`; `--guarantee-importable` (implies "
         "`--no-add-default-245`); `--ensure-field` (takes priority per-record)",
     ),
@@ -408,21 +436,28 @@ BIB_ROWS = [
         "$b when it starts with the surviving letter, else `|||`, modified record blank, "
         "cataloging source `|`",
         "Yes (`--no-fix-misaligned-008`)", "`fixed_misaligned_008`",
-        "FIXED/REQUIRES ATTENTION", "(1) counted only; (2) **every record listed**",
+        "NEEDS REVIEW", "(1) counted only; (2) **every record listed**",
         '`--no-fix-misaligned-008`',
     ),
     CategoryRow(
-        "008 length pad/truncate (40 bytes; holdings 32 bytes)", "Padded/truncated field",
+        "008 shorter than 40 bytes (holdings 32 bytes)", "Padded with spaces",
         "Yes (`--no-fix-008-length`)", "`fixed_008_length`",
-        "FIXED/REQUIRES ATTENTION", "No (header + count always shown; full per-record list via "
-                                    "--log-full fixed_008_length)", "`--no-fix-008-length`",
+        "INFORMATIONAL",
+        "No -- INFORMATIONAL categories are never listed in full, not even via --log-full",
+        "`--no-fix-008-length`",
+    ),
+    CategoryRow(
+        "008 longer than 40 bytes (holdings 32 bytes)", "Truncated field (trailing bytes lost; "
+        "the original content is in the log entry)",
+        "Yes (`--no-fix-008-length`)", "`truncated_008`",
+        "FIXED/REQUIRES ATTENTION", "**Yes**", "`--no-fix-008-length`",
     ),
     CategoryRow(
         "Orphaned trailing field (present in the file, no directory entry "
         "of its own) reattached as `700`",
         "Merged into the preceding record, as a new field",
         "Yes (`--no-reattach-orphaned-fields`)",
-        "`reattached_orphaned_field`", "FIXED/REQUIRES ATTENTION", "**Yes**",
+        "`reattached_orphaned_field`", "NEEDS REVIEW", "**Yes**",
         "`--no-reattach-orphaned-fields` (leaves it `unfixable`/`UNFIXABLE` "
         "instead)",
     ),
@@ -435,7 +470,7 @@ BIB_ROWS = [
     CategoryRow(
         "Invalid tag, no 9XX slot free", "Field removed entirely "
         "(full-file rewrite -- see strip_invalid_tags)",
-        "(fallback of above)", "`unfixed_non_numeric_tag`", "NEEDS REVIEW",
+        "(fallback of above)", "`unfixed_non_numeric_tag`", "FIXED/REQUIRES ATTENTION",
         "**Yes**",
         "`--no-fix-invalid-tags` (skips the attempt entirely -- field "
         "left untouched instead of removed); `--remap-999-to-945` "
@@ -480,8 +515,8 @@ BIB_ROWS = [
         "Merged redundant escape resets and removed spurious one-character "
         "subscript/superscript escape pairs (`ESC b`/`ESC p`, digit, `ESC s`); "
         "the field's text is otherwise kept",
-        "Yes, always", "`collapsed_oversized_field_escapes`", "FIXED/REQUIRES ATTENTION",
-        "**Yes**", "-- (no switch)",
+        "Yes, always", "`collapsed_oversized_field_escapes`", "INFORMATIONAL",
+        "No -- INFORMATIONAL categories are never listed in full, not even via --log-full", "-- (no switch)",
     ),
     CategoryRow(
         "Field over 9999 bytes that collapsing escapes can't shrink enough",
@@ -514,7 +549,8 @@ BIB_ROWS = [
         "spaces removed (`(Sirsi) a445304` -> `a445304`); the 035 is kept, any "
         "further Sirsi 035s are ignored",
         "Only with `--source-system sirsi`",
-        "`added_001_from_sirsi_035`", "FIXED/REQUIRES ATTENTION", "**Yes**",
+        "`added_001_from_sirsi_035`", "NEEDS REVIEW",
+        "**Yes**",
         "`--source-system sirsi`",
     ),
     CategoryRow(
@@ -550,11 +586,11 @@ BIB_ROWS = [
     CategoryRow(
         "Suspect MARC-8 escape (miskeyed diacritic)",
         "Flagged only, no change", "detect-only", "`suspect_marc8_escape`",
-        "NEEDS REVIEW", "**Yes**", "-- (detect-only, no switch)",
+        "FLAGGED, NOT CHANGED", "**Yes**", "-- (detect-only, no switch)",
     ),
     CategoryRow(
         "Doubled proxy URL prefix", "Flagged only, no change",
-        "detect-only", "`doubled_proxy_url`", "NEEDS REVIEW", "**Yes**",
+        "detect-only", "`doubled_proxy_url`", "FLAGGED, NOT CHANGED", "**Yes**",
         "-- (detect-only, no switch)",
     ),
     CategoryRow(
@@ -562,20 +598,20 @@ BIB_ROWS = [
         "groups in curly braces, found in real 880 fields -- real "
         "MARC-8 content hex-encoded and brace-wrapped, sometimes twice)",
         "Flagged only, no change", "detect-only",
-        "`suspect_hex_encoded_marc8`", "NEEDS REVIEW", "**Yes**",
+        "`suspect_hex_encoded_marc8`", "FLAGGED, NOT CHANGED", "**Yes**",
         "-- (detect-only, no switch)",
     ),
     CategoryRow(
         "Invalid indicator *value* (present but not digit/blank)",
         "Flagged only, no change", "detect-only",
-        "`invalid_indicator_value`", "NEEDS REVIEW", "**Yes**",
+        "`invalid_indicator_value`", "FLAGGED, NOT CHANGED", "**Yes**",
         "-- (detect-only, no switch)",
     ),
     CategoryRow(
         "Invalid bibliographic level (leader byte 07)",
         "Defaulted to 'm' (Monograph/Item)",
         "Yes, always",
-        "`invalid_bibliographic_level`", "FIXED/REQUIRES ATTENTION", "**Yes**",
+        "`invalid_bibliographic_level`", "NEEDS REVIEW", "**Yes**",
         "-- (no switch -- always runs and always logged)",
     ),
     CategoryRow(
@@ -588,7 +624,7 @@ BIB_ROWS = [
     ),
     CategoryRow(
         "Language code (008/35-37) not an approved MARC language code", "Flagged only, no change",
-        "Yes (`--no-check-008-language`)", "`invalid_008_language_code`", "NEEDS REVIEW",
+        "Yes (`--no-check-008-language`)", "`invalid_008_language_code`", "FLAGGED, NOT CHANGED",
         "**Yes**", "`--no-check-008-language`",
     ),
     CategoryRow(
@@ -609,11 +645,11 @@ BIB_ROWS = [
     CategoryRow(
         "Geographic area code in a 041 language subfield (belongs in 043 $a)",
         "Flagged only, no change", "Yes (`--no-check-041-area-code`)",
-        "`area_code_in_041`", "NEEDS REVIEW", "**Yes**", "`--no-check-041-area-code`",
+        "`area_code_in_041`", "FLAGGED, NOT CHANGED", "**Yes**", "`--no-check-041-area-code`",
     ),
     CategoryRow(
         "041 language subfield not an approved MARC language code", "Flagged only, no change",
-        "Yes (`--no-check-041-language`)", "`invalid_041_language_code`", "NEEDS REVIEW",
+        "Yes (`--no-check-041-language`)", "`invalid_041_language_code`", "FLAGGED, NOT CHANGED",
         "**Yes**", "`--no-check-041-language`",
     ),
     CategoryRow(
@@ -681,7 +717,8 @@ HOLDINGS_ROWS = [
     CategoryRow(
         "Short-indicator padding", "Padded indicators to 2 chars",
         "Yes (always, hardcoded)", "`padded_indicators`",
-        "FIXED/REQUIRES ATTENTION", "**Yes**",
+        "INFORMATIONAL", "No -- INFORMATIONAL categories are never listed in full, "
+        "not even via --log-full",
         "-- (no switch -- always runs and always logged)",
     ),
     CategoryRow(
@@ -694,8 +731,10 @@ HOLDINGS_ROWS = [
     CategoryRow(
         "Leader bytes 05/06/17 defaulted (holdings-specific byte 6 -> `u`, "
         "byte 17 code set)", "Defaulted leader byte", "Yes, always",
-        "`holdings_leader_byte_defaulted`", "FIXED/REQUIRES ATTENTION",
-        "**Yes**", "-- (no switch -- always runs and always logged)",
+        "`holdings_leader_byte_defaulted`", "INFORMATIONAL",
+
+        "No -- INFORMATIONAL categories are never listed in full, not even via --log-full",
+        "-- (no switch -- always runs and always logged)",
     ),
     CategoryRow(
         "$9 -> $0 normalization", "Renamed subfield code", "Yes, always",
@@ -756,9 +795,9 @@ HOLDINGS_ROWS = [
         "The $b after $h is recoded to $i instead of removed -- it's "
         "real, recoverable data (the cutter/date/copy note that goes "
         "with $h's classification)",
-        "Yes, always", "`recoded_852_b_to_i`", "FIXED/REQUIRES ATTENTION",
-        "No (header + count always shown; full per-record list via "
-        "--log-full recoded_852_b_to_i)",
+        "Yes, always", "`recoded_852_b_to_i`", "INFORMATIONAL",
+        "No -- INFORMATIONAL categories are never listed in full, "
+        "not even via --log-full",
         "-- (no switch -- always runs and always logged)",
     ),
     CategoryRow(
@@ -832,7 +871,7 @@ HOLDINGS_ROWS = [
         'Placeholder ("Migration") inserted/replaced in $b specifically '
         "-- the one subfield most systems treat as location-bearing",
         "Yes, always", "`added_missing_852_location`",
-        "FIXED/REQUIRES ATTENTION", "**Yes**",
+        "NEEDS REVIEW", "**Yes**",
         "-- (no switch -- always runs and always logged); no-op if $a, "
         "$b, or $c already has usable content",
     ),
@@ -846,9 +885,9 @@ HOLDINGS_ROWS = [
         "852 subfield present but with no data at all (e.g. a bare "
         "$2), other than $h -- already handled specifically above",
         "Subfield removed; rest of the field left as-is", "Yes, always",
-        "`removed_empty_852_subfield`", "FIXED/REQUIRES ATTENTION",
-        "No (header + count always shown; full per-record list via --log-full "
-        "removed_empty_852_subfield)", "-- (no switch -- always runs and always logged)",
+        "`removed_empty_852_subfield`", "INFORMATIONAL",
+        "No -- INFORMATIONAL categories are never listed in full, "
+        "not even via --log-full", "-- (no switch -- always runs and always logged)",
     ),
     CategoryRow(
         "Invalid (non-numeric) tag -> 9XX rename", "Renamed field tag",
@@ -860,7 +899,7 @@ HOLDINGS_ROWS = [
     CategoryRow(
         "Invalid tag, no 9XX slot free", "Field removed entirely "
         "(full-file rewrite)", "(fallback)",
-        "`unfixed_non_numeric_tag`", "NEEDS REVIEW", "**Yes**",
+        "`unfixed_non_numeric_tag`", "FIXED/REQUIRES ATTENTION", "**Yes**",
         "-- (no switch -- depends only on whether every 900-999 tag is "
         "already taken elsewhere in the file)",
     ),
@@ -907,7 +946,8 @@ HOLDINGS_ROWS = [
         "to field 001 so they no longer share one identifier (see "
         "`split_holdings_multiple_852`)",
         "Yes, always", "`split_holdings_multiple_852`",
-        "FIXED/REQUIRES ATTENTION", "**Yes**",
+        "INFORMATIONAL", "No -- INFORMATIONAL categories are never listed in full, "
+        "not even via --log-full",
         "-- (no switch -- always runs and always logged)",
     ),
     CategoryRow(
@@ -938,8 +978,8 @@ HOLDINGS_ROWS = [
         "Merged redundant escape resets and removed spurious one-character "
         "subscript/superscript escape pairs (`ESC b`/`ESC p`, digit, `ESC s`); "
         "the field's text is otherwise kept",
-        "Yes, always", "`collapsed_oversized_field_escapes`", "FIXED/REQUIRES ATTENTION",
-        "**Yes**", "-- (no switch)",
+        "Yes, always", "`collapsed_oversized_field_escapes`", "INFORMATIONAL",
+        "No -- INFORMATIONAL categories are never listed in full, not even via --log-full", "-- (no switch)",
     ),
     CategoryRow(
         "Field over 9999 bytes that collapsing escapes can't shrink enough",

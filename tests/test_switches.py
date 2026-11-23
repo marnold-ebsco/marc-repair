@@ -226,7 +226,7 @@ SYNTHETIC = {  # switch dest -> category it should drive
     "move_duplicate_100_to_700": "moved_duplicate_to_added_entry",
     "move_duplicate_240_to_730": "moved_duplicate_to_added_entry",
     "move_duplicate_245_to_246": "moved_duplicate_to_added_entry",
-    "recode_misfiled_duplicate_245": "moved_duplicate_to_added_entry",
+    "recode_misfiled_duplicate_245": "moved_duplicate_dropped_subfield",
     "strip_duplicate_non_repeatable_fields": "removed_non_repeatable_duplicate",
     "recode_title_only_7xx": "recoded_title_only_7xx_to_730",
     "recode_6xx_b_to_a": "recoded_6xx_b_to_a",

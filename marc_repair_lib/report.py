@@ -37,44 +37,30 @@ def _format_duration(seconds: float) -> str:
 #: sections below (or DUPLICATE RECORDS), so a reader never has to
 #: wonder which bucket a given fix landed in.
 #:
-#: FIXED/REQUIRES ATTENTION: auto-fixed AND still worth a human's
-#: attention -- these discard or alter enough real data (or add
-#: content a human should double-check) that it's worth a second look
-#: even though the record is now loadable. Sits right below NOT
+#: FIXED/REQUIRES ATTENTION: auto-fixed AND data was (or may have been)
+#: removed or discarded -- a field, subfield or other content -- so it is
+#: worth a second look even though the record is now loadable. A fix that
+#: loses nothing belongs in INFORMATIONAL, or in NEEDS REVIEW when the tool
+#: had to insert or guess a value. Sits right below NOT
 #: FIXED: not as urgent as something left broken, but more urgent
 #: than a routine fix.
 _FIXED_REQUIRES_ATTENTION = {
-    "moved_duplicate_to_added_entry",
-    "merged_duplicate_040",
     "removed_non_repeatable_duplicate",
-    "fixed_008_length",
-    "fixed_misaligned_008",
     "removed_invalid_subfield",
     "truncated_oversized_field",
     "trimmed_oversized_record",
-    "collapsed_oversized_field_escapes",
     "field_removed_because_missing_a",
-    "recoded_title_only_7xx_to_730",
-    "recoded_6xx_b_to_a",
-    "added_field",
-    "holdings_leader_byte_defaulted",
-    "reattached_orphaned_field",
-    "added_missing_852_location",
     "removed_bad_call_number",
-    "recoded_852_b_to_i",
     "removed_extra_852_b",
-    "removed_empty_852_subfield",
     "holdings_852_duplicate_nr_subfield",
-    "split_holdings_multiple_852",
-    "added_default_245",
-    "added_001_from_sirsi_035",
-    "padded_indicators",
     "incomplete_852",
-    "invalid_bibliographic_level",
     "holdings_852_b_suspect_content",
-    "deduped_010_lccn",
     "removed_880_missing_6",
     "removed_untranscodable_subfield",
+    "unfixed_non_numeric_tag",
+    "truncated_008",
+    "merged_duplicate_040_dropped_data",
+    "moved_duplicate_dropped_subfield",
 }
 
 
@@ -90,6 +76,14 @@ _FIXED_REQUIRES_ATTENTION = {
 #: with spaces) -- or a detect-only finding not urgent enough for NOT
 #: FIXED.
 _INFORMATIONAL = {
+    "padded_indicators",
+    "recoded_852_b_to_i",
+    "removed_empty_852_subfield",
+    "split_holdings_multiple_852",
+    "deduped_010_lccn",
+    "added_field",
+    "recoded_6xx_b_to_a",
+    "recoded_title_only_7xx_to_730",
     "added_default_008",
     "holdings_multiple_004",
     "removed_null_identifier",
@@ -112,10 +106,32 @@ _INFORMATIONAL = {
     "fixed_marc8_diacritic",
     "fixed_marc8_b2_umlaut",
     "removed_010_whitespace_a",
+    "fixed_008_length",
+    "collapsed_oversized_field_escapes",
+    "holdings_leader_byte_defaulted",
 }
 
 
-#: NEEDS REVIEW: a detect-only finding that's always listed in full
+#: FLAGGED, NOT CHANGED: a detect-only finding that suggests the record
+#: is wrong. The tool changed nothing, so the problem is still in the data
+#: that gets loaded, and every one is listed in full (never just
+#: header+count). Sorts below NEEDS REVIEW: a guessed fix changed the
+#: record, these did not. Low-priority detect-only findings (off by
+#: default, or file-wide observations) stay in INFORMATIONAL.
+_FLAGGED_NOT_CHANGED = {
+    "area_code_in_041",
+    "invalid_041_language_code",
+    "invalid_008_language_code",
+    "doubled_proxy_url",
+    "invalid_indicator_value",
+    "suspect_marc8_escape",
+    "suspect_hex_encoded_marc8",
+    "transcode_marc8_failed",
+}
+
+
+#: NEEDS REVIEW: a fix that inserted or guessed a
+#: value (nothing removed), that's always listed in full
 #: (never just header+count) because a cataloger would plausibly want
 #: to look at each one individually -- unlike the rest of INFORMATIONAL
 #: (a fix applied via a fixed default, or a lower-priority detect-only
@@ -125,16 +141,15 @@ _INFORMATIONAL = {
 #: flagging prominently rather than burying at the bottom with
 #: everything else.
 _NEEDS_REVIEW = {
-    "area_code_in_041",
-    "invalid_041_language_code",
-    "invalid_008_language_code",
-    "doubled_proxy_url",
-    "invalid_indicator_value",
-    "suspect_marc8_escape",
-    "suspect_hex_encoded_marc8",
-    "transcode_marc8_failed",
-    "unfixed_non_numeric_tag",
+    "added_default_245",
+    "added_missing_852_location",
     "added_missing_852c",
+    "invalid_bibliographic_level",
+    "reattached_orphaned_field",
+    "fixed_misaligned_008",
+    "moved_duplicate_to_added_entry",
+    "merged_duplicate_040",
+    "added_001_from_sirsi_035",
     "holdings_856_missing_u",
     "bib_856_missing_u",
 }
@@ -156,9 +171,9 @@ _DEDICATED_SECTIONS: dict[str, tuple[int, str]] = {
     "record_identifier_required": (-1, "UNFIXABLE"),
     "duplicate_identifier": (2, "DUPLICATE RECORDS"),
     # Report-only checks that never change a record; kept in INFORMATIONAL.
-    "non_standard_marc_fields": (4, "INFORMATIONAL"),
+    "non_standard_marc_fields": (5, "INFORMATIONAL"),
     # One summary entry: the list of unmapped tags with counts (see UnmappedFieldTally).
-    "unmapped_marc_fields": (4, "INFORMATIONAL"),
+    "unmapped_marc_fields": (5, "INFORMATIONAL"),
 }
 
 
@@ -166,12 +181,16 @@ for _cat in _FIXED_REQUIRES_ATTENTION:
     _DEDICATED_SECTIONS[_cat] = (1, "FIXED/REQUIRES ATTENTION")
 
 
+for _cat in _FLAGGED_NOT_CHANGED:
+    _DEDICATED_SECTIONS[_cat] = (4, "FLAGGED, NOT CHANGED")
+
+
 for _cat in _NEEDS_REVIEW:
     _DEDICATED_SECTIONS[_cat] = (3, "NEEDS REVIEW")
 
 
 for _cat in _INFORMATIONAL:
-    _DEDICATED_SECTIONS[_cat] = (4, "INFORMATIONAL")
+    _DEDICATED_SECTIONS[_cat] = (5, "INFORMATIONAL")
 
 
 del _cat
@@ -179,8 +198,8 @@ del _cat
 
 def _section_for(entry: LogEntry) -> tuple[int, str]:
     """(sort_order, section_label) for `entry` -- UNFIXABLE, then NOT
-    FIXED, then FIXED/REQUIRES ATTENTION, then DUPLICATE RECORDS, then NEEDS
-    REVIEW, then any other dedicated sections (see `_DEDICATED_SECTIONS`), then
+    FIXED, then FIXED/REQUIRES ATTENTION, then DUPLICATE RECORDS, then NEEDS REVIEW,
+    then FLAGGED, NOT CHANGED, then any other dedicated sections (see `_DEDICATED_SECTIONS`), then
     INFORMATIONAL. There is no plain "FIXED" section -- an unrecognized category logged with fixed=True falls back to
     INFORMATIONAL rather than a generic bucket, so every new fix
     category must be added to `_FIXED_REQUIRES_ATTENTION` or
@@ -188,7 +207,7 @@ def _section_for(entry: LogEntry) -> tuple[int, str]:
     dedicated = _DEDICATED_SECTIONS.get(entry.category)
     if dedicated is not None:
         return dedicated
-    return (4, "INFORMATIONAL") if entry.fixed else (0, "NOT FIXED")
+    return (5, "INFORMATIONAL") if entry.fixed else (0, "NOT FIXED")
 
 
 def _section_for_category(category: str) -> tuple[int, str]:
@@ -247,12 +266,13 @@ _CHECK_DESCRIPTIONS: dict[str, str] = {
     "or 240 was recoded as the added entry it really is (246/730/740, or a "
     "260/250/240/490 when it was a mistagged publication, edition, uniform title "
     "or series), or a near-duplicate was dropped, instead of being removed as a "
-    "duplicate of a non-repeatable field. Only subfields the new field can't "
-    "carry ($6, $c, ...) are ever dropped (noted per entry).",
+    "duplicate of a non-repeatable field. A case that had to drop a subfield the new "
+    "field can't carry ($6, $c, ...) is logged as moved_duplicate_dropped_subfield instead.",
     "merged_duplicate_040": "A record had more than one 040 (Cataloging Source, non-repeatable) -- "
     "the later ones were merged into the first (subfields added, a conflicting $a/$c "
     "demoted to $d) instead of being removed. A 040 that was really a 041 (language "
-    "codes) was recoded as one.",
+    "codes) was recoded as one. A merge that had to drop something is logged as "
+    "merged_duplicate_040_dropped_data instead.",
     "removed_non_repeatable_duplicate": "A non-repeatable field (e.g. 001/005/008) appeared more than once on one "
     "record -- all but one copy removed.",
     "field_removed_because_missing_a": "A heading/added-entry field (or a holdings caption field) lacked a "
@@ -464,8 +484,16 @@ _CHECK_DESCRIPTIONS: dict[str, str] = {
     "_additional004s file.",
     "holdings_852_duplicate_nr_subfield": "852 (Location) had a Not-Repeatable subfield (e.g. $h) more than once -- "
     "every occurrence after the first removed.",
-    "fixed_008_length": "008 wasn't exactly 40 characters (32 for a holdings record) -- padded (no "
-    "loss) or truncated (discards the trailing bytes past that length) to fit.",
+    "fixed_008_length": "008 was shorter than 40 characters (32 for a holdings record) -- padded "
+    "with spaces to fit. Nothing was lost.",
+    "truncated_008": "008 was longer than 40 characters (32 for a holdings record) -- the trailing "
+    "bytes past that length were discarded (the original content is in each entry).",
+    "merged_duplicate_040_dropped_data": "A second (or later) 040 was merged into the first, but part of it "
+    "could not be kept: a subfield with no place in the merged 040, or an 040 that held a "
+    "call number or ISBN, was dropped (listed per entry).",
+    "moved_duplicate_dropped_subfield": "A second (or later) 100, 240 or 245 was recoded as an added entry, "
+    "but a subfield the new field cannot carry ($6, $c, $k, ...) was dropped (listed per "
+    "entry).",
     "added_field": "A field required via --ensure-field was missing entirely -- inserted with "
     "the given content.",
     "added_missing_852_location": "852 (Location) had none of $a/$b/$c -- a placeholder was inserted so the "
@@ -562,15 +590,18 @@ _CHECK_DATA_LOSS: dict[str, str] = {
     "holdings_missing_004": "POSSIBLE DATA LOSS",
     "holdings_multiple_004": "NO DATA LOSS",
     "holdings_852_duplicate_nr_subfield": "POSSIBLE DATA LOSS",
-    "fixed_008_length": "POSSIBLE DATA LOSS",
+    "fixed_008_length": "NO DATA LOSS",
+    "truncated_008": "DATA LOSS",
+    "merged_duplicate_040_dropped_data": "DATA LOSS",
+    "moved_duplicate_dropped_subfield": "DATA LOSS",
     "added_field": "NO DATA LOSS",
     "added_missing_852_location": "NO DATA LOSS",
     "reattached_orphaned_field": "NO DATA LOSS",
     "removed_empty_852_subfield": "NO DATA LOSS",
     "recoded_852_b_to_i": "NO DATA LOSS",
     "recoded_title_only_7xx_to_730": "NO DATA LOSS",
-    "moved_duplicate_to_added_entry": "POSSIBLE DATA LOSS",
-    "merged_duplicate_040": "POSSIBLE DATA LOSS",
+    "moved_duplicate_to_added_entry": "NO DATA LOSS",
+    "merged_duplicate_040": "NO DATA LOSS",
     "recoded_6xx_b_to_a": "NO DATA LOSS",
     "truncated_oversized_field": "DATA LOSS",
     "trimmed_oversized_record": "DATA LOSS",
@@ -606,6 +637,10 @@ _CATEGORY_DISPLAY_NOTE: dict[str, str] = {
 #: unlikely to ever be individually fixed (dangling_880_link,
 #: invalid_isbn_issn_checksum) -- on request.
 _ALWAYS_FULL_CATEGORIES = {
+    "truncated_008",
+    "merged_duplicate_040_dropped_data",
+    "moved_duplicate_dropped_subfield",
+    "added_001_from_sirsi_035",
     "area_code_in_041",
     "invalid_041_language_code",
     "invalid_008_language_code",
@@ -618,15 +653,11 @@ _ALWAYS_FULL_CATEGORIES = {
     "merged_duplicate_040",
     "removed_non_repeatable_duplicate",
     "field_removed_because_missing_a",
-    "recoded_6xx_b_to_a",
-    "recoded_title_only_7xx_to_730",
-    "deduped_010_lccn",
     "removed_880_missing_6",
     "removed_invalid_subfield",
     "removed_untranscodable_subfield",
     "truncated_oversized_field",
     "trimmed_oversized_record",
-    "collapsed_oversized_field_escapes",
     "removed_bad_call_number",
     "removed_extra_852_b",
     "incomplete_852",
@@ -637,18 +668,14 @@ _ALWAYS_FULL_CATEGORIES = {
     "holdings_853_missing_8",
     "holdings_856_missing_u",
     "bib_856_missing_u",
-    "split_holdings_multiple_852",
     "holdings_escape_sequence",
     "transcode_marc8_failed",
     "reattached_orphaned_field",
-    "holdings_leader_byte_defaulted",
     "holdings_missing_004",
     "holdings_852_duplicate_nr_subfield",
     "added_missing_852_location",
     "added_default_245",
-    "added_001_from_sirsi_035",
     "added_default_008",
-    "padded_indicators",
     "unfixed_non_numeric_tag",
     "invalid_bibliographic_level",
     "invalid_indicator_value",

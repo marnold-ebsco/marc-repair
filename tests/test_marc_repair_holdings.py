@@ -372,8 +372,7 @@ class TestRepairHoldingsRecords:
         bad_leader = _HOLDINGS_LEADER[:6] + "!" + _HOLDINGS_LEADER[7:]
         result, out, log = self._run(tmp_path, [self._holdings_record(leader=bad_leader)])
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert "holdings_leader_byte_defaulted" in content
-        assert "=== FIXED/REQUIRES ATTENTION:" in content
+        assert "=== INFORMATIONAL: holdings_leader_byte_defaulted ===" in content
         parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
         assert parsed.leader[6] == "u"
 
@@ -388,9 +387,7 @@ class TestRepairHoldingsRecords:
             tmp_path, [self._holdings_record(leader=blank_byte17_leader)]
         )
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert "holdings_leader_byte_defaulted" in content
-        assert "=== FIXED/REQUIRES ATTENTION:" in content
-        assert "encoding level" in content
+        assert "=== INFORMATIONAL: holdings_leader_byte_defaulted ===" in content
         parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
         assert parsed.leader[17] == "u"
 
@@ -584,7 +581,7 @@ class TestRepairHoldingsRecords:
         assert result["total"] == 1
         assert result["written"] == 2
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert _detail_line_marker("split_holdings_multiple_852").search(content)
+        assert "=== INFORMATIONAL: split_holdings_multiple_852 ===" in content
         assert "1 record(s) - 1 new holdings record(s) added" in content
         assert m.count_records(str(out)) == 2
         records = [
@@ -683,7 +680,7 @@ class TestRepairHoldingsRecords:
         assert result["written"] == 2
         content = _resolve_log(log).read_text(encoding="utf-8")
         assert not _detail_line_marker("incomplete_852").search(content)
-        assert _detail_line_marker("split_holdings_multiple_852").search(content)
+        assert "=== INFORMATIONAL: split_holdings_multiple_852 ===" in content
 
     def test_single_852_with_no_b_not_touched(self, tmp_path):
         # A lone 852 (no other 852 to be ambiguous against) is left
@@ -1049,8 +1046,7 @@ class TestRepairHoldingsRecords:
         ]
         result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert "added_missing_852_location" in content
-        assert "=== FIXED/REQUIRES ATTENTION:" in content
+        assert "=== NEEDS REVIEW: added_missing_852_location ===" in content
         parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
         f852 = next(f for f in parsed.fields if f.tag == "852")
         assert ("b", "Migration") in f852.subfields
@@ -1191,8 +1187,7 @@ class TestRepairHoldingsRecords:
         ]
         result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert "recoded_852_b_to_i" in content
-        assert "=== FIXED/REQUIRES ATTENTION:" in content
+        assert "=== INFORMATIONAL: recoded_852_b_to_i ===" in content
         assert "recoded" in content
         parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
         f852 = next(f for f in parsed.fields if f.tag == "852")
@@ -1549,8 +1544,7 @@ class TestRepairHoldingsRecords:
         ]
         result, out, log = self._run(tmp_path, [self._holdings_record(fields=fields)])
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert "removed_empty_852_subfield" in content
-        assert "=== FIXED/REQUIRES ATTENTION:" in content
+        assert "=== INFORMATIONAL: removed_empty_852_subfield ===" in content
         assert "holdings_null_identifier" not in content
         parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
         f852 = next(f for f in parsed.fields if f.tag == "852")

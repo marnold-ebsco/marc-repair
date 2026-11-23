@@ -674,7 +674,7 @@ class TestWriteLog:
 
     def test_duplicate_records_section_sits_after_fixed(self, tmp_path):
         entries = [
-            m.LogEntry("added_field", True, "t1", 0, "u1", "added 245"),
+            m.LogEntry("removed_invalid_subfield", True, "t1", 0, "u1", "added 245"),
             m.LogEntry("some_not_fixed_thing", False, "t2", 1, "u2", "no 008"),
             m.LogEntry("duplicate_identifier", False, "t3", 2, "u3", "dup"),
         ]
@@ -692,10 +692,36 @@ class TestWriteLog:
         dup_line_idx = next(i for i, ln in enumerate(lines) if "dup" in ln and "\t" in ln)
         assert dup_line_idx > dup_header
 
+    def test_needs_review_sits_above_flagged_not_changed(self, tmp_path):
+        entries = [
+            m.LogEntry("padded_indicators", True, "t1", 0, "u1", "padded"),
+            m.LogEntry("added_default_245", True, "t2", 1, "u2", "placeholder 245"),
+            m.LogEntry("doubled_proxy_url", False, "t3", 2, "u3", "doubled proxy"),
+            m.LogEntry("duplicate_identifier", False, "t4", 3, "u4", "dup"),
+            m.LogEntry("removed_invalid_subfield", True, "t5", 4, "u5", "removed $!"),
+        ]
+        log_path = tmp_path / "run.log"
+        m.write_log(str(log_path), entries)
+        lines = log_path.read_text(encoding="utf-8").splitlines()
+
+        def header(prefix):
+            return next(i for i, ln in enumerate(lines) if ln.startswith(prefix))
+
+        order = [
+            header("=== FIXED/REQUIRES ATTENTION"),
+            header("=== DUPLICATE RECORDS"),
+            header("=== NEEDS REVIEW: added_default_245"),
+            header("=== FLAGGED, NOT CHANGED: doubled_proxy_url"),
+            header("=== INFORMATIONAL: padded_indicators"),
+        ]
+        assert order == sorted(order)
+        # flag-only findings are always listed in full
+        assert any("doubled proxy" in ln for ln in lines[order[3]:order[4]])
+
     def test_informational_section_sits_after_fixed(self, tmp_path):
         entries = [
             m.LogEntry("some_not_fixed_thing", False, "t1", 0, "u1", "no 008"),
-            m.LogEntry("added_field", True, "t2", 0, "u1", "added 245"),
+            m.LogEntry("removed_invalid_subfield", True, "t2", 0, "u1", "added 245"),
             m.LogEntry("duplicate_identifier", False, "t3", 1, "u2", "dup"),
             m.LogEntry(
                 "added_default_008", True, "t4", 2, "u3", "added placeholder 008",
@@ -1130,7 +1156,7 @@ class TestMissingSubfieldAPatchedInPlace:
         # default (added_default_008) are FIXED/REQUIRES ATTENTION,
         # listed in full by default
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert "FIXED/REQUIRES ATTENTION: added_default_245" in content
+        assert "NEEDS REVIEW: added_default_245" in content
         assert "INFORMATIONAL: added_default_008" in content
         assert _detail_line_marker("added_default_245").search(content)
         # added_default_008 is summarised in the main log; the record list
@@ -1514,3 +1540,44 @@ class TestWriteLogTrimmed:
     def test_first_sentence(self):
         assert m._first_sentence("One.  Two\nthree. Four.") == "One."
         assert m._first_sentence("no period") == "no period"
+
+
+class TestLossSplitCategories:
+    """A fix that can lose data is logged under its own FIXED/REQUIRES
+    ATTENTION category only when it actually did."""
+
+    def test_008_padded_vs_truncated(self):
+        from marc_repair_lib import cli
+        padded = "008 was 10 bytes (must be exactly 40); padded to 40; original content: 'x'"
+        cut = "008 was 50 bytes (must be exactly 40); truncated to 40; original content: 'x'"
+        assert cli._008_length_category(padded) == "fixed_008_length"
+        assert cli._008_length_category(cut) == "truncated_008"
+
+    def test_duplicate_recode_dropped_vs_kept(self):
+        from marc_repair_lib import cli
+        kept = "moved duplicate =245 ... to =246 ... -- NO DATA LOSS"
+        lost = "moved duplicate =100 ... to =700 ... (dropped $6 link) -- POSSIBLE DATA LOSS"
+        assert cli._moved_category(kept) == "moved_duplicate_to_added_entry"
+        assert cli._moved_category(lost) == "moved_duplicate_dropped_subfield"
+
+    def test_040_merge_dropped_vs_kept(self):
+        from marc_repair_lib import cli
+        kept = "merged =040 ... (demoted $a to $d) -- NO DATA LOSS"
+        lost = "merged =040 ... (dropped non-agency =040 $a...) -- POSSIBLE DATA LOSS"
+        assert cli._merged_040_category(kept) == "merged_duplicate_040"
+        assert cli._merged_040_category(lost) == "merged_duplicate_040_dropped_data"
+
+    def test_new_categories_are_fixed_requires_attention_and_listed_in_full(self):
+        for cat in ("truncated_008", "merged_duplicate_040_dropped_data", "moved_duplicate_dropped_subfield"):
+            assert m._section_for_category(cat)[1] == "FIXED/REQUIRES ATTENTION"
+            assert cat in m._ALWAYS_FULL_CATEGORIES
+
+    def test_pdf_intro_sections_follow_log_section_order(self):
+        from marc_repair_lib import pdf_log, report
+        by_order = {}
+        for order, label in list(report._DEDICATED_SECTIONS.values()) + [(0, "NOT FIXED")]:
+            by_order[order] = label
+        kinds = [by_order[o] for o in sorted(by_order) if o >= -1]
+        expected = [pdf_log.kind_title(k).lower() for k in kinds]
+        got = [lead.rstrip(".").lower() for lead, _ in pdf_log.INTRO_SECTIONS]
+        assert got == expected

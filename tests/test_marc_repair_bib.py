@@ -303,23 +303,23 @@ class TestFixBadIndicators:
         rc = m.main([str(src), "-o", str(out), "--log", str(log), "--log-zero"])
         assert rc == 0
         lines = _resolve_log(log).read_text(encoding="utf-8").splitlines()
-        attention_idx = next(
+        flagged_idx = next(
             i for i, ln in enumerate(lines)
-            if ln.startswith("=== FIXED/REQUIRES ATTENTION")
+            if ln.startswith("=== FLAGGED, NOT CHANGED")
         )
-        needs_review_idx = next(
-            i for i, ln in enumerate(lines) if ln.startswith("=== NEEDS REVIEW")
+        info_idx = next(
+            i for i, ln in enumerate(lines) if ln.startswith("=== INFORMATIONAL")
         )
-        assert attention_idx < needs_review_idx, (
-            "FIXED/REQUIRES ATTENTION block must come before NEEDS REVIEW block"
-        )
-        assert any(
-            ln.startswith("=== FIXED/REQUIRES ATTENTION: padded_indicators")
-            for ln in lines[attention_idx:needs_review_idx]
+        assert flagged_idx < info_idx, (
+            "FLAGGED, NOT CHANGED block must come before INFORMATIONAL block"
         )
         assert any(
-            ln.startswith("=== NEEDS REVIEW: transcode_marc8_failed")
-            for ln in lines[needs_review_idx:]
+            ln.startswith("=== FLAGGED, NOT CHANGED: transcode_marc8_failed")
+            for ln in lines[flagged_idx:info_idx]
+        )
+        assert any(
+            ln.startswith("=== INFORMATIONAL: padded_indicators")
+            for ln in lines[info_idx:]
         )
 
 
@@ -1659,7 +1659,7 @@ class TestTranscodeMarc8:
         rc = m.main([str(src), "-o", str(out), "--log", str(log)])
         assert rc == 0  # must not crash the whole run
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert "=== NEEDS REVIEW: transcode_marc8_failed ===" in content
+        assert "=== FLAGGED, NOT CHANGED: transcode_marc8_failed ===" in content
         assert _detail_line_marker("transcode_marc8_failed").search(content)
         results = m.repair_text(m._read_text(str(out)))
         assert results[0].leader[9] == " "  # left declaring MARC-8
@@ -2384,9 +2384,7 @@ class TestDedupe010Fields:
         rc = m.main([str(src), "-o", str(out), "--log", str(log)])
         assert rc == 0
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert "=== FIXED/REQUIRES ATTENTION: deduped_010_lccn ===" in content
-        assert "moved $a2018028463 to $z" in content
-        assert _detail_line_marker("deduped_010_lccn").search(content)
+        assert "=== INFORMATIONAL: deduped_010_lccn ===" in content
         out_parsed = m.read_intact_record(out.read_bytes().decode("utf-8"))
         out_010s = [f for f in out_parsed.fields if f.tag == "010"]
         assert len(out_010s) == 1
@@ -3175,7 +3173,7 @@ class TestReattachOrphanedFieldsCLI:
         assert m.count_records(str(out)) == 1
         content = _resolve_log(log).read_text(encoding="utf-8")
         assert _detail_line_marker("reattached_orphaned_field").search(content)
-        assert "=== FIXED/REQUIRES ATTENTION: reattached_orphaned_field ===" in content
+        assert "=== NEEDS REVIEW: reattached_orphaned_field ===" in content
         parsed = m.read_intact_record(m._read_text(str(out)))
         assert parsed.fields[-1].tag == "700"
         assert parsed.fields[-1].subfields == [("a", "Quinn, Frances,"), ("d", "1963-")]
@@ -3878,7 +3876,7 @@ class TestFixInvalidTags:
         ])
         assert rc == 0
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert "=== NEEDS REVIEW: unfixed_non_numeric_tag ===" in content
+        assert "=== FIXED/REQUIRES ATTENTION: unfixed_non_numeric_tag ===" in content
         assert _detail_line_marker("unfixed_non_numeric_tag").search(content)
         results = m.repair_text(m._read_text(str(out)))
         tags = [f.tag for f in results[0].fields]
@@ -3949,7 +3947,7 @@ class TestFixInvalidTags:
         ])
         assert rc == 0
         content = _resolve_log(log).read_text(encoding="utf-8")
-        assert "=== NEEDS REVIEW: unfixed_non_numeric_tag ===" in content
+        assert "=== FIXED/REQUIRES ATTENTION: unfixed_non_numeric_tag ===" in content
         assert "content discarded" in content
         results = m.repair_text(m._read_text(str(out)))
         assert not any(f.tag == "24A" for f in results[1].fields)
@@ -4060,7 +4058,7 @@ class TestTrailingShift008:
             assert (f008.content[35:38] == "eng") == fixed
             if fixed:
                 text = next(tmp_path.glob("l*True*.log")).read_text()
-                assert "FIXED/REQUIRES ATTENTION: fixed_misaligned_008" in text
+                assert "NEEDS REVIEW: fixed_misaligned_008" in text
                 assert "008 had 4 extra blanks at 15-18" in text
                 assert "fixed_008_trailing_shift" not in text
 
@@ -5669,7 +5667,7 @@ _FIXED_REQUIRES_ATTENTION_CASES = [
             ],
         )),
         required_log_substrings=[
-            "=== FIXED/REQUIRES ATTENTION: invalid_bibliographic_level ===",
+            "=== NEEDS REVIEW: invalid_bibliographic_level ===",
             _detail_line_marker("invalid_bibliographic_level"),
         ],
         verify=lambda results: results[0].leader[7] == "m",
@@ -5685,7 +5683,7 @@ _FIXED_REQUIRES_ATTENTION_CASES = [
                 m.Field_("245", "00", [("a", "Title.")]),
             ],
         )),
-        required_log_substrings=["=== FIXED/REQUIRES ATTENTION: fixed_008_length ==="],
+        required_log_substrings=["=== INFORMATIONAL: fixed_008_length ==="],
         verify=lambda results: (
             len(next(f for f in results[0].fields if f.tag == "008").content) == 40
         ),
@@ -5698,7 +5696,7 @@ _FIXED_REQUIRES_ATTENTION_CASES = [
             fields=[m.Field_("001", None, None, content="case3"), m.Field_("008", None, None, content="x" * 40)],
         )),
         required_log_substrings=[
-            "=== FIXED/REQUIRES ATTENTION: added_default_245 ===",
+            "=== NEEDS REVIEW: added_default_245 ===",
             _detail_line_marker("added_default_245"),
         ],
         verify=lambda results: (
@@ -6041,8 +6039,6 @@ class TestRecodePipeline:
         assert self._count(content, "recoded_title_only_7xx_to_730") == 1
         assert self._count(content, "recoded_6xx_b_to_a") == 1
         assert self._count(content, "field_removed_because_missing_a") == 0
-        assert "$b recoded to $a -- " in content  # per-record detail, no --log-full
-        assert "(997)\t=700  1 :" in content  # 7xx->730: indented per-record detail
         tags = [f.tag for f in out.fields]
         assert "730" in tags and "700" not in tags
         assert [f for f in out.fields if f.tag == "650"][0].subfields[0] == (
@@ -6209,7 +6205,7 @@ class TestMoveDuplicatePipeline:
         assert [f.tag for f in out.fields].count("245") == 1
         assert [f.tag for f in out.fields].count("100") == 1
         assert [f.tag for f in out.fields if f.tag in ("246", "700")] == ["246", "700"]
-        assert "FIXED/REQUIRES ATTENTION: moved_duplicate_to_added_entry" in content
+        assert "NEEDS REVIEW: moved_duplicate_to_added_entry" in content
         assert "removed_non_repeatable_duplicate" not in content.split(
             "CHECKS PERFORMED WITH NO FINDINGS")[0]
         assert "to =700" in content and "to =246" in content
@@ -6491,7 +6487,7 @@ class TestMisfiledDuplicatePipeline:
         assert tags.count("040") == 1 and tags.count("240") == 1 and tags.count("245") == 1
         assert "730" in tags and "250" in tags
         assert [f for f in out.fields if f.tag == "040"][0].subfields[-1] == ("d", "OCoLC")
-        assert "FIXED/REQUIRES ATTENTION: merged_duplicate_040" in content
+        assert "NEEDS REVIEW: merged_duplicate_040" in content
         assert "removed duplicate" not in content
 
     def test_flags_turn_each_off(self, tmp_path):
@@ -6621,7 +6617,7 @@ class TestSirsiSourceSystem:
         assert b"a445304" in out.read_bytes()
         assert m.count_records(str(tmp_path / "out_error.mrc")) == 1
         log_text = next(tmp_path.glob("run_*.log")).read_text()
-        assert "=== FIXED/REQUIRES ATTENTION: added_001_from_sirsi_035 ===" in log_text
+        assert "=== NEEDS REVIEW: added_001_from_sirsi_035 ===" in log_text
         assert "001 was missing; set to 'a445304'" in log_text
         assert "=== UNFIXABLE: record_identifier_required ===" in log_text
         assert "no 035 $a contains 'Sirsi'" in log_text

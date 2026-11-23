@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import time
 from contextlib import contextmanager
@@ -155,6 +156,31 @@ from .report import (
     write_log,
     write_category_detail_file,
 )
+
+
+_DROPPED_RE = re.compile(r"\bdropped\b")
+
+
+def _moved_category(detail: str) -> str:
+    """A duplicate 100/240/245 recode that had to drop a subfield is data
+    loss (FIXED/REQUIRES ATTENTION); one that kept everything is not."""
+    if _DROPPED_RE.search(detail):
+        return "moved_duplicate_dropped_subfield"
+    return "moved_duplicate_to_added_entry"
+
+
+def _merged_040_category(detail: str) -> str:
+    """Same split for the 040 merge: anything dropped is data loss."""
+    if _DROPPED_RE.search(detail):
+        return "merged_duplicate_040_dropped_data"
+    return "merged_duplicate_040"
+
+
+def _008_length_category(detail: str) -> str:
+    """A truncated 008 lost its trailing bytes; a padded one lost nothing."""
+    if "; truncated to " in detail:
+        return "truncated_008"
+    return "fixed_008_length"
 
 
 def check_holdings_records(
@@ -808,7 +834,7 @@ def repair_holdings_records(
                     log("added_default_008", True, i, rec_id, detail)
             if on("fix_008_length"):
                 for detail in fix_008_length(parsed, expected_len=HOLDINGS_008_LENGTH):
-                    log("fixed_008_length", True, i, rec_id, detail)
+                    log(_008_length_category(detail), True, i, rec_id, detail)
             recoded_b_to_i, removed_extra_b = fix_852_multiple_b(
                 parsed, recode=on("recode_852_b_to_i"), remove=on("remove_extra_852_b"),
             )
@@ -2732,24 +2758,24 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
                 if args.merge_duplicate_040:
                     rec_id = record_identifier(parsed)
                     for detail in merge_duplicate_040(parsed):
-                        log("merged_duplicate_040", True, i, rec_id, detail)
+                        log(_merged_040_category(detail), True, i, rec_id, detail)
                 if args.move_duplicate_100_to_700:
                     rec_id = record_identifier(parsed)
                     for detail in move_duplicate_100_to_700(parsed):
-                        log("moved_duplicate_to_added_entry", True, i, rec_id, detail)
+                        log(_moved_category(detail), True, i, rec_id, detail)
                 if args.move_duplicate_245_to_246:
                     rec_id = record_identifier(parsed)
                     for detail in move_duplicate_245_to_246(parsed):
-                        log("moved_duplicate_to_added_entry", True, i, rec_id, detail)
+                        log(_moved_category(detail), True, i, rec_id, detail)
                 # after the clean 245 -> 246 move above: this takes what's left
                 if args.recode_misfiled_duplicate_245:
                     rec_id = record_identifier(parsed)
                     for detail in recode_misfiled_duplicate_245(parsed):
-                        log("moved_duplicate_to_added_entry", True, i, rec_id, detail)
+                        log(_moved_category(detail), True, i, rec_id, detail)
                 if args.move_duplicate_240_to_730:
                     rec_id = record_identifier(parsed)
                     for detail in move_duplicate_240_to_730(parsed):
-                        log("moved_duplicate_to_added_entry", True, i, rec_id, detail)
+                        log(_moved_category(detail), True, i, rec_id, detail)
                 if args.strip_duplicate_non_repeatable_fields:
                     rec_id = record_identifier(parsed)
                     for detail in strip_duplicate_non_repeatable_fields(
@@ -2841,7 +2867,7 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
                 if args.fix_008_length:
                     rec_id = record_identifier(parsed)
                     for detail in fix_008_length(parsed):
-                        log("fixed_008_length", True, i, rec_id, detail)
+                        log(_008_length_category(detail), True, i, rec_id, detail)
                 if args.split_041_language_codes:
                     rec_id = record_identifier(parsed)
                     for detail in split_041_language_codes(parsed):
@@ -3120,9 +3146,9 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
         active_categories.add("field_removed_because_missing_a")
     if (args.move_duplicate_100_to_700 or args.move_duplicate_245_to_246
             or args.recode_misfiled_duplicate_245 or args.move_duplicate_240_to_730):
-        active_categories.add("moved_duplicate_to_added_entry")
+        active_categories.update(("moved_duplicate_to_added_entry", "moved_duplicate_dropped_subfield"))
     if args.merge_duplicate_040:
-        active_categories.add("merged_duplicate_040")
+        active_categories.update(("merged_duplicate_040", "merged_duplicate_040_dropped_data"))
     if args.strip_duplicate_non_repeatable_fields:
         active_categories.add("removed_non_repeatable_duplicate")
     if ensure_specs:
@@ -3134,7 +3160,7 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
     if args.fix_misaligned_008:
         active_categories.add("fixed_misaligned_008")
     if args.fix_008_length:
-        active_categories.add("fixed_008_length")
+        active_categories.update(("fixed_008_length", "truncated_008"))
     if args.check_dangling_880_links:
         active_categories.add("dangling_880_link")
     if args.check_008_language:

@@ -8,6 +8,78 @@ current state and open items.
 
 ## Current state
 
+### DONE -- section reorganization by what happened to the data (2026-11-23, user approved)
+
+Sections now (report.py `_DEDICATED_SECTIONS`, sort slot in brackets): UNFIXABLE (-1), NOT FIXED (0),
+FIXED/REQUIRES ATTENTION (1, data lost only), DUPLICATE RECORDS (2), NEEDS REVIEW (3, the tool guessed
+or inserted a value), **FLAGGED, NOT CHANGED (4, new: detect-only findings that suggest a broken
+record, always full)**, INFORMATIONAL (5). Update: NEEDS REVIEW now sits ABOVE FLAGGED (it changed
+data); `added_001_from_sirsi_035` is back in NEEDS REVIEW (listed per record). The three mixed
+categories are split by outcome at the log call (cli.py `_008_length_category`, `_moved_category`,
+`_merged_040_category`; detail containing "dropped" / "; truncated to " = loss): new
+FIXED/REQUIRES ATTENTION categories `truncated_008`, `merged_duplicate_040_dropped_data`, `moved_duplicate_dropped_subfield`
+(the last also covers the 100/240 recodes). They share the original check's switch (switches.py
+`cats`). The PDF log opens with an "About this log" introduction (pdf_log.py `INTRO_*`; a test keeps
+its section order in line with the registry). The .log text file has no introduction.
+(Earlier note, still true apart from the above:) Moves: `unfixed_non_numeric_tag` -> FIXED/REQUIRES ATTENTION;
+`moved_duplicate_to_added_entry`, `merged_duplicate_040` -> NEEDS REVIEW; `fixed_008_length`,
+`collapsed_oversized_field_escapes`, `holdings_leader_byte_defaulted`, `added_001_from_sirsi_035` ->
+INFORMATIONAL (so no per-record list any more); `area_code_in_041`, `invalid_041_language_code`,
+`invalid_008_language_code`, `doubled_proxy_url`, `invalid_indicator_value`, `suspect_marc8_escape`,
+`suspect_hex_encoded_marc8`, `transcode_marc8_failed` -> FLAGGED, NOT CHANGED. `invalid_bibliographic_level`
+and the two 856 categories stay in NEEDS REVIEW. Known gaps: `moved_duplicate_to_added_entry` and
+`merged_duplicate_040` can still drop data in rare cases (near-duplicate 245, a 040 holding a call
+number); `fixed_008_length` truncation is a real loss now filed as INFORMATIONAL. Splitting them
+into loss/no-loss categories is the open follow-up. Tests were updated to follow the registry.
+
+### OPEN (older, partly superseded by the DONE note above) -- move categories out of FIXED/REQUIRES ATTENTION that have no real data loss (2026-11-23, proposed, user has NOT approved the moves yet)
+
+The user's rule: FIXED/REQUIRES ATTENTION should hold only categories with real data loss
+(a removed field/subfield/data). 15 of its 31 categories are `NO DATA LOSS` in `_CHECK_DATA_LOSS`
+(report.py). Proposal given to the user, awaiting a yes/no:
+- **-> INFORMATIONAL, count only (8):** `padded_indicators`, `recoded_852_b_to_i`,
+  `removed_empty_852_subfield`, `split_holdings_multiple_852`, `deduped_010_lccn`, `added_field`,
+  `recoded_6xx_b_to_a`, `recoded_title_only_7xx_to_730`.
+- **-> NEEDS REVIEW, still listed in full (7):** the tool inserted or guessed a value, nothing lost:
+  `added_001_from_sirsi_035`, `added_default_245`, `added_missing_852_location`,
+  `invalid_bibliographic_level`, `holdings_leader_byte_defaulted`, `reattached_orphaned_field`,
+  `fixed_misaligned_008` (only the trailing-shift records are listed; the blanks-at-008/11 ones stay
+  count-only).
+- **Stay (16):** every DATA LOSS / POSSIBLE DATA LOSS category. `collapsed_oversized_field_escapes`
+  is the doubtful one (only collapses redundant escapes, may really be NO DATA LOSS) -- ask the user.
+- NEEDS REVIEW is documented as detect-only, so its description in `_SECTION`/docs needs a line saying
+  it also holds fixes that insert or guess a value. Alternative if the user wants it detect-only: a new
+  section (but they are trying to cut categories).
+- How: edit `_FIXED_REQUIRES_ATTENTION` / `_NEEDS_REVIEW` / `_INFORMATIONAL` in
+  `marc_repair_lib/report.py`; INFORMATIONAL is never listed in full (remove from
+  `_ALWAYS_FULL_CATEGORIES` too); update the section column in `tools/generate_repair_categories_doc.py`
+  and regenerate `docs/REPAIR_CATEGORIES.md`; fix tests that assert section names.
+
+### DONE -- duplicate-identifier grouping, 008 fix and category merge, section order (2026-11-23, pushed on `main`: `9e73087`, `5fef763`)
+
+- **One `duplicate_identifier` entry per identifier** (all source systems, bib and holdings): the first record
+  is the log line, every record in the group is an indented `position N (length L)` line saying what happened
+  (first occurrence / item carrier / true duplicate renamed `-a`). Holdings lines also show `004`. Count line
+  reads `N identifier(s) on M record(s)` (computed in `write_log`). `duplicate_identifier_suffixed` and
+  `duplicate_identifier_item_carrier` no longer exist. Code: `SirsiDuplicateTracker.entries` and
+  `find_duplicate_identifiers` in qa.py.
+- **Trailing-shift 008 fix** (inside `--fix-misaligned-008`, no new switch): an 008 with 4 blanks at 15-18 and
+  its last 4 bytes cut off (HACC export; 14 records in the 33,286-record file, language read as `1 0` etc.).
+  `realign_008_trailing_shift` / `fix_008_trailing_shift` (patching.py) remove the blanks; language = first
+  041 `$a` then 040 `$b` code starting with the surviving letter at 39, else `|||`; modified record blank;
+  cataloging source `|`. Runs before `fix_misaligned_008` and `fix_008_length`. Record 25015's `ent` is a
+  different problem (typo for `eng`), deliberately not fixed.
+- **008 log categories merged 8 -> 4:** `added_default_008` (bib, holdings, 773-derived),
+  `fixed_008_length` (bib and holdings), `fixed_misaligned_008` (both realignments; now FIXED/REQUIRES
+  ATTENTION; blanks-at-008/11 are counted only, trailing-shift records listed -- `_COUNT_UNLESS_DETAIL_STARTS`
+  in report.py), `invalid_008_language_code`. Gone: `added_default_holdings_008`, `fixed_holdings_008_length`,
+  `derived_008_date_from_773`, `fixed_008_trailing_shift`. The switches are unchanged.
+- **Log section order:** UNFIXABLE, NOT FIXED, FIXED/REQUIRES ATTENTION, DUPLICATE RECORDS, NEEDS REVIEW,
+  INFORMATIONAL (`_DEDICATED_SECTIONS` numbers in report.py).
+- `tests/fixtures/kitchen_sink_*.log` are stale reference logs (old section order, an old "INFORMATION ONLY"
+  section); nothing compares against them.
+- 984 tests pass, flake8 clean.
+
 ### DONE -- `unmapped_marc_fields`: list the tags FOLIO's default MARC-to-instance map does not map (2026-11-23, pushed on `main`: `286a122`, `26bcf3a`, `c437496`, `9d0b808`, `e2a719d`, `f5172dc`)
 
 - Report-only, default-on, bib-only check (`--check-unmapped-fields` / `--no-check-unmapped-fields`, in the

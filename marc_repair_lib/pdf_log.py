@@ -54,13 +54,14 @@ _KIND_TITLES = {
     "UNFIXABLE": "Unfixable",
     "NOT FIXED": "Not fixed",
     "FIXED/REQUIRES ATTENTION": "Fixed / requires attention",
+    "FLAGGED, NOT CHANGED": "Flagged, not changed",
     "NEEDS REVIEW": "Needs review",
     "DUPLICATE RECORDS": "Duplicate records",
     "INFORMATIONAL": "Informational",
     "CHECKS PERFORMED WITH NO FINDINGS": "Checks performed with no findings",
 }
 
-_SECTION_RE = re.compile(r"^=== ([A-Z][A-Z /]*[A-Z]): (.+) ===$")
+_SECTION_RE = re.compile(r"^=== ([A-Z][A-Z ,/]*[A-Z]): (.+) ===$")
 _NO_FINDINGS_RE = re.compile(r"^=== CHECKS PERFORMED WITH NO FINDINGS \((\d+)\) ===$")
 _COUNT_RE = re.compile(r"^\d+ (record|instance)")
 _LOSS_CALLS = ("DATA LOSS", "POSSIBLE DATA LOSS", "NO DATA LOSS")
@@ -238,6 +239,53 @@ def _cp1252_ok(c: str) -> bool:
         return False
 
 
+#: Plain-language introduction printed at the very top of the PDF log (the
+#: .log text file is unchanged). The section order here matches the order
+#: the sections appear in the log (see `report._DEDICATED_SECTIONS`).
+INTRO_OPENING = (
+    "FOLIO's Data Import module applies a stricter definition of a valid MARC record "
+    "than many other systems do, so some records exported from other systems will not "
+    "load as they are. This log comes from a script built to ensure that as many records "
+    "as possible will load. To meet that goal, some records have to be changed, and some "
+    "of those changes can cause data loss. This log documents those changes. It also "
+    "reports other things about your records that you may want to know about."
+)
+INTRO_LEAD = "The sections below run from most to least urgent:"
+INTRO_SECTIONS = (
+    ("Unfixable.",
+     "Records too damaged for the script to repair. They are not in the main output file. "
+     "Each is written unchanged to a separate _error file, and they will not load."),
+    ("Not fixed.",
+     "Records that could be loaded, but where the script chose not to guess a fix, for "
+     "example a record with no title when placeholder titles are turned off. Each is "
+     "written unchanged to a separate _needs_review file, not the main output, so a "
+     "cataloger can decide what to do."),
+    ("Fixed / requires attention.",
+     "Records where data was lost. In the worst case an entire field was removed, and in "
+     "other cases a subfield or part of its content was lost. Each loss is logged so you "
+     "can review it."),
+    ("Duplicate records.",
+     "Records that share an identifier with another record in the file. FOLIO uses the "
+     "identifier to tell records apart, so a duplicate can cause one record to be "
+     "rejected or to replace another during import, and a record can be lost without any "
+     "other sign."),
+    ("Needs review.",
+     "Records where the script inserted or guessed a value to make the record loadable, "
+     "for example a placeholder title, a recoded duplicate field, a realigned 008, an "
+     "identifier built from a Sirsi 035, or a 856 field that was recoded or is missing "
+     "its URL. Nothing is known to be lost, but a cataloger should confirm that each "
+     "change is right."),
+    ("Flagged, not changed.",
+     "Problems the script found but did not change, such as invalid language codes or "
+     "indicators, possible encoding errors, and doubled proxy URLs. These records will "
+     "still load, but the problem remains in the data."),
+    ("Informational.",
+     "Small, systematic changes that lose no data, plus a few observations about the "
+     "file as a whole. These can affect a large share of the records, so this section "
+     "usually reports counts instead of listing each record."),
+)
+
+
 # -- layout ---------------------------------------------------------------
 
 class _Doc:
@@ -400,6 +448,31 @@ def _front(doc: _Doc, idx: _Index, log_name: str) -> None:
     doc.set_font(f.sans, 9, _GREY)
     doc.text(_LM, doc.y - 9, log_name)
     doc.y -= 22
+    doc.mark("intro", "About this log", 0)
+    doc.set_font(f.sans_b, 12)
+    doc.text(_LM, doc.y - 12, "About this log")
+    doc.y -= 18
+
+    def paragraph(text: str, bold_lead: str = "") -> None:
+        if bold_lead:
+            doc.ensure(26)
+            doc.set_font(f.sans_b, 9)
+            doc.text(_LM, doc.y - 9, bold_lead)
+            doc.y -= 12
+        for part in doc.wrap_proportional(text, f.sans, 9, width):
+            doc.ensure(13)
+            doc.set_font(f.sans, 9)
+            doc.text(_LM, doc.y - 9, part)
+            doc.y -= 12
+
+    paragraph(INTRO_OPENING)
+    doc.y -= 4
+    paragraph(INTRO_LEAD)
+    for lead, body in INTRO_SECTIONS:
+        doc.y -= 4
+        paragraph(body, lead)
+    doc.y -= 14
+    doc.ensure(40)
     doc.set_font(f.sans_b, 12)
     doc.text(_LM, doc.y - 12, "Run summary")
     doc.y -= 18
