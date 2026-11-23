@@ -160,11 +160,10 @@ _DEDICATED_SECTIONS: dict[str, tuple[int, str]] = {
     "record_identifier_required": (-1, "UNFIXABLE"),
     "duplicate_identifier": (3, "DUPLICATE RECORDS"),
     "duplicate_identifier_item_carrier": (3, "DUPLICATE RECORDS"),
-    # Below even INFORMATIONAL: report-only, but unlike INFORMATIONAL its
-    # entries ARE listed (first few per tag -- see NonStandardFieldTally).
-    "non_standard_marc_fields": (5, "INFORMATION ONLY"),
+    # Report-only checks that never change a record; kept in INFORMATIONAL.
+    "non_standard_marc_fields": (4, "INFORMATIONAL"),
     # One summary entry: the list of unmapped tags with counts (see UnmappedFieldTally).
-    "unmapped_marc_fields": (5, "INFORMATION ONLY"),
+    "unmapped_marc_fields": (4, "INFORMATIONAL"),
 }
 
 

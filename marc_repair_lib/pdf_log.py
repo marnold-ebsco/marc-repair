@@ -57,7 +57,6 @@ _KIND_TITLES = {
     "NEEDS REVIEW": "Needs review",
     "DUPLICATE RECORDS": "Duplicate records",
     "INFORMATIONAL": "Informational",
-    "INFORMATION ONLY": "Information only",
     "CHECKS PERFORMED WITH NO FINDINGS": "Checks performed with no findings",
 }
 

@@ -628,7 +628,7 @@ BIB_ROWS = [
         "Non-standard MARC field (tag not in standard_marc_fields.txt; `--source-system wms` also "
         "accepts its `[wms]` tags, `sirsi` also accepts 596)",
         "Flagged only, no change", "**Yes**",
-        "`non_standard_marc_fields`", "INFORMATION ONLY",
+        "`non_standard_marc_fields`", "INFORMATIONAL",
         "No -- every occurrence goes to the separate `<log>_non_standard_fields.txt` report",
         "`--no-check-non-standard-fields` (list: "
         "`--standard-marc-fields-file`)",
@@ -640,7 +640,7 @@ BIB_ROWS = [
         "local-use ranges 59x, 69x and 79x starred). The field stays on the MARC "
         "record but does not show in the instance record or in Locate search",
         "Listed only (tag, instance and record counts), no change", "**Yes**",
-        "`unmapped_marc_fields`", "INFORMATION ONLY",
+        "`unmapped_marc_fields`", "INFORMATIONAL",
         "One summary list in the log, not per record",
         "`--no-check-unmapped-fields` (list: `--instance-mapped-fields-file`)",
     ),

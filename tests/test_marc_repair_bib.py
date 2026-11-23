@@ -6746,12 +6746,12 @@ class TestUnmappedMarcFields:
             self._rec([m.Field_("790", "1 ", [("a", "x")]), m.Field_("490", "0 ", [("a", "S")])]),
         ]
         content, out, src = self._run(tmp_path, recs)
-        assert "=== INFORMATION ONLY: unmapped_marc_fields ===" in content
+        assert "=== INFORMATIONAL: unmapped_marc_fields ===" in content
         assert "will still be on the MARC records" in content
         assert "\t790*: 2 instance(s) in 2 record(s)\n" in content
         assert "\t* Local-use field range (59x, 69x, 79x)." in content
         assert "\t490: 1 instance(s) in 1 record(s)\n" in content
-        section = content.split("INFORMATION ONLY: unmapped_marc_fields", 1)[1]
+        section = content.split("INFORMATIONAL: unmapped_marc_fields", 1)[1]
         section = section.split("\n=== ", 3)[3].split("\n\n", 1)[0]
         assert "999" not in section and "245" not in section and "003" not in section
         # report only: the unmapped fields are still in the output
@@ -6759,7 +6759,7 @@ class TestUnmappedMarcFields:
 
     def test_cli_nothing_unmapped_gets_no_findings_line(self, tmp_path):
         content, _, _ = self._run(tmp_path, [self._rec([])])
-        assert "=== INFORMATION ONLY: unmapped_marc_fields" not in content
+        assert "=== INFORMATIONAL: unmapped_marc_fields" not in content
         assert "unmapped_marc_fields --" in content
 
     def test_cli_switch_off(self, tmp_path):

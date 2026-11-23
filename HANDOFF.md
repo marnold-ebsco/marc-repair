@@ -910,7 +910,7 @@ is not in `standard_marc_fields.txt` is counted; the first **5 per tag** are
 logged (`record N (.bNNN)<TAB>=<tag> $a first-20-chars...`, no indicators, no
 byte offset), then `and N more <tag>`. Each tag gets its own block in numeric
 order with its own counts, `[OBSOLETE]` if listed obsolete. 9XX and non-numeric
-tags are never reported. Section `INFORMATION ONLY` (sorted last), category
+tags are never reported. Section `INFORMATIONAL`, category
 `non_standard_marc_fields`.
 
 Where things are:
