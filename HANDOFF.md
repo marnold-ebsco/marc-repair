@@ -42,9 +42,9 @@ current state and open items.
   `record_identifier_required` (UNFIXABLE). Code: `sirsi_id_from_035` (qa.py), `add_001_from_sirsi_035` (patching.py).
 - Symphony repeats a record to carry item data (999) too big for one record. `SirsiDuplicateTracker` (qa.py)
   compares fields below 900 strictly (order-insensitive, 001 excluded): identical -> carrier
-  (`duplicate_identifier_item_carrier`, 001 untouched); different -> true duplicate, 001 gets `-a`, `-b`, ...
-  `-z`, `-aa`, ... (`duplicate_identifier_suffixed`). The first record keeps its 001. Only with
-  `--source-system sirsi` and `--check-duplicate-identifiers`; other systems still use `find_duplicate_identifiers`.
+  (item carrier, 001 untouched); different -> true duplicate, 001 gets `-a`, `-b`, ...
+  `-z`, `-aa`, ... (renamed). The first record keeps its 001. The log has ONE `duplicate_identifier` entry per identifier (sirsi only), one indented line per record.
+  Only with `--source-system sirsi` and `--check-duplicate-identifiers`; other systems still use `find_duplicate_identifiers`.
 - Duplicate-identifier detail text changed for every source: `... identifier used on N records total. This
   record length LLLLL. Also at position(s) P = length LLLLL; ...` (positions are file positions, not record
   numbers). Description says Symphony, not Voyager.

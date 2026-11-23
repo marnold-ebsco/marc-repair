@@ -645,26 +645,17 @@ BIB_ROWS = [
         "`--no-check-unmapped-fields` (list: `--instance-mapped-fields-file`)",
     ),
     CategoryRow(
-        "Sirsi record repeating an earlier record's 001 whose fields below 900 differ -- a "
-        "true duplicate",
-        "`-a`, `-b`, ... (`-aa` after `-z`) added to its 001 so it can be loaded; the first "
-        "record keeps the plain 001; review, may need merging",
-        "Only with `--source-system sirsi` (and `--check-duplicate-identifiers`, on by default)",
-        "`duplicate_identifier_suffixed`", "FIXED/REQUIRES ATTENTION", "**Yes**",
-        "`--source-system sirsi`",
-    ),
-    CategoryRow(
-        "Sirsi record repeating an earlier record's 001 whose fields below 900 are identical "
-        "(Symphony repeats a record to carry item data too big for one record)",
-        "Flagged only: not a true duplicate, just a carrier for more item data (999); 001 "
-        "unchanged",
-        "Only with `--source-system sirsi` (and `--check-duplicate-identifiers`, on by default)",
-        "`duplicate_identifier_item_carrier`", "DUPLICATE RECORDS", "**Yes**",
-        "`--source-system sirsi`",
-    ),
-    CategoryRow(
-        "Duplicate identifier across records", "Flagged only, no change",
-        "detect-only", "`duplicate_identifier`", "DUPLICATE RECORDS",
+        "Duplicate identifier across records (one log entry per identifier, listing every "
+        "record in it). With `--source-system sirsi`: a later record whose fields below 900 "
+        "differ from the first's is a true duplicate; one whose fields are identical is an "
+        "item carrier (Symphony repeats a record to carry item data too big for one record)",
+        "Flagged only, no change -- except `--source-system sirsi`, where a true duplicate "
+        "gets `-a`, `-b`, ... (`-aa` after `-z`) added to its 001 so it can be loaded (the "
+        "first record keeps the plain 001; review, may need merging) and an item carrier is "
+        "left unchanged",
+        "detect-only (the Sirsi rename needs `--source-system sirsi` and "
+        "`--check-duplicate-identifiers`, on by default)",
+        "`duplicate_identifier`", "DUPLICATE RECORDS",
         "**Yes**", "-- (detect-only, no switch)",
     ),
     CategoryRow(

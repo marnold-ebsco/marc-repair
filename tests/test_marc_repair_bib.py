@@ -6613,17 +6613,20 @@ class TestSirsiDuplicateIdentifiers:
         assert t.track(2, "dup1", "00300", fp_b) == "dup1-a"      # differs: true duplicate
         assert t.track(3, "dup1", "00400", fp_b) == "dup1-b"
         assert t.track(4, "unique", "00500", fp_a) is None
-        by_idx = {e.record_idx: e for e in t.entries("t")}
-        assert sorted(by_idx) == [0, 1, 2, 3]                     # the unique one is not logged
-        assert by_idx[0].category == "duplicate_identifier"
-        assert by_idx[1].category == "duplicate_identifier_item_carrier"
-        assert "identical to position 0" in by_idx[1].detail
-        assert by_idx[2].category == "duplicate_identifier_suffixed" and by_idx[2].fixed
-        assert by_idx[2].record_id == "dup1-a"
-        assert "001 changed from 'dup1' to 'dup1-a'" in by_idx[2].detail
-        assert by_idx[0].detail == (
-            "identifier used on 4 records total. This record length 00100. Also at "
-            "position(s) 1 = length 00200; 2 = length 00300; 3 = length 00400")
+        entries = t.entries("t")
+        assert [e.record_idx for e in entries] == [0]             # one entry for the group
+        e = entries[0]
+        assert e.category == "duplicate_identifier" and e.fixed
+        assert e.record_id == "dup1"
+        assert e.detail.splitlines()[0] == (
+            "identifier used on 4 records; 2 true duplicate(s) renamed -- review, may "
+            "need merging; 1 item carrier(s) (not true duplicates)")
+        assert "position 0 (length 00100): first occurrence; 001 unchanged" in e.detail
+        assert "position 1 (length 00200): item carrier (fields below 900 identical to " \
+            "position 0" in e.detail
+        assert "position 2 (length 00300): true duplicate (fields below 900 differ from " \
+            "position 0); 001 changed to 'dup1-a'" in e.detail
+        assert "001 changed to 'dup1-b'" in e.detail
 
     def test_cli_output_and_log(self, tmp_path):
         src = tmp_path / "in.mrc"
@@ -6639,9 +6642,10 @@ class TestSirsiDuplicateIdentifiers:
         data = out.read_bytes()
         assert data.count(b"dup1-a") == 1 and data.count(b"dup1-b") == 0
         log_text = next(tmp_path.glob("run_*.log")).read_text()
-        assert "=== FIXED/REQUIRES ATTENTION: duplicate_identifier_suffixed ===" in log_text
-        assert "=== DUPLICATE RECORDS: duplicate_identifier_item_carrier ===" in log_text
-        assert "001 changed from 'dup1' to 'dup1-a'" in log_text
+        assert "=== DUPLICATE RECORDS: duplicate_identifier ===" in log_text
+        assert "=== 1 identifier(s) on 3 record(s) ===" in log_text
+        assert "001 changed to 'dup1-a'" in log_text
+        assert "duplicate_identifier_suffixed" not in log_text
 
     def test_other_source_systems_do_not_rename(self, tmp_path):
         src = tmp_path / "in.mrc"
@@ -6662,7 +6666,7 @@ class TestSirsiDuplicateIdentifiers:
         assert data.count(b"ks-sirsi-carrier") == 2       # carriers keep their 001
         assert b"ks-sirsi-carrier-a" not in data
         log_text = next(tmp_path.glob("run_*.log")).read_text()
-        assert "duplicate_identifier_item_carrier ===" in log_text
+        assert "item carrier (fields below 900 identical to position" in log_text
 
     def test_suffixed_id_collisions_are_avoided_and_cascade(self):
         fp = {k: m.record_fingerprint_below_900(self._rec(k, "1")) for k in "ABCD"}
@@ -6680,11 +6684,13 @@ class TestSirsiDuplicateIdentifiers:
         # and a later "dup1-a" identical to the renamed record is just a carrier
         assert t.track(3, "dup1-a", "00400", fp["B"]) is None
         entries = t.entries("t")
-        by_idx = {e.record_idx: e for e in entries}
-        assert len(entries) == len(by_idx)               # no record is logged twice
-        assert by_idx[1].category == "duplicate_identifier_suffixed"
-        assert by_idx[2].category == "duplicate_identifier_suffixed"
-        assert by_idx[3].category == "duplicate_identifier_item_carrier"
+        by_ident = {e.record_id: e for e in entries}
+        # the renamed record is listed once in each group it belongs to, never as its own entry
+        assert sorted(by_ident) == ["dup1", "dup1-a"]
+        assert "position 1 (length 00200): true duplicate" in by_ident["dup1"].detail
+        assert "position 1 (length 00200): renamed from 'dup1'" in by_ident["dup1-a"].detail
+        assert "position 2 (length 00300): true duplicate" in by_ident["dup1-a"].detail
+        assert "position 3 (length 00400): item carrier" in by_ident["dup1-a"].detail
 
 
 class TestUnmappedMarcFields:

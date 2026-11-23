@@ -429,34 +429,35 @@ class TestFindDuplicateIdentifiers:
         id_records = [(0, "u1", "00100"), (1, "u2", "00200"), (2, "u3", "00300")]
         assert m.find_duplicate_identifiers(id_records, "t1") == []
 
-    def test_flags_every_record_sharing_a_duplicated_id(self):
+    def test_one_entry_per_duplicated_id_listing_every_record(self):
         id_records = [
             (0, "u1", "00100"),
             (5, "u2", "00200"),
             (12, "u1", "00150"),
         ]
         entries = m.find_duplicate_identifiers(id_records, "t1")
-        assert len(entries) == 2
-        assert {e.record_idx for e in entries} == {0, 12}
-        for e in entries:
-            assert e.category == "duplicate_identifier"
-            assert e.fixed is False
-            assert e.record_id == "u1"
-        # each entry names the length of *its own* record and points at
-        # the other occurrence
-        by_idx = {e.record_idx: e for e in entries}
-        assert "00100" in by_idx[0].detail
-        assert by_idx[0].detail.endswith("Also at position(s) 12 = length 00150")
-        assert "00150" in by_idx[12].detail
-        assert by_idx[12].detail.endswith("Also at position(s) 0 = length 00100")
+        assert len(entries) == 1
+        e = entries[0]
+        assert e.category == "duplicate_identifier"
+        assert e.fixed is False
+        assert e.record_id == "u1" and e.record_idx == 0
+        assert e.detail == (
+            "identifier used on 2 records\n"
+            "\t\tposition 0 (length 00100)\n"
+            "\t\tposition 12 (length 00150)")
 
-    def test_ids_with_three_or_more_occurrences_all_flagged(self):
+    def test_ids_with_three_or_more_occurrences_in_one_entry(self):
         id_records = [(0, "u1", "00100"), (1, "u1", "00100"), (2, "u1", "00100")]
         entries = m.find_duplicate_identifiers(id_records, "t1")
-        assert len(entries) == 3
-        assert all("3 records" in e.detail for e in entries)
-        assert entries[0].detail.endswith(
-            "Also at position(s) 1 = length 00100; 2 = length 00100")
+        assert len(entries) == 1
+        assert entries[0].detail.startswith("identifier used on 3 records\n")
+        assert entries[0].detail.count("position ") == 3
+
+    def test_extra_text_added_to_each_records_line(self):
+        id_records = [(0, "u1", "00100"), (1, "u1", "00100")]
+        entries = m.find_duplicate_identifiers(id_records, "t1", {0: "a", 1: "b"})
+        assert "position 0 (length 00100, 004 a)" in entries[0].detail
+        assert "position 1 (length 00100, 004 b)" in entries[0].detail
 
     def test_empty_identifiers_ignored(self):
         id_records = [(0, "", "00100"), (1, "", "00200")]

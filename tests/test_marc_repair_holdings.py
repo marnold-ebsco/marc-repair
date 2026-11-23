@@ -1431,7 +1431,8 @@ class TestRepairHoldingsRecords:
         _, _, log = self._run(tmp_path, recs)
         content = _resolve_log(log).read_text(encoding="utf-8")
         assert "record 0 (HOLD1 / ocm111)\tidentifier used on 2 records" in content
-        assert "record 1 (HOLD1 / ocm222)\tidentifier used on 2 records" in content
+        assert "position 0 (length" in content and ", 004 ocm111)" in content
+        assert "position 1 (length" in content and ", 004 ocm222)" in content
 
     def test_856_missing_u_url_in_other_subfield_recoded(self, tmp_path):
         fields = [

@@ -1004,7 +1004,7 @@ def repair_holdings_records(
 
     dup_ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     if on("check_duplicate_identifiers"):
-        dup_entries = find_duplicate_identifiers(id_records, dup_ts)
+        dup_entries = find_duplicate_identifiers(id_records, dup_ts, id_004)
         for entry in dup_entries:
             suffix = id_004.get(entry.record_idx)
             if suffix:
@@ -3099,9 +3099,6 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
         active_categories.add("leader_byte_defaulted")
     if args.source_system == "sirsi":
         active_categories.add("added_001_from_sirsi_035")
-        if args.check_duplicate_identifiers:
-            active_categories.update(
-                ("duplicate_identifier_suffixed", "duplicate_identifier_item_carrier"))
     if args.add_008_date_from_773:
         active_categories.add("derived_008_date_from_773")
     if args.remap_999_to_945:

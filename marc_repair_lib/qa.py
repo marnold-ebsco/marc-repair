@@ -523,17 +523,21 @@ def missing_identifier_reason(parsed: ParsedRecord, source_system: str | None) -
 
 
 def find_duplicate_identifiers(
-    id_records: list[tuple[int, str, str]], ts: str
+    id_records: list[tuple[int, str, str]], ts: str,
+    extra: dict[int, str] | None = None,
 ) -> list[LogEntry]:
     """Given (record_idx, identifier, declared_length) for every record that
     had a usable identifier (see `record_identifier`; `declared_length` is
     each record's own leader bytes 00-04), find identifiers used on more
-    than one record in this run and return a LogEntry -- category
-    "duplicate_identifier", not fixed, since there's no way to know which
-    occurrence (if any) is the "real" one, only that the same identifier
-    was reused -- for every record involved in such a collision. This is
-    inherently a whole-file check (a record can't tell it's a duplicate in
-    isolation), so it runs once after the full pass rather than per-record.
+    than one record in this run and return ONE LogEntry per such identifier
+    -- category "duplicate_identifier", not fixed, since there's no way to
+    know which occurrence (if any) is the "real" one, only that the same
+    identifier was reused. The entry is logged against the first record
+    and lists every record in the group (position, length) on its own
+    indented line; `extra` (record_idx -> text, e.g. a holdings record's
+    004) is added to that record's line. This is inherently a whole-file
+    check (a record can't tell it's a duplicate in isolation), so it runs
+    once after the full pass rather than per-record.
     """
     by_id: dict[str, list[tuple[int, str]]] = {}
     for idx, ident, length in id_records:
@@ -544,17 +548,16 @@ def find_duplicate_identifiers(
     for ident, occurrences in by_id.items():
         if len(occurrences) < 2:
             continue
+        # "positions" are the record order in the file (the
+        # number the log prefixes each line with), NOT a record number.
+        lines = []
         for idx, length in occurrences:
-            # "positions" are the record order in the file (the
-            # number the log prefixes each line with), NOT a record number.
-            others = "; ".join(
-                f"{i} = length {n}" for i, n in occurrences if i != idx
-            )
-            entries.append(LogEntry(
-                "duplicate_identifier", False, ts, idx, ident,
-                f"identifier used on {len(occurrences)} records total. "
-                f"This record length {length}. Also at position(s) {others}",
-            ))
+            more = f", 004 {extra[idx]}" if extra and extra.get(idx) else ""
+            lines.append(f"\t\tposition {idx} (length {length}{more})")
+        entries.append(LogEntry(
+            "duplicate_identifier", False, ts, occurrences[0][0], ident,
+            f"identifier used on {len(occurrences)} records\n" + "\n".join(lines),
+        ))
     return entries
 
 
@@ -610,6 +613,7 @@ class SirsiDuplicateTracker:
             self._renamed[ident] = n
             member["kind"] = "suffixed"
             member["id"] = new_id
+            member["orig"] = ident
             # register the new id as seen, so a real "X-a" arriving LATER is compared against
             # this record and renamed in turn (its own entry is logged under the original id)
             self._groups[new_id] = [dict(member, kind="first", synthetic=True)]
@@ -618,34 +622,37 @@ class SirsiDuplicateTracker:
         return member["id"] if member["kind"] == "suffixed" else None
 
     def entries(self, ts: str) -> list[LogEntry]:
+        """One "duplicate_identifier" LogEntry per identifier used on more than one record,
+        listing every record in the group (position, length, what was done) on its own
+        indented line. fixed=True when any record in the group had its 001 renamed."""
         entries = []
         for ident, group in self._groups.items():
             if len(group) < 2:
                 continue
-            first = group[0]["idx"]
+            first = group[0]
+            n_suffixed = sum(1 for m in group if m["kind"] == "suffixed")
+            n_carrier = sum(1 for m in group if m["kind"] == "carrier")
+            summary = f"identifier used on {len(group)} records"
+            if n_suffixed:
+                summary += f"; {n_suffixed} true duplicate(s) renamed -- review, may need merging"
+            if n_carrier:
+                summary += f"; {n_carrier} item carrier(s) (not true duplicates)"
+            lines = []
             for m in group:
-                if m.get("synthetic"):
-                    continue    # a renamed record, already logged under its original id
-                others = "; ".join(
-                    f"{o['idx']} = length {o['length']}" for o in group if o is not m
-                )
-                tail = (
-                    f"identifier used on {len(group)} records total. "
-                    f"This record length {m['length']}. Also at position(s) {others}"
-                )
-                if m["kind"] == "first":
-                    entries.append(LogEntry(
-                        "duplicate_identifier", False, ts, m["idx"], ident, tail))
+                where = f"position {m['idx']} (length {m['length']})"
+                if m["kind"] == "suffixed":
+                    what = (f"true duplicate (fields below 900 differ from position "
+                            f"{first['idx']}); 001 changed to {m['id']!r}")
                 elif m["kind"] == "carrier":
-                    entries.append(LogEntry(
-                        "duplicate_identifier_item_carrier", False, ts, m["idx"], ident,
-                        f"not a true duplicate: fields below 900 are identical to position "
-                        f"{first}, so this record likely only carries more item data (999); "
-                        f"{tail}"))
+                    what = (f"item carrier (fields below 900 identical to position "
+                            f"{first['idx']}, so it likely only carries more item data "
+                            f"(999)); 001 unchanged")
+                elif m.get("synthetic"):
+                    what = f"renamed from {m['orig']!r} (see that identifier); 001 unchanged"
                 else:
-                    entries.append(LogEntry(
-                        "duplicate_identifier_suffixed", True, ts, m["idx"], m["id"],
-                        f"true duplicate: fields below 900 differ from position {first}; "
-                        f"001 changed from {ident!r} to {m['id']!r} so it can be loaded; "
-                        f"review, may need merging; {tail}"))
+                    what = "first occurrence; 001 unchanged"
+                lines.append(f"\t\t{where}: {what}")
+            entries.append(LogEntry(
+                "duplicate_identifier", bool(n_suffixed), ts, first["idx"], ident,
+                summary + "\n" + "\n".join(lines)))
         return entries
