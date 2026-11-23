@@ -625,7 +625,8 @@ BIB_ROWS = [
         '`--check-isbn-issn-checksum`',
     ),
     CategoryRow(
-        "Non-standard MARC field (tag not in standard_marc_fields.txt; `--source-system wms` also accepts its `[wms]` tags, `sirsi` also accepts 596)",
+        "Non-standard MARC field (tag not in standard_marc_fields.txt; `--source-system wms` also "
+        "accepts its `[wms]` tags, `sirsi` also accepts 596)",
         "Flagged only, no change", "**Yes**",
         "`non_standard_marc_fields`", "INFORMATION ONLY",
         "No -- every occurrence goes to the separate `<log>_non_standard_fields.txt` report",
