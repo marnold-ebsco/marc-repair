@@ -41,6 +41,10 @@ LOCAL_STANDARD = {
     "376": "FAMILY INFORMATION",
     "378": "FULLER FORM OF PERSONAL NAME",
 }
+# standard only for --source-system sirsi; written as a [sirsi] section
+SIRSI_STANDARD = {
+    "596": "LOCAL NOTE (LIBRARY OWNERSHIP)",
+}
 # standard only for --source-system wms (OCLC); written as a [wms] section
 WMS_STANDARD = {
     "539": "FIXED-LENGTH DATA ELEMENTS OF REPRODUCTION NOTE",
@@ -107,6 +111,9 @@ def render(fields):
     out += ["", "# Standard only when the source system is wms (OCLC); hand-maintained.",
             "[wms]"]
     out += [f"{t} | {WMS_STANDARD[t]}" for t in sorted(WMS_STANDARD)]
+    out += ["", "# Standard only when the source system is sirsi; hand-maintained.",
+            "[sirsi]"]
+    out += [f"{t} | {SIRSI_STANDARD[t]}" for t in sorted(SIRSI_STANDARD)]
     out += ["", "[obsolete]"]
     out += [f"{t} | {obs[t]}" for t in sorted(obs)]
     return "\n".join(out) + "\n"

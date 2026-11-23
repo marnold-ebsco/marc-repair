@@ -1203,12 +1203,14 @@ def load_standard_marc_fields(
 ) -> tuple[set[str], set[str]]:
     """Load standard_marc_fields.txt: returns (standard, obsolete) tag
     sets. One `TAG | TITLE` per line under a `[standard]`, `[obsolete]` or
-    `[wms]` heading; blank lines and lines starting with # are ignored.
-    The `[wms]` tags (standard in OCLC WMS only) count as standard only
-    when `source_system` is "wms". A tag in no standard section is
-    non-standard."""
+    `[wms]` or `[sirsi]` heading; blank lines and lines starting with # are
+    ignored. The `[wms]` tags (standard in OCLC WMS only) count as standard
+    only when `source_system` is "wms", and the `[sirsi]` tags (local fields
+    Sirsi uses, e.g. 596 for library ownership) only when it is "sirsi". A
+    tag in no standard section is non-standard."""
     sections: dict[str, set[str]] = {
-        "standard": set(), "obsolete": set(), "wms": set(), "hints": set(),
+        "standard": set(), "obsolete": set(), "wms": set(), "sirsi": set(),
+        "hints": set(),
     }
     current = None
     with open(path, encoding="utf-8") as fh:
@@ -1216,15 +1218,15 @@ def load_standard_marc_fields(
             line = line.strip()
             if not line or line.startswith("#"):
                 continue
-            if line in ("[standard]", "[obsolete]", "[wms]", "[hints]"):
+            if line in ("[standard]", "[obsolete]", "[wms]", "[sirsi]", "[hints]"):
                 current = line[1:-1]
                 continue
             if current is None:
                 raise ValueError(f"{path}: tag {line!r} appears before a [section] heading")
             sections[current].add(line.split("|", 1)[0].strip())
     standard = sections["standard"]
-    if source_system == "wms":
-        standard = standard | sections["wms"]
+    if source_system in ("wms", "sirsi"):
+        standard = standard | sections[source_system]
     return standard, sections["obsolete"]
 
 

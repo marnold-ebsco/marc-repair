@@ -22,6 +22,11 @@ current state and open items.
 - Duplicate-identifier detail text changed for every source: `... identifier used on N records total. This
   record length LLLLL. Also at position(s) P = length LLLLL; ...` (positions are file positions, not record
   numbers). Description says Symphony, not Voyager.
+- `--source-system sirsi` also treats 596 (library ownership) as a standard field, so it is not listed by
+  `non_standard_marc_fields`: a `[sirsi]` section in `standard_marc_fields.txt` (and in
+  `tools/build_standard_marc_fields.py`, `SIRSI_STANDARD`), loaded like `[wms]`. Other systems still list 596.
+- A renamed duplicate 001 (`X-a`) is registered as seen: an existing `X-a` is skipped (`X-b` is used) and a
+  real `X-a` arriving later is compared with the renamed record and renamed in turn.
 - Unconfirmed: the user thinks Horizon may behave like Symphony (carrier records); not implemented for it.
 - HACC file (`working/hacc_combinedRecords.mrc`, 27,862 records): 73 records with no 001 (all have a Sirsi 035);
   5 duplicate pairs, all true duplicates (none are carriers). The 73 are in `working/missing_hacc_001.mrc`.

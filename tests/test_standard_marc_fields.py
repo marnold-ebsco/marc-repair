@@ -6,13 +6,13 @@ LIST = Path(__file__).resolve().parent.parent / "standard_marc_fields.txt"
 
 
 def load():
-    sections = {"standard": {}, "obsolete": {}, "wms": {}, "hints": {}}
+    sections = {"standard": {}, "obsolete": {}, "wms": {}, "sirsi": {}, "hints": {}}
     cur = None
     for line in LIST.read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if not line or line.startswith("#"):
             continue
-        if line in ("[standard]", "[obsolete]", "[wms]", "[hints]"):
+        if line in ("[standard]", "[obsolete]", "[wms]", "[sirsi]", "[hints]"):
             cur = line[1:-1]
             continue
         tag, _, title = line.partition("|")
@@ -70,3 +70,15 @@ def test_no_leftover_markers_in_titles():
     std, obs, _ = load()
     for title in [*std.values(), *obs.values()]:
         assert not re.search(r"\[[A-Z-]+\]|\((?:NR|R)\)", title), title
+
+
+def test_sirsi_only_fields():
+    from marc_repair_lib.patching import load_standard_marc_fields
+    sirsi_tags = {t for t, _ in (
+        line.split("|") for line in LIST.read_text(encoding="utf-8").split("[sirsi]")[1]
+        .split("[obsolete]")[0].splitlines() if "|" in line)}
+    assert {t.strip() for t in sirsi_tags} == {"596"}
+    assert "596" not in load_standard_marc_fields(str(LIST), None)[0]
+    assert "596" not in load_standard_marc_fields(str(LIST), "other")[0]
+    assert "596" in load_standard_marc_fields(str(LIST), "sirsi")[0]
+    assert "596" in load_standard_marc_fields(str(LIST), "wms")[0]    # still a [wms] tag
