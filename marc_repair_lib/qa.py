@@ -600,9 +600,20 @@ class SirsiDuplicateTracker:
         elif fingerprint == self._first_fp[ident]:
             member["kind"] = "carrier"
         else:
-            self._renamed[ident] = self._renamed.get(ident, 0) + 1
+            # skip any suffixed id already seen in the file (a real "X-a" earlier on)
+            n = self._renamed.get(ident, 0)
+            while True:
+                n += 1
+                new_id = f"{ident}-{sirsi_dup_suffix(n)}"
+                if new_id not in self._groups:
+                    break
+            self._renamed[ident] = n
             member["kind"] = "suffixed"
-            member["id"] = f"{ident}-{sirsi_dup_suffix(self._renamed[ident])}"
+            member["id"] = new_id
+            # register the new id as seen, so a real "X-a" arriving LATER is compared against
+            # this record and renamed in turn (its own entry is logged under the original id)
+            self._groups[new_id] = [dict(member, kind="first", synthetic=True)]
+            self._first_fp[new_id] = fingerprint
         group.append(member)
         return member["id"] if member["kind"] == "suffixed" else None
 
@@ -613,6 +624,8 @@ class SirsiDuplicateTracker:
                 continue
             first = group[0]["idx"]
             for m in group:
+                if m.get("synthetic"):
+                    continue    # a renamed record, already logged under its original id
                 others = "; ".join(
                     f"{o['idx']} = length {o['length']}" for o in group if o is not m
                 )

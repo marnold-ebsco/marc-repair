@@ -6643,3 +6643,25 @@ class TestSirsiDuplicateIdentifiers:
         assert b"ks-sirsi-carrier-a" not in data
         log_text = next(tmp_path.glob("run_*.log")).read_text()
         assert "duplicate_identifier_item_carrier ===" in log_text
+
+    def test_suffixed_id_collisions_are_avoided_and_cascade(self):
+        fp = {k: m.record_fingerprint_below_900(self._rec(k, "1")) for k in "ABCD"}
+        # a real "dup1-a" seen BEFORE the rename: the renamed record skips to -b
+        t = m.SirsiDuplicateTracker()
+        t.track(0, "dup1", "00100", fp["A"])
+        t.track(1, "dup1-a", "00150", fp["C"])
+        assert t.track(2, "dup1", "00200", fp["B"]) == "dup1-b"
+        # a real "dup1-a" arriving AFTER the rename: compared with the renamed record and,
+        # since it differs, renamed in turn
+        t = m.SirsiDuplicateTracker()
+        t.track(0, "dup1", "00100", fp["A"])
+        assert t.track(1, "dup1", "00200", fp["B"]) == "dup1-a"
+        assert t.track(2, "dup1-a", "00300", fp["C"]) == "dup1-a-a"
+        # and a later "dup1-a" identical to the renamed record is just a carrier
+        assert t.track(3, "dup1-a", "00400", fp["B"]) is None
+        entries = t.entries("t")
+        by_idx = {e.record_idx: e for e in entries}
+        assert len(entries) == len(by_idx)               # no record is logged twice
+        assert by_idx[1].category == "duplicate_identifier_suffixed"
+        assert by_idx[2].category == "duplicate_identifier_suffixed"
+        assert by_idx[3].category == "duplicate_identifier_item_carrier"

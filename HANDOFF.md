@@ -22,11 +22,6 @@ current state and open items.
 - Duplicate-identifier detail text changed for every source: `... identifier used on N records total. This
   record length LLLLL. Also at position(s) P = length LLLLL; ...` (positions are file positions, not record
   numbers). Description says Symphony, not Voyager.
-- **OPEN (known limitation, low risk) -- suffix collision.** The renamed 001 (`X-a`) is not checked against the
-  file's other 001s. The pass is single-pass and the tracker only knows the identifiers seen *so far*, so an
-  `X-a` that already exists (earlier or later in the file) would produce a duplicate 001 that is not flagged.
-  To handle later: pre-scan the input for 001s (there is already a pre-scan for the MARC-8 corpus lookup) and
-  skip suffixes already taken.
 - Unconfirmed: the user thinks Horizon may behave like Symphony (carrier records); not implemented for it.
 - HACC file (`working/hacc_combinedRecords.mrc`, 27,862 records): 73 records with no 001 (all have a Sirsi 035);
   5 duplicate pairs, all true duplicates (none are carriers). The 73 are in `working/missing_hacc_001.mrc`.
