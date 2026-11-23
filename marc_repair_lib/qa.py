@@ -544,12 +544,95 @@ def find_duplicate_identifiers(
     for ident, occurrences in by_id.items():
         if len(occurrences) < 2:
             continue
-        all_idx = [idx for idx, _ in occurrences]
         for idx, length in occurrences:
-            others = [i for i in all_idx if i != idx]
+            # "positions" are the record order in the file (the
+            # number the log prefixes each line with), NOT a record number.
+            others = "; ".join(
+                f"{i} = length {n}" for i, n in occurrences if i != idx
+            )
             entries.append(LogEntry(
                 "duplicate_identifier", False, ts, idx, ident,
-                f"identifier used on {len(occurrences)} records total "
-                f"(also records {others}); this record's length (LDR 00-04) = {length}",
+                f"identifier used on {len(occurrences)} records total. "
+                f"This record length {length}. Also at position(s) {others}",
             ))
     return entries
+
+
+def sirsi_dup_suffix(n: int) -> str:
+    """The n-th (1-based) suffix for a renamed Sirsi duplicate: a, b, ... z, aa, ab, ..."""
+    letters = ""
+    while n > 0:
+        n, rem = divmod(n - 1, 26)
+        letters = chr(ord("a") + rem) + letters
+    return letters
+
+
+def record_fingerprint_below_900(parsed: ParsedRecord) -> tuple:
+    """Order-insensitive, strict fingerprint of every field numbered below 900 (001 left out,
+    since a duplicate's 001 is the same by definition)."""
+    items = []
+    for f in parsed.fields:
+        if not f.tag.isdigit() or f.tag >= "900" or f.tag == "001":
+            continue
+        body = f.content if f.is_control() else (f.indicators, tuple(f.subfields))
+        items.append(repr((f.tag, body)))
+    return tuple(sorted(items))
+
+
+class SirsiDuplicateTracker:
+    """--source-system sirsi: Symphony often repeats a record to deliver more item data (999)
+    than fit in one record. For each identifier the first record keeps it. Every later record
+    whose fields below 900 are identical to the first's is a carrier for extra item data (left
+    alone); one whose fields differ is a true duplicate and gets "-a", "-b", ... added to its 001
+    so the file can be loaded."""
+
+    def __init__(self) -> None:
+        self._groups: dict[str, list[dict]] = {}
+        self._first_fp: dict[str, tuple] = {}
+        self._renamed: dict[str, int] = {}
+
+    def track(self, idx: int, ident: str, length: str, fingerprint: tuple) -> str | None:
+        """Register a record; return its new 001 if it is a true duplicate to rename, else None."""
+        group = self._groups.setdefault(ident, [])
+        member = {"idx": idx, "length": length, "kind": "first", "id": ident}
+        if not group:
+            self._first_fp[ident] = fingerprint
+        elif fingerprint == self._first_fp[ident]:
+            member["kind"] = "carrier"
+        else:
+            self._renamed[ident] = self._renamed.get(ident, 0) + 1
+            member["kind"] = "suffixed"
+            member["id"] = f"{ident}-{sirsi_dup_suffix(self._renamed[ident])}"
+        group.append(member)
+        return member["id"] if member["kind"] == "suffixed" else None
+
+    def entries(self, ts: str) -> list[LogEntry]:
+        entries = []
+        for ident, group in self._groups.items():
+            if len(group) < 2:
+                continue
+            first = group[0]["idx"]
+            for m in group:
+                others = "; ".join(
+                    f"{o['idx']} = length {o['length']}" for o in group if o is not m
+                )
+                tail = (
+                    f"identifier used on {len(group)} records total. "
+                    f"This record length {m['length']}. Also at position(s) {others}"
+                )
+                if m["kind"] == "first":
+                    entries.append(LogEntry(
+                        "duplicate_identifier", False, ts, m["idx"], ident, tail))
+                elif m["kind"] == "carrier":
+                    entries.append(LogEntry(
+                        "duplicate_identifier_item_carrier", False, ts, m["idx"], ident,
+                        f"not a true duplicate: fields below 900 are identical to position "
+                        f"{first}, so this record likely only carries more item data (999); "
+                        f"{tail}"))
+                else:
+                    entries.append(LogEntry(
+                        "duplicate_identifier_suffixed", True, ts, m["idx"], m["id"],
+                        f"true duplicate: fields below 900 differ from position {first}; "
+                        f"001 changed from {ident!r} to {m['id']!r} so it can be loaded; "
+                        f"review, may need merging; {tail}"))
+        return entries

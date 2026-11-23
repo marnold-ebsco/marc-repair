@@ -6555,3 +6555,91 @@ class TestSirsiSourceSystem:
         assert b"a445304" in data and b"i9780801479823" in data
         assert b"Title with no Sirsi 035." not in data
         assert b"Title with no Sirsi 035." in (tmp_path / "out_error.mrc").read_bytes()
+
+
+class TestSirsiDuplicateIdentifiers:
+    """--source-system sirsi: a repeated 001 is an item carrier when every field below 900
+    matches the first record's, otherwise a true duplicate whose 001 gets -a, -b, ... (-aa after
+    -z) so it can be loaded."""
+
+    @staticmethod
+    def _rec(title, item, ident="dup1"):
+        return m.ParsedRecord(leader=_SYNTHETIC_LEADER, entries=[], fields=[
+            m.Field_("001", None, None, content=ident),
+            m.Field_("008", None, None, content="x" * 40),
+            m.Field_("245", "00", [("a", title)]),
+            m.Field_("999", "ff", [("a", item)]),
+        ])
+
+    @pytest.mark.parametrize("n, expected", [
+        (1, "a"), (2, "b"), (26, "z"), (27, "aa"), (28, "ab"), (52, "az"), (53, "ba"),
+    ])
+    def test_suffix_sequence(self, n, expected):
+        assert m.sirsi_dup_suffix(n) == expected
+
+    def test_fingerprint_ignores_001_and_999_and_order(self):
+        a = m.record_fingerprint_below_900(self._rec("T", "i1", "x"))
+        b = self._rec("T", "i2", "y")
+        b.fields[1], b.fields[2] = b.fields[2], b.fields[1]
+        assert a == m.record_fingerprint_below_900(b)
+        assert a != m.record_fingerprint_below_900(self._rec("Other", "i1"))
+
+    def test_tracker_classifies_and_logs(self):
+        t = m.SirsiDuplicateTracker()
+        fp_a = m.record_fingerprint_below_900(self._rec("A", "1"))
+        fp_b = m.record_fingerprint_below_900(self._rec("B", "1"))
+        assert t.track(0, "dup1", "00100", fp_a) is None          # first keeps its 001
+        assert t.track(1, "dup1", "00200", fp_a) is None          # identical below 900: carrier
+        assert t.track(2, "dup1", "00300", fp_b) == "dup1-a"      # differs: true duplicate
+        assert t.track(3, "dup1", "00400", fp_b) == "dup1-b"
+        assert t.track(4, "unique", "00500", fp_a) is None
+        by_idx = {e.record_idx: e for e in t.entries("t")}
+        assert sorted(by_idx) == [0, 1, 2, 3]                     # the unique one is not logged
+        assert by_idx[0].category == "duplicate_identifier"
+        assert by_idx[1].category == "duplicate_identifier_item_carrier"
+        assert "identical to position 0" in by_idx[1].detail
+        assert by_idx[2].category == "duplicate_identifier_suffixed" and by_idx[2].fixed
+        assert by_idx[2].record_id == "dup1-a"
+        assert "001 changed from 'dup1' to 'dup1-a'" in by_idx[2].detail
+        assert by_idx[0].detail == (
+            "identifier used on 4 records total. This record length 00100. Also at "
+            "position(s) 1 = length 00200; 2 = length 00300; 3 = length 00400")
+
+    def test_cli_output_and_log(self, tmp_path):
+        src = tmp_path / "in.mrc"
+        src.write_bytes(
+            m.assemble_marc(self._rec("A", "1"))
+            + m.assemble_marc(self._rec("A", "2"))
+            + m.assemble_marc(self._rec("B", "3"))
+        )
+        out = tmp_path / "out.mrc"
+        rc = m.main([str(src), "-o", str(out), "--source-system", "sirsi",
+                     "--log", str(tmp_path / "run.log"), "--log-zero"])
+        assert rc == 0
+        data = out.read_bytes()
+        assert data.count(b"dup1-a") == 1 and data.count(b"dup1-b") == 0
+        log_text = next(tmp_path.glob("run_*.log")).read_text()
+        assert "=== FIXED/REQUIRES ATTENTION: duplicate_identifier_suffixed ===" in log_text
+        assert "=== DUPLICATE RECORDS: duplicate_identifier_item_carrier ===" in log_text
+        assert "001 changed from 'dup1' to 'dup1-a'" in log_text
+
+    def test_other_source_systems_do_not_rename(self, tmp_path):
+        src = tmp_path / "in.mrc"
+        src.write_bytes(m.assemble_marc(self._rec("A", "1")) + m.assemble_marc(self._rec("B", "2")))
+        out = tmp_path / "out.mrc"
+        m.main([str(src), "-o", str(out), "--source-system", "other",
+                "--log", str(tmp_path / "run.log")])
+        assert b"dup1-a" not in out.read_bytes()
+
+    def test_kitchen_sink_sirsi_duplicates(self, tmp_path):
+        src = tmp_path / "kitchen_sink_bib.mrc"
+        src.write_bytes(_read("kitchen_sink_bib.mrc").encode("utf-8"))
+        out = tmp_path / "out.mrc"
+        m.main([str(src), "-o", str(out), "--source-system", "sirsi",
+                "--log", str(tmp_path / "run.log")])
+        data = out.read_bytes()
+        assert data.count(b"ks-dupe-id-a") == 1           # differing duplicate renamed
+        assert data.count(b"ks-sirsi-carrier") == 2       # carriers keep their 001
+        assert b"ks-sirsi-carrier-a" not in data
+        log_text = next(tmp_path.glob("run_*.log")).read_text()
+        assert "duplicate_identifier_item_carrier ===" in log_text

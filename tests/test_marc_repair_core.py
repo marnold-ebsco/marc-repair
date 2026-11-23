@@ -446,15 +446,17 @@ class TestFindDuplicateIdentifiers:
         # the other occurrence
         by_idx = {e.record_idx: e for e in entries}
         assert "00100" in by_idx[0].detail
-        assert "also records [12]" in by_idx[0].detail
+        assert by_idx[0].detail.endswith("Also at position(s) 12 = length 00150")
         assert "00150" in by_idx[12].detail
-        assert "also records [0]" in by_idx[12].detail
+        assert by_idx[12].detail.endswith("Also at position(s) 0 = length 00100")
 
     def test_ids_with_three_or_more_occurrences_all_flagged(self):
         id_records = [(0, "u1", "00100"), (1, "u1", "00100"), (2, "u1", "00100")]
         entries = m.find_duplicate_identifiers(id_records, "t1")
         assert len(entries) == 3
         assert all("3 records" in e.detail for e in entries)
+        assert entries[0].detail.endswith(
+            "Also at position(s) 1 = length 00100; 2 = length 00100")
 
     def test_empty_identifiers_ignored(self):
         id_records = [(0, "", "00100"), (1, "", "00200")]

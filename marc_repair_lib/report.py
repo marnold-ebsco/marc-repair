@@ -68,6 +68,7 @@ _FIXED_REQUIRES_ATTENTION = {
     "split_holdings_multiple_852",
     "added_default_245",
     "added_001_from_sirsi_035",
+    "duplicate_identifier_suffixed",
     "padded_indicators",
     "incomplete_852",
     "invalid_bibliographic_level",
@@ -158,6 +159,7 @@ _DEDICATED_SECTIONS: dict[str, tuple[int, str]] = {
     "unfixable": (-1, "UNFIXABLE"),
     "record_identifier_required": (-1, "UNFIXABLE"),
     "duplicate_identifier": (3, "DUPLICATE RECORDS"),
+    "duplicate_identifier_item_carrier": (3, "DUPLICATE RECORDS"),
     # Below even INFORMATIONAL: report-only, but unlike INFORMATIONAL its
     # entries ARE listed (first few per tag -- see NonStandardFieldTally).
     "non_standard_marc_fields": (5, "INFORMATION ONLY"),
@@ -241,7 +243,7 @@ _CHECK_DESCRIPTIONS: dict[str, str] = {
     "set).",
     "duplicate_identifier": "The same identifier (usually 001, or 907 $a for Sierra records) is used by "
     "more than one distinct record in this file. (Duplicate 001's may be normal "
-    "with records from Voyager.)",
+    "with records from Symphony.)",
     "moved_duplicate_to_added_entry": "A second 100 (another person's name) was recoded as a 700, a second 245 "
     "or 240 was recoded as the added entry it really is (246/730/740, or a "
     "260/250/240/490 when it was a mistagged publication, edition, uniform title "
@@ -348,6 +350,12 @@ _CHECK_DESCRIPTIONS: dict[str, str] = {
     "currently skipped for holdings).",
     "transcode_marc8_failed": "MARC-8-to-UTF-8 transcoding failed for this record's content -- left as "
     "MARC-8, error recorded.",
+    "duplicate_identifier_suffixed": "--source-system sirsi: a later record repeating an identifier "
+    "whose fields below 900 differ from the first record's is a true duplicate; '-a', '-b', ... "
+    "was added to its 001 so the file can be loaded. Review these, they may need merging.",
+    "duplicate_identifier_item_carrier": "--source-system sirsi: a later record repeating an "
+    "identifier whose fields below 900 are identical to the first record's is not a true "
+    "duplicate, just a carrier for more item data (999). Its 001 is unchanged.",
     "added_001_from_sirsi_035": "--source-system sirsi: the record had no 001, so one was built from "
     "its first 035 $a containing 'Sirsi' (any casing), with the label and spaces removed. The "
     "035 is left in place; check that the value is the Sirsi record number.",
@@ -523,6 +531,8 @@ _CHECK_DATA_LOSS: dict[str, str] = {
     "holdings_escape_sequence": "NO DATA LOSS",
     "transcode_marc8_failed": "POSSIBLE DATA LOSS",
     "added_001_from_sirsi_035": "NO DATA LOSS",
+    "duplicate_identifier_suffixed": "NO DATA LOSS",
+    "duplicate_identifier_item_carrier": "POSSIBLE DATA LOSS",
     "added_default_008": "NO DATA LOSS",
     "added_default_holdings_008": "NO DATA LOSS",
     "added_default_245": "NO DATA LOSS",
@@ -607,6 +617,8 @@ _ALWAYS_FULL_CATEGORIES = {
     "record_identifier_required",
     "diverted_for_review",
     "duplicate_identifier",
+    "duplicate_identifier_item_carrier",
+    "duplicate_identifier_suffixed",
     "moved_duplicate_to_added_entry",
     "merged_duplicate_040",
     "removed_non_repeatable_duplicate",

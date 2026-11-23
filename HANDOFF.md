@@ -8,6 +8,29 @@ current state and open items.
 
 ## Current state
 
+### DONE -- `--source-system sirsi`: 001 from a Sirsi 035, Symphony duplicate handling (2026-11-23, pushed on `main`)
+
+- New source system `sirsi` (prompt order: 1 sierra, 2 wms, 3 sirsi, 4 other -- `other` stays last).
+  A record with no/blank 001 gets one from the first `035 $a` containing "sirsi" (any casing), label and
+  spaces removed; logged `added_001_from_sirsi_035` (FIXED/REQUIRES ATTENTION). No usable 035 -> still
+  `record_identifier_required` (UNFIXABLE). Code: `sirsi_id_from_035` (qa.py), `add_001_from_sirsi_035` (patching.py).
+- Symphony repeats a record to carry item data (999) too big for one record. `SirsiDuplicateTracker` (qa.py)
+  compares fields below 900 strictly (order-insensitive, 001 excluded): identical -> carrier
+  (`duplicate_identifier_item_carrier`, 001 untouched); different -> true duplicate, 001 gets `-a`, `-b`, ...
+  `-z`, `-aa`, ... (`duplicate_identifier_suffixed`). The first record keeps its 001. Only with
+  `--source-system sirsi` and `--check-duplicate-identifiers`; other systems still use `find_duplicate_identifiers`.
+- Duplicate-identifier detail text changed for every source: `... identifier used on N records total. This
+  record length LLLLL. Also at position(s) P = length LLLLL; ...` (positions are file positions, not record
+  numbers). Description says Symphony, not Voyager.
+- **OPEN (known limitation, low risk) -- suffix collision.** The renamed 001 (`X-a`) is not checked against the
+  file's other 001s. The pass is single-pass and the tracker only knows the identifiers seen *so far*, so an
+  `X-a` that already exists (earlier or later in the file) would produce a duplicate 001 that is not flagged.
+  To handle later: pre-scan the input for 001s (there is already a pre-scan for the MARC-8 corpus lookup) and
+  skip suffixes already taken.
+- Unconfirmed: the user thinks Horizon may behave like Symphony (carrier records); not implemented for it.
+- HACC file (`working/hacc_combinedRecords.mrc`, 27,862 records): 73 records with no 001 (all have a Sirsi 035);
+  5 duplicate pairs, all true duplicates (none are carriers). The 73 are in `working/missing_hacc_001.mrc`.
+
 ### DONE -- progress %, 856 recode, n/a -> und, flake8 clean (2026-11-16, pushed on `main`: `7a04b5c`, `932bcc1`, `6c22988`)
 
 - **Progress % / ETA** (`ProgressReporter`, `report.py`) now follow bytes of records

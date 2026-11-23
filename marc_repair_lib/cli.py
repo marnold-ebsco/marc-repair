@@ -27,8 +27,10 @@ from .qa import (
     SOURCE_SYSTEMS,
     _SOURCE_SYSTEM_IDENTIFIER,
     find_dangling_880_links,
+    SirsiDuplicateTracker,
     find_duplicate_identifiers,
     find_invalid_indicator_values,
+    record_fingerprint_below_900,
     find_invalid_isbn_issn_checksums,
     find_suspicious_fields,
     fix_008_length,
@@ -2472,6 +2474,12 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
     # Tiny compared to holding the records themselves: two short strings
     # per record, not the parsed record data.
     id_records: list[tuple[int, str, str]] = []
+    # --source-system sirsi: classifies repeated 001s as item carriers or true duplicates
+    # (see SirsiDuplicateTracker) instead of the plain find_duplicate_identifiers check
+    sirsi_dups = (
+        SirsiDuplicateTracker()
+        if source_system == "sirsi" and args.check_duplicate_identifiers else None
+    )
     progress = ProgressReporter(total_bytes=os.path.getsize(args.input))
     n_sampled = 0
 
@@ -2562,6 +2570,13 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
                     )
                 n_unfixable += 1
             else:
+                if sirsi_dups is not None:
+                    field_001 = next(f for f in parsed.fields if f.tag == "001")
+                    new_001 = sirsi_dups.track(
+                        i, field_001.content, rec_text[:5], record_fingerprint_below_900(parsed)
+                    )
+                    if new_001:
+                        field_001.content = new_001
                 for tag, spaces_added, original_indicators, preview in parsed.indicator_fixes:
                     rec_id = record_identifier(parsed)
                     log(
@@ -3022,7 +3037,9 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
                     fixup_fh.write(fixed_bytes)
 
     dup_ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    if args.check_duplicate_identifiers:
+    if sirsi_dups is not None:
+        log_entries.extend(sirsi_dups.entries(dup_ts))
+    elif args.check_duplicate_identifiers:
         log_entries.extend(find_duplicate_identifiers(id_records, dup_ts))
     # the suggestions' tie-break needs the whole file's language counts
     for entry, bad_code in pending_language_hints:
@@ -3060,6 +3077,9 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
         active_categories.add("leader_byte_defaulted")
     if args.source_system == "sirsi":
         active_categories.add("added_001_from_sirsi_035")
+        if args.check_duplicate_identifiers:
+            active_categories.update(
+                ("duplicate_identifier_suffixed", "duplicate_identifier_item_carrier"))
     if args.add_008_date_from_773:
         active_categories.add("derived_008_date_from_773")
     if args.remap_999_to_945:

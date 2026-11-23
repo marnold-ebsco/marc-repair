@@ -776,6 +776,18 @@ def build_bib_records() -> list[bytes]:
         m.Field_("245", "00", [("a", "Second copy, a longer title.")]),
     ]))
 
+    # --source-system sirsi item carrier: same 001 and identical fields below 900,
+    # only the 999 (item data) differs -> not a true duplicate, 001 left alone.
+    # (The ks-dupe-id pair above, whose 245s differ, is the true-duplicate case:
+    # its second record becomes ks-dupe-id-a under sirsi.)
+    for item in ("item one", "item two"):
+        records.append(_record(_BIB_LEADER, [
+            m.Field_("001", None, None, content="ks-sirsi-carrier"),
+            m.Field_("008", None, None, content="x" * 40),
+            m.Field_("245", "00", [("a", "Title shared by item carriers.")]),
+            m.Field_("999", "ff", [("a", item)]),
+        ]))
+
     # reattached_orphaned_field: a trailing =700 field physically present
     # in the file but missing its own directory entry, so excluded from
     # the preceding record's own declared length -- real shape (down to
