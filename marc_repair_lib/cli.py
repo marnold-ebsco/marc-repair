@@ -2082,7 +2082,7 @@ def resolve_source_system(args: argparse.Namespace) -> None:
     else:
         print(
             "Source system: NOT SET -- the required-identifier check is skipped "
-            "(pass --source-system sierra|wms|other|sirsi, or run from a terminal to be asked)"
+            "(pass --source-system sierra|wms|sirsi|other, or run from a terminal to be asked)"
         )
 
 

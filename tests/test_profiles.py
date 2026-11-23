@@ -249,15 +249,15 @@ def test_source_system_is_asked_then_displayed_once(monkeypatch, capsys):
     out = capsys.readouterr()
     assert args.source_system == "sierra"
     assert "1. sierra (907 $a required)" in out.out and "2. wms (001 required)" in out.out
-    assert "3. other (001 required)" in out.out
-    assert "4. sirsi (" in out.out
+    assert "3. sirsi (" in out.out
+    assert "4. other (001 required)" in out.out
     assert "Source system: sierra" in out.out
     assert out.err.count("please enter a number from 1 to 4") == 3
     m.resolve_source_system(args)  # once per invocation
     assert capsys.readouterr().out == ""
 
 
-@pytest.mark.parametrize("answer, expected", [("2", "wms"), ("3", "other"), ("4", "sirsi")])
+@pytest.mark.parametrize("answer, expected", [("2", "wms"), ("3", "sirsi"), ("4", "other")])
 def test_source_system_numbers_two_and_three(monkeypatch, answer, expected):
     monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr("builtins.input", lambda _p: answer)

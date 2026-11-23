@@ -461,7 +461,7 @@ def record_identifier(parsed: ParsedRecord, source_system: str | None = None) ->
     return value_907 or ""
 
 
-SOURCE_SYSTEMS = ("sierra", "wms", "other", "sirsi")
+SOURCE_SYSTEMS = ("sierra", "wms", "sirsi", "other")
 
 
 _SOURCE_SYSTEM_IDENTIFIER = {

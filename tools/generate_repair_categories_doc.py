@@ -524,7 +524,7 @@ BIB_ROWS = [
         "Diverted to `<output>_error.mrc`, unchanged",
         "Only when `--source-system` is given (or answered at the prompt)",
         "`record_identifier_required`", "UNFIXABLE", "**Yes**",
-        "`--source-system sierra|wms|other|sirsi`",
+        "`--source-system sierra|wms|sirsi|other`",
     ),
     CategoryRow(
         "MARC-8 diacritic recovered -- either a bogus script-switching "
