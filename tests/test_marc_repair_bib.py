@@ -6698,7 +6698,7 @@ class TestUnmappedMarcFields:
     def test_shipped_snapshot_loads(self):
         mapped, ignored = m.load_instance_mapped_fields(m.DEFAULT_INSTANCE_MAPPED_FIELDS_FILE)
         assert {"001", "245", "856", "880"} <= mapped
-        assert {"010", "040", "099", "337", "399"} <= ignored and not {"210", "400", "440", "490"} & ignored
+        assert {"010", "040", "099", "337", "399", "730", "789", "800", "889"} <= ignored and not {"210", "400", "440", "490", "790", "890"} & ignored
         # the local ranges that get a star are not mapped
         assert not any(t.startswith(("59", "69", "79")) for t in mapped if t != "590")
 
