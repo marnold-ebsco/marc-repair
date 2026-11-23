@@ -6368,6 +6368,53 @@ class TestRecodeMisfiledDuplicate245:
         assert parsed.fields[1].subfields == [("a", "Offenbarungen."), ("l", "German")]
         assert details[0].endswith("NO DATA LOSS")
 
+    def test_bare_first_245_yields_to_the_full_second_245(self):
+        # HACC u358254: English title first, the real (Spanish) 245 second
+        c = "Telecinco presenta ; una pelicula de Guillermo del Toro."
+        parsed = _rec(
+            m.Field_("008", None, None, content="070220s2007    sp 119 e          vlspa d"),
+            m.Field_("130", "0 ", [("a", "Laberinto del fauno (Motion picture)")]),
+            m.Field_("245", "  ", [("a", "Pan's Labyrinth")]),
+            m.Field_("245", "13", [("a", "El laberinto del fauno"),
+                                   ("h", "[videorecording] /"), ("c", c)]),
+        )
+        details = m.recode_misfiled_duplicate_245(parsed)
+        f245 = [f for f in parsed.fields if f.tag == "245"]
+        assert len(f245) == 1
+        assert ("c", c) in f245[0].subfields and ("h", "[videorecording] /") in f245[0].subfields
+        assert [f.subfields for f in parsed.fields if f.tag == "246"] == [[("a", "Pan's Labyrinth")]]
+        assert not [f for f in parsed.fields if f.tag == "740"]
+        assert len(details) == 1
+        assert details[0].endswith("NO DATA LOSS")
+        # the log says which title was preferred and why
+        assert "kept as the real title instead of the first" in details[0]
+        assert "$c statement of responsibility, $h medium" in details[0]
+        assert "record's language is 'spa', not 'eng'" in details[0]
+
+    def test_bare_first_245_already_a_246_is_just_dropped(self):
+        parsed = _rec(
+            m.Field_("245", "  ", [("a", "Pan's Labyrinth")]),
+            m.Field_("245", "13", [("a", "El laberinto del fauno"), ("c", "Del Toro.")]),
+            m.Field_("246", "  ", [("a", "Pan's Labyrinth")]),
+        )
+        details = m.recode_misfiled_duplicate_245(parsed)
+        assert [f.tag for f in parsed.fields] == ["245", "246"]
+        assert parsed.fields[0].subfields[0] == ("a", "El laberinto del fauno")
+        assert "already on the record as a 246" in details[0]
+        assert details[0].endswith("NO DATA LOSS")
+
+    def test_740_keeps_h_and_lists_every_dropped_subfield(self):
+        parsed = _rec(
+            m.Field_("245", "10", [("a", "Series title /"), ("c", "Some Author"), ("b", "sub")]),
+            m.Field_("245", "10", [("a", "Part two"), ("h", "[sound recording] /"),
+                                   ("c", "Another Author"), ("k", "excerpts")]),
+        )
+        details = m.recode_misfiled_duplicate_245(parsed)
+        f740 = [f for f in parsed.fields if f.tag == "740"][0]
+        assert ("h", "[sound recording]") in f740.subfields
+        assert "(dropped $c, $k)" in details[0]
+        assert details[0].endswith("POSSIBLE DATA LOSS")
+
     def test_uniform_title_becomes_730_when_record_has_a_240(self):
         parsed = _rec(
             m.Field_("240", "10", [("a", "Existing.")]),

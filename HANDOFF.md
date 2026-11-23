@@ -8,6 +8,37 @@ current state and open items.
 
 ## Current state
 
+### OPEN -- review the HOLDINGS-only categories against the new section rules (2026-11-23, to do another day)
+
+The 2026-11-23 reorganization (below) was scoped to bib records; categories shared with holdings moved
+with it, but the holdings-only ones were not reviewed. Apply the same rules (FIXED/REQUIRES ATTENTION =
+data lost; NEEDS REVIEW = the tool guessed or inserted a value; FLAGGED, NOT CHANGED = detect-only
+finding that suggests a broken record; INFORMATIONAL = systematic no-loss fix or low-priority
+observation) and propose moves for the user's approval before building:
+- Currently FIXED/REQUIRES ATTENTION: `removed_bad_call_number`, `removed_extra_852_b`,
+  `holdings_852_duplicate_nr_subfield`, `holdings_852_b_suspect_content`, `incomplete_852`. Check each
+  really loses data (e.g. `removed_extra_852_b` removes an identical duplicate $b in one case, which
+  loses nothing -- a possible split like the three bib ones).
+- Currently NEEDS REVIEW: `added_missing_852_location`, `added_missing_852c`, `holdings_856_missing_u`.
+- Currently INFORMATIONAL: `recoded_852_b_to_i`, `removed_empty_852_subfield`,
+  `split_holdings_multiple_852`, `holdings_multiple_004`, `missing_call_number`.
+- Not in any section set (fall back to NOT FIXED, or INFORMATIONAL when fixed), but present in
+  `_CHECK_DATA_LOSS`/`_ALWAYS_FULL_CATEGORIES`: `holdings_853_missing_8`, `holdings_escape_sequence`,
+  `holdings_missing_004` -- decide where they belong and register them explicitly.
+- Then: update `tools/generate_repair_categories_doc.py` (holdings pipeline table), regenerate
+  `docs/REPAIR_CATEGORIES.md`, follow the registry in `tests/test_marc_repair_holdings.py`, and update
+  the PDF introduction text in `pdf_log.py` only if a section's meaning changes.
+
+### OPEN -- look at `dangling_880_link` / `--check-dangling-880-links` (2026-11-23, user: leave it off for now)
+
+The check is off by default (switches.py `check_dangling_880_links`, default False). The only reason on
+record is the `--check-dangling-880-links` help text (cli.py): it is a detect-only, no-fix check. No other
+rationale (speed, false positives, noise on real data) is documented anywhere, so it is unknown whether
+there is a real reason to keep it off. To look at: run it on real data to see how often it fires and
+whether the hits are real; decide whether to turn it on by default; and if it is turned on, move
+`dangling_880_link` from INFORMATIONAL (count only) to FLAGGED, NOT CHANGED, since a dangling 880 link
+is a detect-only finding that suggests a broken record. Nothing was changed.
+
 ### DONE -- section reorganization by what happened to the data (2026-11-23, user approved)
 
 Sections now (report.py `_DEDICATED_SECTIONS`, sort slot in brackets): UNFIXABLE (-1), NOT FIXED (0),

@@ -2162,11 +2162,19 @@ def recode_misfiled_duplicate_245(parsed: ParsedRecord) -> list[str]:
         250, if the record has none;
       * it is a further volume/part title: $n/$p only (the first 245's $a
         is borrowed) or $a plus its own $c -- recoded as a 740 `x2`
-        (analytical added entry; $c is dropped and flagged).
+        (analytical added entry; $h is kept, $c and any other subfield the 740
+        can't carry is dropped and listed).
     Anything else is left for the generic removal.
 
     Returns a list of detail strings, one per extra 245 handled (category
-    "moved_duplicate_to_added_entry" -- see `main`)."""
+    "moved_duplicate_to_added_entry", or "moved_duplicate_dropped_subfield"
+    when a subfield was dropped -- see `main`).
+
+    Before the volume/part rule: when the FIRST 245 is only a bare $a (no
+    $b/$c/$h -- typically an alternate or English title exported ahead of
+    the real one) and an extra 245 has $a and $c, the extra is the real
+    title and takes the first's place; the first becomes a 246 (or is
+    just dropped when the record already has that 246). Nothing is lost."""
     f245 = [f for f in parsed.fields if f.tag == "245" and not f.is_control()]
     if len(f245) < 2:
         return []
@@ -2175,6 +2183,10 @@ def recode_misfiled_duplicate_245(parsed: ParsedRecord) -> list[str]:
     series_keys = {
         _ascii_alnum(next((d for c, d in f.subfields if c == "a"), ""))
         for f in fields if f.tag in ("490", "830") and not f.is_control()
+    }
+    existing_246 = {
+        _normalized_title("".join(d for c, d in f.subfields if c in "ab"))
+        for f in fields if f.tag == "246" and not f.is_control()
     }
     existing_250 = [f for f in fields if f.tag == "250" and not f.is_control()]
     existing_26x = {
@@ -2205,6 +2217,30 @@ def recode_misfiled_duplicate_245(parsed: ParsedRecord) -> list[str]:
         if _is_near_duplicate_245(extra, first):
             fields = [f for f in fields if f is not extra]
             details.append(note(extra, None, "near-duplicate of the kept 245", []))
+        elif first_codes == {"a"} and "a" in codes and "c" in codes and "6" not in codes \
+                and _has_real_a(first):
+            first_a = next((d for c, d in first.subfields if c == "a" and d), "")
+            key = _normalized_title(first_a)
+            lang = next((f.content[35:38] for f in parsed.fields
+                         if f.tag == "008" and f.content and len(f.content) >= 38), "")
+            full = "$c statement of responsibility" + (
+                ", $h medium" if "h" in codes else "")
+            why = (f"second 245 kept as the real title instead of the first -- it carries the "
+                   f"full description ({full})"
+                   + (f" and the record's language is '{lang}', not 'eng' (008/35-37)"
+                      if lang.isalpha() and lang != "eng" else "")
+                   + "; the first 245 was only a bare alternate title")
+            idx = next(i for i, f in enumerate(fields) if f is first)
+            fields = [f for f in fields if f is not extra]
+            fields[idx] = extra
+            if key in existing_246:
+                details.append(note(first, None, why + ", already on the record as a 246", []))
+            else:
+                new = Field_("246", "3 ", [("a", _strip_isbd(first_a))])
+                existing_246.add(key)
+                added.append(new)
+                details.append(note(first, new, why, []))
+            first = extra
         elif "a" in codes and "c" in codes and "6" not in codes \
                 and first_codes & set("lv") and "c" not in first_codes:
             ind2 = _valid_nonfiling(first.indicators[1:2], next(
@@ -2275,14 +2311,14 @@ def recode_misfiled_duplicate_245(parsed: ParsedRecord) -> list[str]:
             else:
                 first_a = _strip_isbd(next((d for c, d in first.subfields if c == "a"), ""))
                 subs.append(("a", first_a + "."))
-            subs += [(c, _strip_isbd(d) if c == "p" else d)
-                     for c, d in extra.subfields if c in "np" and d]
+            subs += [(c, _strip_isbd(d) if c in "hp" else d)
+                     for c, d in extra.subfields if c in "hnp" and d]
             new = Field_("740", nf + "2", subs)
             fields = [f for f in fields if f is not extra]
             added.append(new)
             same_c = c_val.strip() == next((d for c, d in first.subfields if c == "c"), "").strip()
-            details.append(note(extra, new, "further volume/part title",
-                                [] if same_c else ["c"]))
+            lost = sorted(codes - {c for c, _ in new.subfields} - {"b"} - ({"c"} if same_c else set()))
+            details.append(note(extra, new, "further volume/part title", lost))
     if details:
         parsed.fields = _place(fields, added)
     return details
