@@ -635,10 +635,10 @@ BIB_ROWS = [
     ),
     CategoryRow(
         "Field tag FOLIO's default MARC-to-instance mapping does not map (tag not in "
-        "instance_mapped_marc_fields.txt; 00X, 9XX and the file's `[ignored]` tags, 010-199, 300-399, 700-789 and 800-889 "
-        "by "
-        "default, never listed; local-use ranges 59x, 69x and 79x starred). The field stays on "
-        "the MARC record but does not show in the instance record or in Locate search",
+        "instance_mapped_marc_fields.txt; 00X, 9XX and the file's `[ignored]` tags, 010-199, "
+        "300-399, 700-789 and 800-889 by default, never listed; "
+        "local-use ranges 59x, 69x and 79x starred). The field stays on the MARC "
+        "record but does not show in the instance record or in Locate search",
         "Listed only (tag, instance and record counts), no change", "**Yes**",
         "`unmapped_marc_fields`", "INFORMATION ONLY",
         "One summary list in the log, not per record",
