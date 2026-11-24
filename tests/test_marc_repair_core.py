@@ -1524,6 +1524,15 @@ class TestWriteLogTrimmed:
         assert text.count("=== 0 record(s) ===") == 2
         assert "CHECKS PERFORMED" not in text
 
+    def test_list_clean_checks_false_drops_footer(self, tmp_path):
+        log = tmp_path / "a.log"
+        m.write_log(str(log), self._entries(), active_categories=self.ACTIVE,
+                    full_categories=set(), list_clean_checks=False)
+        text = log.read_text(encoding="utf-8")
+        assert ": removed_null_identifier ===" in text
+        assert "CHECKS PERFORMED" not in text
+        assert "padded_indicators" not in text
+
     def test_inactive_category_in_neither_place(self, tmp_path):
         log = tmp_path / "a.log"
         m.write_log(str(log), self._entries(), active_categories=self.ACTIVE,

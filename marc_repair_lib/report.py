@@ -934,6 +934,7 @@ def write_log(
     full_categories: set[str] | None = None,
     count_notes: dict[str, str] | None = None,
     include_zero: bool = False,
+    list_clean_checks: bool = True,
     separate_file_notes: dict[str, str] | None = None,
     count_lines: dict[str, str] | None = None,
 ) -> None:
@@ -1001,7 +1002,8 @@ def write_log(
     in `active_categories`, i.e. checks that really ran) is listed once,
     by name with a one-line description, in a closing "CHECKS PERFORMED
     WITH NO FINDINGS" block -- so the log stays trim but still shows the
-    full scope of what was tested."""
+    full scope of what was tested. `list_clean_checks=False` drops that closing
+    block (the log then shows only findings)."""
     # non_standard_marc_fields has its own report (the *_non_standard_fields.txt
     # supplement, see `write_non_standard_supplement`), so it is kept out of the log.
     entries = [e for e in entries if e.category != NON_STANDARD_FIELD_CATEGORY]
@@ -1107,7 +1109,7 @@ def write_log(
                             fh.write("\n")
                         prev_no_loss = no_loss
                         fh.write(e.render() + "\n")
-        if skipped:
+        if skipped and list_clean_checks:
             if ordered:
                 fh.write("\n")
             fh.write(f"=== CHECKS PERFORMED WITH NO FINDINGS ({len(skipped)}) ===\n")

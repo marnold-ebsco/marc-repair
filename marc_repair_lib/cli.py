@@ -452,6 +452,7 @@ def repair_holdings_records(
     on_record: Callable[[int], None] | None = None,
     on_estimate: Callable[[int, int], None] | None = None,
     include_zero: bool = False,
+    list_clean_checks: bool = True,
     switches: dict[str, bool] | None = None,
     header_lines: list[str] | None = None,
 ) -> dict[str, int]:
@@ -1066,6 +1067,7 @@ def repair_holdings_records(
         log_path, log_entries, active_categories=active_categories,
         full_categories=resolved_full_categories, count_notes=count_notes,
         include_zero=include_zero,
+        list_clean_checks=list_clean_checks,
     )
     n_not_fixed = sum(1 for e in log_entries if _section_for(e)[1] == "NOT FIXED")
     return {
@@ -1611,6 +1613,17 @@ def build_parser() -> argparse.ArgumentParser:
         "by name, with a one-line description, in a closing \"CHECKS "
         "PERFORMED WITH NO FINDINGS\" block so the log still shows the "
         "full scope of what was tested",
+    )
+    parser.add_argument(
+        "--log-clean-checks",
+        dest="log_clean_checks",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="list, in a closing \"CHECKS PERFORMED WITH NO FINDINGS\" block, "
+        "every check that ran but found nothing (default on). "
+        "--no-log-clean-checks leaves that block out, so the log shows only "
+        "what was found. Has no effect with --log-zero, which writes a "
+        "header for every check instead",
     )
     parser.add_argument(
         "--pdf-log",
@@ -2218,6 +2231,7 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
                 header_lines=describe_switches(parser, args, "holdings"),
                 full_categories=set(args.log_full),
                 include_zero=args.log_zero,
+                list_clean_checks=args.log_clean_checks,
                 on_progress=holdings_progress.on_progress,
                 on_record=holdings_progress.maybe_print,
                 on_estimate=holdings_progress.maybe_print_estimate,
@@ -2295,6 +2309,7 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
             header_lines=describe_switches(parser, args, "holdings"),
             full_categories=set(args.log_full),
             include_zero=args.log_zero,
+            list_clean_checks=args.log_clean_checks,
             on_progress=progress.on_progress,
             on_record=progress.maybe_print,
             on_estimate=progress.maybe_print_estimate,
@@ -3225,6 +3240,7 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
         log_path, log_entries, active_categories=active_categories,
         full_categories=resolved_full_categories,
         include_zero=args.log_zero,
+        list_clean_checks=args.log_clean_checks,
         separate_file_notes=separate_file_notes,
         count_lines=count_lines,
     )
