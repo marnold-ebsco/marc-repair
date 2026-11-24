@@ -8,6 +8,32 @@ current state and open items.
 
 ## Current state
 
+### DONE (awaiting real-data run on EC2) -- Sirsi 002 copied from the 001 (2026-11-24, pushed on `main`: `f7b44b8`, `abb74c3`)
+
+Why: the transform/load drops the last digit of a b/c/o/i/v + 8-digit id (Sierra-style), so for Sirsi the
+002 carries the id instead. Data Engineers must use `"ilsFlavour": "custom"` and `"customBibIdField": "002"`
+in the task definition (this wording is the category description, bold lead in the PDF).
+- `--source-system sirsi` only; switch `--add-002-from-001` (default on, `--no-add-002-from-001` off).
+  Every record loses any existing 002 and gets one copied from its 001; a 001 matching
+  `^[bciov]\d{8}$` (case-insensitive) loses its letter. A duplicate-renamed 001 (`-a`, `-b`) is copied as
+  renamed. The 001 itself is never changed. Code: `Sirsi002Tally`, `sirsi_002_value` (patching.py), called
+  in the bib loop in cli.py right after `SirsiDuplicateTracker.track`.
+- Log (user choices): `added_002_from_001` in INFORMATIONAL -- count of ALL records, then how many were
+  "actually changed" (letter stripped, or a different old 002 replaced) and the first 25 of their ids
+  followed by " and N others" (one summary entry, like `unmapped_marc_fields`, via `count_lines` /
+  `separate_file_notes`). `removed_existing_002` in FIXED/REQUIRES ATTENTION, listed per record, only when
+  the old 002 differed from the new value (data loss); same switch.
+- 002 is a standard field for Sirsi (`[sirsi]` in `standard_marc_fields.txt` and `SIRSI_STANDARD` in the
+  builder), so it is not reported as non-standard.
+- Tests: `tests/test_sirsi_002.py`; two duplicate-identifier tests in `test_marc_repair_bib.py` now expect
+  each id twice (001 + 002 copy). Suite 1013 passed, 5 skipped; flake8 clean.
+- OPEN: the user expected only six records to change (o50302675, o03608729, o40839446, o40839447,
+  o40839448, o05196819) but the rule as stated changes every `o`+8-digit 001: 918 in
+  `working/hacc_combinedRecords.mrc`, 1,115 of 33,286 in `working/HACC_SymphonyData_EverythingbutEResources.mrc`
+  (all six are in the latter). Nothing in the records (035, items, 003, collisions) separates the six
+  from the rest; the user is running real data on the EC2 to see. If a narrower criterion emerges, change
+  `sirsi_002_value` only.
+
 ### OPEN -- review the HOLDINGS-only categories against the new section rules (2026-11-23, to do another day)
 
 The 2026-11-23 reorganization (below) was scoped to bib records; categories shared with holdings moved
