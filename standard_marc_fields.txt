@@ -327,6 +327,7 @@
 
 # Standard only when the source system is sirsi; hand-maintained.
 [sirsi]
+002 | LOCAL CONTROL NUMBER (COPY OF 001, WITHOUT ITS LETTER)
 596 | LOCAL NOTE (LIBRARY OWNERSHIP)
 
 [obsolete]

@@ -219,6 +219,7 @@ invalid-subfield-code removal, `unfixable` diversion and its fallbacks.
 | `--marc8-corpus-lookup` | bib | on | `marc8_corpus_lookup` |  |  |
 | `--remap-999-to-945` | bib | off | `remap_999_to_945` | `remapped_999_to_945` |  |
 | `--move-999-to-949` | bib | on | `move_999_to_949` | `moved_999_to_949` |  |
+| `--add-002-from-001` | bib | on | `add_002_from_001` | `added_002_from_001`, `removed_existing_002` |  |
 | `--merge-duplicate-040` | bib | on | `merge_duplicate_040` | `merged_duplicate_040`, `merged_duplicate_040_dropped_data` |  |
 | `--move-duplicate-100-to-700` | bib | on | `move_duplicate_100_to_700` | `moved_duplicate_to_added_entry`, `moved_duplicate_dropped_subfield` |  |
 | `--move-duplicate-240-to-730` | bib | on | `move_duplicate_240_to_730` | `moved_duplicate_to_added_entry`, `moved_duplicate_dropped_subfield` |  |

@@ -43,6 +43,7 @@ LOCAL_STANDARD = {
 }
 # standard only for --source-system sirsi; written as a [sirsi] section
 SIRSI_STANDARD = {
+    "002": "LOCAL CONTROL NUMBER (COPY OF 001, WITHOUT ITS LETTER)",
     "596": "LOCAL NOTE (LIBRARY OWNERSHIP)",
 }
 # standard only for --source-system wms (OCLC); written as a [wms] section

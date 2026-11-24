@@ -86,6 +86,8 @@ from .patching import (
     DEFAULT_008_CONTENT,
     derive_008_date_from_773,
     add_001_from_sirsi_035,
+    SIRSI_002_CATEGORY,
+    Sirsi002Tally,
     add_default_008,
     add_default_245,
     add_default_holdings_008,
@@ -2457,6 +2459,7 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
         if args.check_unmapped_fields
         else None
     )
+    sirsi_002 = Sirsi002Tally() if args.source_system == "sirsi" and args.add_002_from_001 else None
     ensure_specs = [parse_ensure_field_spec(s) for s in args.ensure_field]
 
     overrides = _load_overrides(args.overrides) if args.overrides else {}
@@ -2638,6 +2641,9 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
                     )
                     if new_001:
                         field_001.content = new_001
+                if sirsi_002 is not None:
+                    for detail in sirsi_002.apply(parsed):
+                        log("removed_existing_002", True, i, record_identifier(parsed), detail)
                 for tag, spaces_added, original_indicators, preview in parsed.indicator_fixes:
                     rec_id = record_identifier(parsed)
                     log(
@@ -3142,6 +3148,8 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
         active_categories.add("leader_byte_defaulted")
     if args.source_system == "sirsi":
         active_categories.add("added_001_from_sirsi_035")
+        if args.add_002_from_001:
+            active_categories.update(("added_002_from_001", "removed_existing_002"))
     if args.remap_999_to_945:
         active_categories.add("remapped_999_to_945")
     if args.move_999_to_949 and args.source_system != "sirsi":
@@ -3226,6 +3234,14 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
         )
         log_entries.append(LogEntry(
             UNMAPPED_FIELD_CATEGORY, False,
+            datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), 0, "", "see summary",
+        ))
+    if sirsi_002 is not None and sirsi_002.records:
+        count_lines[SIRSI_002_CATEGORY], separate_file_notes[SIRSI_002_CATEGORY] = (
+            sirsi_002.summary()
+        )
+        log_entries.append(LogEntry(
+            SIRSI_002_CATEGORY, True,
             datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), 0, "", "see summary",
         ))
     if n_default_008:

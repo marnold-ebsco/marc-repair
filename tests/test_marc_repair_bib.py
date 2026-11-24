@@ -6819,7 +6819,7 @@ class TestSirsiDuplicateIdentifiers:
                      "--log", str(tmp_path / "run.log"), "--log-zero"])
         assert rc == 0
         data = out.read_bytes()
-        assert data.count(b"dup1-a") == 1 and data.count(b"dup1-b") == 0
+        assert data.count(b"dup1-a") == 2 and data.count(b"dup1-b") == 0
         log_text = next(tmp_path.glob("run_*.log")).read_text()
         assert "=== DUPLICATE RECORDS: duplicate_identifier ===" in log_text
         assert "=== 1 identifier(s) on 3 record(s) ===" in log_text
@@ -6841,8 +6841,8 @@ class TestSirsiDuplicateIdentifiers:
         m.main([str(src), "-o", str(out), "--source-system", "sirsi",
                 "--log", str(tmp_path / "run.log")])
         data = out.read_bytes()
-        assert data.count(b"ks-dupe-id-a") == 1           # differing duplicate renamed
-        assert data.count(b"ks-sirsi-carrier") == 2       # carriers keep their 001
+        assert data.count(b"ks-dupe-id-a") == 2           # renamed: in the 001 and its 002 copy
+        assert data.count(b"ks-sirsi-carrier") == 4       # carriers keep their 001 (and 002 copy)
         assert b"ks-sirsi-carrier-a" not in data
         log_text = next(tmp_path.glob("run_*.log")).read_text()
         assert "item carrier (fields below 900 identical to position" in log_text

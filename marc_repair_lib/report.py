@@ -49,6 +49,7 @@ _FIXED_REQUIRES_ATTENTION = {
     "removed_invalid_subfield",
     "truncated_oversized_field",
     "trimmed_oversized_record",
+    "removed_existing_002",
     "field_removed_because_missing_a",
     "removed_bad_call_number",
     "removed_extra_852_b",
@@ -76,6 +77,7 @@ _FIXED_REQUIRES_ATTENTION = {
 #: with spaces) -- or a detect-only finding not urgent enough for NOT
 #: FIXED.
 _INFORMATIONAL = {
+    "added_002_from_001",
     "padded_indicators",
     "recoded_852_b_to_i",
     "removed_empty_852_subfield",
@@ -384,6 +386,13 @@ _CHECK_DESCRIPTIONS: dict[str, str] = {
     "914 $a, an OCLC number or other 035 $a, or, as a last resort, a 'sirsi-' hash of its own "
     "title/author/imprint data. The source field is left in place; each entry says which was "
     "used. Check that the value is the Sirsi record number, especially for the fallbacks.",
+    "added_002_from_001": "For Data Engineers: there were Sierra-like 001s which necessitated "
+    "switching to using the 002. In the task definition use \"ilsFlavour\": \"custom\" and add "
+    "\"customBibIdField\": \"002\" to the task. (--source-system sirsi: every record got a 002 "
+    "copied from its 001; where the 001 is b, c, i, o or v plus 8 digits the letter was stripped, "
+    "since the transform/load would otherwise drop the last digit.)",
+    "removed_existing_002": "--source-system sirsi: the record already had a 002 with a different "
+    "value; it was removed and replaced by the 002 copied from the 001.",
     "added_default_008": "Record had no 008 -- a fixed generic placeholder was inserted (a blank "
     "32-byte one for a holdings record; with --add-008-date-from-773, a bib record's date is "
     "taken from its 773 $d when that gives exactly one year).",
@@ -579,6 +588,8 @@ _CHECK_DATA_LOSS: dict[str, str] = {
     "holdings_escape_sequence": "NO DATA LOSS",
     "transcode_marc8_failed": "POSSIBLE DATA LOSS",
     "added_001_from_sirsi_035": "NO DATA LOSS",
+    "added_002_from_001": "NO DATA LOSS",
+    "removed_existing_002": "DATA LOSS",
     "added_default_008": "NO DATA LOSS",
     "added_default_245": "NO DATA LOSS",
     "added_missing_852c": "NO DATA LOSS",
@@ -661,6 +672,7 @@ _ALWAYS_FULL_CATEGORIES = {
     "merged_duplicate_040_dropped_data",
     "moved_duplicate_dropped_subfield",
     "added_001_from_sirsi_035",
+    "removed_existing_002",
     "area_code_in_041",
     "invalid_041_language_code",
     "invalid_008_language_code",

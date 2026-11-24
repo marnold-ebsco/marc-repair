@@ -534,8 +534,15 @@ def _category_block(doc: _Doc, sec: _Section, level: int = 1) -> None:
     doc.text(_LM, doc.y - 11, sec.category or "")
     doc.y -= 17
     for part in desc_lines:
+        lead = "For Data Engineers:"
+        x0 = _LM
+        if part.startswith(lead):
+            doc.set_font(f.sans_b, 8.5)
+            doc.text(x0, doc.y - 8.5, lead)
+            x0 += f.pdfmetrics.stringWidth(lead, f.sans_b, 8.5)
+            part = part[len(lead):]
         doc.set_font(f.sans, 8.5)
-        doc.text(_LM, doc.y - 8.5, part)
+        doc.text(x0, doc.y - 8.5, part)
         doc.y -= 11
     doc.y -= 2
     x = _LM

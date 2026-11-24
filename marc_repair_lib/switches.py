@@ -99,6 +99,10 @@ SWITCHES: tuple[Switch, ...] = (
     _s("marc8_corpus_lookup", "marc8-corpus-lookup", True, "bib"),
     _s("remap_999_to_945", "remap-999-to-945", False, "bib", "remapped_999_to_945"),
     _s("move_999_to_949", "move-999-to-949", True, "bib", "moved_999_to_949"),
+    _s("add_002_from_001", "add-002-from-001", True, "bib",
+       "added_002_from_001 removed_existing_002",
+       help="--source-system sirsi only: give every record a 002 copied from its 001 (the "
+       "letter dropped from a b/c/i/o/v + 8 digit id); any existing 002 is removed"),
     _s("merge_duplicate_040", "merge-duplicate-040", True, "bib",
        "merged_duplicate_040 merged_duplicate_040_dropped_data"),
     _s("move_duplicate_100_to_700", "move-duplicate-100-to-700", True, "bib",

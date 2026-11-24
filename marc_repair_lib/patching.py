@@ -214,6 +214,69 @@ def add_001_from_sirsi_035(parsed: ParsedRecord) -> list[str]:
     return [detail]
 
 
+#: --source-system sirsi: a Sierra-style 001 (b, c, i, o or v plus exactly 8
+#: digits). The transform/load drops the last digit of such an id, so the
+#: 002 carries it without the letter.
+_SIRSI_PREFIXED_001 = re.compile(r"^[bciov](\d{8})$", re.IGNORECASE)
+
+#: Category for `Sirsi002Tally`'s one summary entry.
+SIRSI_002_CATEGORY = "added_002_from_001"
+
+#: The changed record ids are listed in the log only when fewer than this many.
+SIRSI_002_ID_LIST_LIMIT = 25
+
+
+def sirsi_002_value(id_001: str) -> str:
+    """The 002 for an 001: 'o12345678' -> '12345678'; anything else unchanged."""
+    m = _SIRSI_PREFIXED_001.match(id_001)
+    return m.group(1) if m else id_001
+
+
+class Sirsi002Tally:
+    """--source-system sirsi: give every record a 002 copied from its 001
+    (letter stripped from a b/c/i/o/v + 8 digits id) and drop any 002 it
+    already had. Counts every record; remembers the ids of those actually
+    changed (002 differs from the 001, or replaced a different existing 002)."""
+
+    def __init__(self) -> None:
+        self.records = 0
+        self.changed: list[str] = []
+
+    def apply(self, parsed: ParsedRecord) -> list[str]:
+        """Rewrite the record's 002. Returns one detail per discarded existing
+        002 whose value differs from the new one (that is data loss)."""
+        f001 = next((f for f in parsed.fields if f.tag == "001"), None)
+        if f001 is None or not (f001.content or "").strip():
+            return []
+        id_001 = f001.content.strip()
+        new = sirsi_002_value(id_001)
+        old = [f for f in parsed.fields if f.tag == "002"]
+        parsed.fields = [f for f in parsed.fields if f.tag != "002"]
+        ensure_field(parsed, "002", None, new)
+        self.records += 1
+        lost = []
+        for f in old:
+            text = f.content if f.is_control() else "".join(
+                f"${c}{v}" for c, v in f.subfields)
+            if (text or "").strip() != new:
+                lost.append(f"existing 002 {text!r} removed; 002 is now {new!r}")
+        if new != id_001 or lost:
+            self.changed.append(id_001)
+        return lost
+
+    def summary(self) -> tuple[str, str]:
+        """(count line, body text) for the log section."""
+        n = len(self.changed)
+        count = f"{self.records:,} record(s)"
+        lines = [f"\t{n:,} record(s) actually changed (letter stripped from the 001, or a "
+                 "different existing 002 replaced)"]
+        if 0 < n < SIRSI_002_ID_LIST_LIMIT:
+            lines.append("\t" + ", ".join(self.changed))
+        elif n:
+            lines.append(f"\t(not listed: {SIRSI_002_ID_LIST_LIMIT} or more)")
+        return count, "\n".join(lines)
+
+
 _YEAR_773D = re.compile(r"(?<!\d)(1[5-9]\d\d|20[0-2]\d)(?!\d)")
 
 

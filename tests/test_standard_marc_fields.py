@@ -77,7 +77,7 @@ def test_sirsi_only_fields():
     sirsi_tags = {t for t, _ in (
         line.split("|") for line in LIST.read_text(encoding="utf-8").split("[sirsi]")[1]
         .split("[obsolete]")[0].splitlines() if "|" in line)}
-    assert {t.strip() for t in sirsi_tags} == {"596"}
+    assert {t.strip() for t in sirsi_tags} == {"002", "596"}
     assert "596" not in load_standard_marc_fields(str(LIST), None)[0]
     assert "596" not in load_standard_marc_fields(str(LIST), "other")[0]
     assert "596" in load_standard_marc_fields(str(LIST), "sirsi")[0]
