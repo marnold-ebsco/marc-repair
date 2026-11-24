@@ -321,7 +321,10 @@ _CHECK_DESCRIPTIONS: dict[str, str] = {
     "display on a FOLIO instance record and will not be searchable in Locate. 00X and 9XX "
     "fields are never listed, nor are the tags in the [ignored] section of "
     "instance_mapped_marc_fields.txt (010-199, 300-399, 700-729, 731-739, 741-789 and "
-    "800-889 by default). Report only -- nothing is changed or removed.",
+    "800-889 by default). The mapping rules are at "
+    "https://github.com/folio-org/mod-source-record-manager/blob/master/"
+    "mod-source-record-manager-server/src/main/resources/rules/marc_bib_rules.json . "
+    "Report only -- nothing is changed or removed.",
     "suspect_marc8_escape": "A MARC-8 script-switching escape (Hebrew/Arabic/Cyrillic/Greek/CJK) "
     "produces only a single character, welded directly between two ASCII "
     "letters with no word boundary -- almost certainly a miskeyed accented "
