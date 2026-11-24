@@ -45,14 +45,18 @@ def test_apply_adds_002_after_001_and_replaces_existing():
     assert tally.changed == ["o12345678"]
 
 
-def test_summary_lists_ids_only_under_25():
+def test_summary_lists_first_25_then_and_x_others():
     t = Sirsi002Tally()
-    for n in range(24):
+    for n in range(25):
         t.apply(_rec(f"o{10000000 + n}"))
     count, body = t.summary()
-    assert count == "24 record(s)" and "o10000000, " in body
-    t.apply(_rec("o99999999"))
-    assert "o10000000" not in t.summary()[1] and "25 or more" in t.summary()[1]
+    assert count == "25 record(s)" and "o10000000, " in body and "others" not in body
+    assert body.count("o100000") == 25
+    for n in range(25, 28):
+        t.apply(_rec(f"o{10000000 + n}"))
+    body = t.summary()[1]
+    assert body.count("o100000") == 25 and body.endswith(" and 3 others")
+    assert "o10000025" not in body
 
 
 def test_cli_logs_count_ids_and_old_002(tmp_path):

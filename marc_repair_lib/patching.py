@@ -222,7 +222,8 @@ _SIRSI_PREFIXED_001 = re.compile(r"^[bciov](\d{8})$", re.IGNORECASE)
 #: Category for `Sirsi002Tally`'s one summary entry.
 SIRSI_002_CATEGORY = "added_002_from_001"
 
-#: The changed record ids are listed in the log only when fewer than this many.
+#: At most this many changed record ids are listed in the log; the rest are
+#: summarised as "and N others".
 SIRSI_002_ID_LIST_LIMIT = 25
 
 
@@ -270,10 +271,10 @@ class Sirsi002Tally:
         count = f"{self.records:,} record(s)"
         lines = [f"\t{n:,} record(s) actually changed (letter stripped from the 001, or a "
                  "different existing 002 replaced)"]
-        if 0 < n < SIRSI_002_ID_LIST_LIMIT:
-            lines.append("\t" + ", ".join(self.changed))
-        elif n:
-            lines.append(f"\t(not listed: {SIRSI_002_ID_LIST_LIMIT} or more)")
+        if n:
+            shown = ", ".join(self.changed[:SIRSI_002_ID_LIST_LIMIT])
+            rest = n - SIRSI_002_ID_LIST_LIMIT
+            lines.append("\t" + shown + (f" and {rest:,} others" if rest > 0 else ""))
         return count, "\n".join(lines)
 
 
