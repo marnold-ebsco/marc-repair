@@ -433,22 +433,37 @@ _CHECK_DESCRIPTIONS: dict[str, str] = {
     "for the same defect's unconfirmed payloads, left for a human to review.",
     "area_code_in_041": "A 041 language subfield holds what looks like a MARC geographic area code "
     "(e.g. n-us---, s-cl---), which belongs in 043 $a. Detect-only -- nothing was changed (on by "
-    "default; --no-check-041-area-code turns it off).",
+    "default; --no-check-041-area-code turns it off). "
+    "FOLIO treats only the language codes defined by the Library of Congress "
+    "(https://www.loc.gov/marc/languages/language_code.html) as valid; any "
+    "other code is invalid.",
     "split_041_language_codes": "A 041 language subfield holding several codes separated by spaces "
     "(\"fre eng\") was split into one repeated subfield per code, when every piece is an approved "
-    "MARC language code (on by default; --no-split-041-language-codes turns it off). Nothing is lost.",
+    "MARC language code (on by default; --no-split-041-language-codes turns it off). Nothing is lost. "
+    "FOLIO treats only the language codes defined by the Library of Congress "
+    "(https://www.loc.gov/marc/languages/language_code.html) as valid; any "
+    "other code is invalid.",
     "fixed_language_code_case": "A language code differing from an approved MARC code only by case "
     "(ENG, Heb) in 008/35-37 or a 041 language subfield was lowercased, and \"n/a\" was changed "
     "to \"und\" (on by default; "
-    "--no-fix-language-code-case turns it off). Nothing is lost.",
+    "--no-fix-language-code-case turns it off). Nothing is lost. "
+    "FOLIO treats only the language codes defined by the Library of Congress "
+    "(https://www.loc.gov/marc/languages/language_code.html) as valid; any "
+    "other code is invalid.",
     "invalid_041_language_code": "A 041 language subfield ($a $b $d $e $f $g $h $j $k $m $n) holds "
     "something that is not an approved MARC language code (approved_language_codes.txt), or a "
     "length that is not a whole number of 3-letter codes. Several codes run together are checked "
     "3 characters at a time; fields coded in another scheme (indicator 2 = 7 or a $2) are skipped. "
-    "Detect-only -- nothing was changed (on by default; --no-check-041-language turns it off).",
+    "Detect-only -- nothing was changed (on by default; --no-check-041-language turns it off). "
+    "FOLIO treats only the language codes defined by the Library of Congress "
+    "(https://www.loc.gov/marc/languages/language_code.html) as valid; any "
+    "other code is invalid.",
     "invalid_008_language_code": "A bibliographic 008's language code (35-37) is not an approved "
     "MARC language code (approved_language_codes.txt; blank and \"|||\" are also valid). Detect-only "
-    "-- nothing was changed (on by default; --no-check-008-language turns it off).",
+    "-- nothing was changed (on by default; --no-check-008-language turns it off). "
+    "FOLIO treats only the language codes defined by the Library of Congress "
+    "(https://www.loc.gov/marc/languages/language_code.html) as valid; any "
+    "other code is invalid.",
     "fixed_misaligned_008": "A bibliographic 008 had its fixed fields shifted, so the language code "
     "was not at 35-37 and read as junk. Two kinds: (1) the run of blanks at 008/11 was too long or "
     "short -- blanks were removed/added to put the language code back (found by looking for exactly "
