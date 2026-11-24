@@ -321,6 +321,18 @@ BIB_ROWS = [
         "`--no-recode-6xx-b-to-a`",
     ),
     CategoryRow(
+        "019/020/022/024/028/035/074 (identifier fields) $a present but "
+        "made up entirely of whitespace (e.g. a single space) -- FOLIO "
+        "rejects the whole record over it, as with 010",
+        "Removed only the $a subfield (any $z, $q, etc. is retained; the "
+        "field itself is dropped only if nothing but that $a was there)",
+        "Yes (`--no-remove-identifier-whitespace-a`)",
+        "`removed_identifier_whitespace_a`", "INFORMATIONAL",
+        "No -- INFORMATIONAL categories are never listed in full, "
+        "not even via --log-full",
+        "`--no-remove-identifier-whitespace-a`",
+    ),
+    CategoryRow(
         "Missing-required-$a field removal (also treats a punctuation-only "
         '$a, e.g. "." or "--", as missing)', "Removed field",
         "Yes (`--no-strip-missing-required-a`)",

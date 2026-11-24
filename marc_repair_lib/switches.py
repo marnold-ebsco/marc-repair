@@ -121,6 +121,10 @@ SWITCHES: tuple[Switch, ...] = (
     _s("remove_010_whitespace_a", "remove-010-whitespace-a", True, "bib",
        "removed_010_whitespace_a",
        help="remove an 010 $a made up entirely of whitespace"),
+    _s("remove_identifier_whitespace_a", "remove-identifier-whitespace-a", True, "bib",
+       "removed_identifier_whitespace_a",
+       help="remove a $a made up entirely of whitespace from an 019, 020, 022, 024, 028, 035 "
+       "or 074 (FOLIO rejects the whole record over it, as with 010)"),
     _s("merge_duplicate_010", "merge-duplicate-010", True, "bib", "deduped_010_lccn",
        help="merge a record's several 010s (or several $a in one 010) into exactly one"),
     _s("remove_880_missing_6", "remove-880-missing-6", True, "bib", "removed_880_missing_6",

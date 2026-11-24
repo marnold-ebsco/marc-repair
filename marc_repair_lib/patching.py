@@ -2583,6 +2583,51 @@ def strip_whitespace_only_010_a(parsed: ParsedRecord) -> list[str]:
     return details
 
 
+#: The other tags FOLIO's default MARC-bib-to-instance mapping rules turn into
+#: identifiers.value (010 has its own function above). Same trim-then-null
+#: failure as 010, so the same repair.
+IDENTIFIER_TAGS_WITH_A = ("019", "020", "022", "024", "028", "035", "074")
+
+
+def strip_whitespace_only_identifier_a(parsed: ParsedRecord) -> list[str]:
+    """`strip_whitespace_only_010_a` for the remaining identifier tags
+    (`IDENTIFIER_TAGS_WITH_A`: 019, 020, 022, 024, 028, 035, 074). A $a
+    that's present but entirely whitespace trims to "" in FOLIO's mapper
+    and the instance is rejected ("identifiers[N].value must not be
+    null"), discarding the whole record. Only that $a is removed; any
+    other subfield ($z, $q, $c, ...) stays, and the field is dropped only
+    if nothing else was in it. Other subfield codes are deliberately left
+    alone: only $a was confirmed to break import (on 010)."""
+    details = []
+    kept_fields = []
+    for f in parsed.fields:
+        if (f.is_control() or f.tag not in IDENTIFIER_TAGS_WITH_A
+                or not any(code == "a" and _WHITESPACE_ONLY_RE.match(data)
+                           for code, data in f.subfields)):
+            kept_fields.append(f)
+            continue
+        before = "".join(f"${code}{data}" for code, data in f.subfields)
+        remaining = [
+            (code, data) for code, data in f.subfields
+            if not (code == "a" and _WHITESPACE_ONLY_RE.match(data))
+        ]
+        if remaining:
+            f.subfields = remaining
+            kept_fields.append(f)
+            after = "".join(f"${code}{data}" for code, data in remaining)
+            details.append(
+                f"removed ={f.tag}  {f.indicators}{before}\t(whitespace-only $a removed; "
+                f"now {f.indicators}{after})"
+            )
+        else:
+            details.append(
+                f"removed ={f.tag}  {f.indicators}{before}\t(whitespace-only $a removed; "
+                "nothing else left in the field, so the field itself was dropped)"
+            )
+    parsed.fields = kept_fields
+    return details
+
+
 _WHITESPACE_RUN_RE = re.compile(r"\s+")
 
 

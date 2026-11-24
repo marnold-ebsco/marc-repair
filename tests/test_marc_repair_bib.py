@@ -1917,6 +1917,63 @@ class TestStripMissingRequiredA:
 # the real number).
 # ---------------------------------------------------------------------------
 
+class TestStripWhitespaceOnlyIdentifierA:
+    """Same trim-then-null failure as 010, on the other identifier tags
+    (the real shape: HACC 020 `$a $z9781442424104 $q(eBook)`)."""
+
+    @staticmethod
+    def _rec(*fields):
+        return m.ParsedRecord(leader="0" * 24, entries=[], fields=list(fields))
+
+    def test_020_blank_a_removed_keeps_z_and_q(self):
+        parsed = self._rec(
+            m.Field_("020", "  ", [("a", " "), ("z", "9781442424104"), ("q", "(eBook)")]))
+        details = m.strip_whitespace_only_identifier_a(parsed)
+        assert parsed.fields[0].subfields == [("z", "9781442424104"), ("q", "(eBook)")]
+        assert len(details) == 1 and "=020" in details[0]
+
+    def test_only_a_left_drops_the_field(self):
+        parsed = self._rec(m.Field_("022", "  ", [("a", "   ")]))
+        details = m.strip_whitespace_only_identifier_a(parsed)
+        assert parsed.fields == []
+        assert "field itself was dropped" in details[0]
+
+    def test_every_identifier_tag_covered(self):
+        for tag in ("019", "020", "022", "024", "028", "035", "074"):
+            parsed = self._rec(m.Field_(tag, "  ", [("a", " "), ("z", "x")]))
+            assert len(m.strip_whitespace_only_identifier_a(parsed)) == 1, tag
+
+    def test_leaves_real_empty_punct_and_other_tags_alone(self):
+        parsed = self._rec(
+            m.Field_("020", "  ", [("a", "9781481446952")]),
+            m.Field_("020", "  ", [("a", ".")]),
+            m.Field_("020", "  ", [("a", ""), ("z", "1")]),
+            m.Field_("020", "  ", [("z", " ")]),
+            m.Field_("245", "10", [("a", " ")]),
+        )
+        assert m.strip_whitespace_only_identifier_a(parsed) == []
+        assert len(parsed.fields) == 5
+
+    def test_switch_off_leaves_field_and_on_removes_it(self, tmp_path):
+        parsed = self._rec(
+            m.Field_("001", None, None, content="997"),
+            m.Field_("008", None, None, content="x" * 40),
+            m.Field_("020", "  ", [("a", " "), ("z", "9781442424104")]),
+            m.Field_("245", "10", [("a", "T")]),
+        )
+        parsed.leader = _VALID_LEADER
+        src = tmp_path / "bib.mrc"
+        src.write_bytes(m.assemble_marc(parsed))
+        for flag, expect_a in (([], False), (["--no-remove-identifier-whitespace-a"], True)):
+            out = tmp_path / "out.mrc"
+            log = tmp_path / "run.log"
+            assert m.main([str(src), "-o", str(out), "--log", str(log), *flag]) == 0
+            f020 = next(f for f in m.read_intact_record(
+                out.read_bytes().decode("utf-8")).fields if f.tag == "020")
+            assert (("a", " ") in f020.subfields) is expect_a
+            assert ("z", "9781442424104") in f020.subfields
+
+
 class TestStrip010WhitespaceOnlyA:
     """Confirmed against a live FOLIO Data Import run (default "Create
     instance and SRS MARC Bib" job profile, FOLIO Sunflower/Trillium

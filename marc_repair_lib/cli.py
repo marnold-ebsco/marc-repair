@@ -143,6 +143,7 @@ from .patching import (
     strip_null_identifiers,
     strip_880_missing_6,
     strip_whitespace_only_010_a,
+    strip_whitespace_only_identifier_a,
     load_field_hints,
     write_non_standard_supplement,
 )
@@ -2765,6 +2766,9 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
                 if args.remove_010_whitespace_a:
                     for detail in strip_whitespace_only_010_a(parsed):
                         log("removed_010_whitespace_a", True, i, rec_id, detail)
+                if args.remove_identifier_whitespace_a:
+                    for detail in strip_whitespace_only_identifier_a(parsed):
+                        log("removed_identifier_whitespace_a", True, i, rec_id, detail)
                 if args.merge_duplicate_010:
                     rec_id = record_identifier(parsed)
                     for detail in dedupe_010_fields(parsed):
@@ -3130,6 +3134,8 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
         "collapsed_oversized_field_escapes",
         "trimmed_oversized_record", "bib_856_missing_u",
     }
+    if args.remove_identifier_whitespace_a:
+        active_categories.add("removed_identifier_whitespace_a")
     if args.fix_bad_indicators:
         active_categories.add("padded_indicators")
     if args.reattach_orphaned_fields:
