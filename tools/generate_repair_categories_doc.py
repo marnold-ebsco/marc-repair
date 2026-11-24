@@ -544,10 +544,16 @@ BIB_ROWS = [
         "widens which of these land here instead of being auto-repaired",
     ),
     CategoryRow(
-        "Sirsi record with no 001 but a 035 $a containing 'Sirsi' (any casing)",
-        "001 built from the first such 035 $a with the 'Sirsi' label and all "
-        "spaces removed (`(Sirsi) a445304` -> `a445304`); the 035 is kept, any "
-        "further Sirsi 035s are ignored",
+        "Sirsi record with no 001 (also a blank one)",
+        "001 built from, in order: the first 035 $a containing 'Sirsi' (any "
+        "casing; label and spaces removed, `(Sirsi) a445304` -> `a445304`); "
+        "else the first 914 $a (same cleanup); else an OCLC number in an 035 $a "
+        "(`(OCoLC)ocm12345` -> `ocm12345`) or the first other 035 $a with its "
+        "source kept (`(DLC)2001012345` -> `DLC2001012345`); else, as a last "
+        "resort, `sirsi-` plus a 12-character hash of the 245 $a$b, first 1XX, "
+        "250, 260/264 $b$c and 300 $a (deterministic). The source field is "
+        "kept; the log entry says which was used, so the fallbacks can be "
+        "checked. A Sirsi record is therefore never unfixable for a missing 001",
         "Only with `--source-system sirsi`",
         "`added_001_from_sirsi_035`", "NEEDS REVIEW",
         "**Yes**",

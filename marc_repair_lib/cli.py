@@ -1981,10 +1981,9 @@ def build_parser() -> argparse.ArgumentParser:
         "every record (no fallback to 001), 'wms' and 'other' require a 001 "
         "('wms' also treats the [wms] tags in standard_marc_fields.txt as "
         "standard, 'sirsi' the [sirsi] tag 596, library ownership); 'sirsi' requires a "
-        "001 too, but builds a missing one "
-        "from the first 035 $a containing 'Sirsi' (logged as "
-        "added_001_from_sirsi_035); a record "
-        "without one is UNFIXABLE (diverted to the _error file). Asked for "
+        "001 too, but builds a missing one from the first 035 $a containing "
+        "'Sirsi', else a 914 $a, else an OCLC/other 035 $a, else a hash of "
+        "the record's data (logged as added_001_from_sirsi_035). Asked for "
         "interactively when not given; skipped when stdin isn't a terminal.",
     )
     parser.add_argument(

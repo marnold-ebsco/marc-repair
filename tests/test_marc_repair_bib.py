@@ -6644,30 +6644,105 @@ class TestSirsiSourceSystem:
         (detail,) = m.add_001_from_sirsi_035(parsed)
         assert self._id(parsed) == "a1" and "first of 2" in detail
 
-    def test_reason_sirsi(self):
-        assert m.missing_identifier_reason(self._rec(("035", "(OCoLC)1")), "sirsi")
-        assert m.missing_identifier_reason(self._rec(("035", "(Sirsi) a1")), "sirsi") is None
-        assert m.missing_identifier_reason(self._rec(("001", "x")), "sirsi") is None
+    @staticmethod
+    def _rec2(subs=(), title="Title.", extra=()):
+        """Record with 914/035 $a values given as (tag, value) plus optional extra fields."""
+        fields = [m.Field_("008", None, None, content="x" * 40),
+                  m.Field_("245", "00", [("a", title)])]
+        fields += [m.Field_(t, "  ", [("a", v)]) for t, v in subs]
+        fields += list(extra)
+        fields.sort(key=lambda f: f.tag)
+        return m.ParsedRecord(leader=_SYNTHETIC_LEADER, entries=[], fields=fields)
 
-    def test_cli_repairs_or_diverts(self, tmp_path):
+    def test_reason_sirsi_is_never_missing(self):
+        # every Sirsi record can get a 001 (last resort: a hash), so none is UNFIXABLE for it
+        assert m.missing_identifier_reason(self._rec(("035", "(OCoLC)1")), "sirsi") is None
+        assert m.missing_identifier_reason(self._rec(), "sirsi") is None
+
+    def test_fallback_1_uses_914_a_with_sirsi_label_stripped(self):
+        parsed = self._rec2([("035", "(OCoLC)ocm99"), ("914", "(Sirsi) a 12 34")])
+        (detail,) = m.add_001_from_sirsi_035(parsed)
+        assert self._id(parsed) == "a1234"
+        assert "fallback 1" in detail and "914 $a" in detail
+
+    def test_sirsi_035_beats_914(self):
+        parsed = self._rec2([("914", "z9"), ("035", "(Sirsi) a1")])
+        m.add_001_from_sirsi_035(parsed)
+        assert self._id(parsed) == "a1"
+
+    def test_blank_914_is_skipped(self):
+        parsed = self._rec2([("914", "  "), ("914", "(Sirsi)"), ("914", "b2")])
+        m.add_001_from_sirsi_035(parsed)
+        assert self._id(parsed) == "b2"
+
+    @pytest.mark.parametrize("raw, expected", [
+        ("(OCoLC)ocm12345", "ocm12345"),
+        ("(OCoLC)ocn 678", "ocn678"),
+        ("(OCoLC) on1234", "on1234"),
+        ("(OCoLC)555", "555"),
+    ])
+    def test_fallback_2_prefers_oclc_number(self, raw, expected):
+        parsed = self._rec2([("035", "(DLC)2001012345"), ("035", raw)])
+        (detail,) = m.add_001_from_sirsi_035(parsed)
+        assert self._id(parsed) == expected
+        assert "fallback 2" in detail and "OCLC number" in detail
+
+    def test_fallback_2_other_035_keeps_source_name(self):
+        parsed = self._rec2([("035", "(DLC) 2001012345")])
+        (detail,) = m.add_001_from_sirsi_035(parsed)
+        assert self._id(parsed) == "DLC2001012345"
+        assert "other 035 $a" in detail
+
+    def test_fallback_3_synthesized_hash_is_deterministic(self):
+        def build(title):
+            fields = [m.Field_("100", "1 ", [("a", "Smith, Jo.")]),
+                      m.Field_("260", "  ", [("b", "Pub,"), ("c", "1999.")]),
+                      m.Field_("300", "  ", [("a", "200 p.")])]
+            return self._rec2(title=title, extra=fields)
+        a, b, c = build("A Title"), build("A Title"), build("Another Title")
+        (detail,) = m.add_001_from_sirsi_035(a)
+        m.add_001_from_sirsi_035(b)
+        m.add_001_from_sirsi_035(c)
+        assert self._id(a) == self._id(b) != self._id(c)
+        assert self._id(a).startswith("sirsi-") and len(self._id(a)) == len("sirsi-") + 12
+        assert "fallback 3" in detail
+
+    def test_fallback_3_ignores_case_and_punctuation(self):
+        a = self._rec2(title="A  Title / by Smith.")
+        b = self._rec2(title="a title by smith")
+        m.add_001_from_sirsi_035(a)
+        m.add_001_from_sirsi_035(b)
+        assert self._id(a) == self._id(b)
+
+    def test_fallback_3_record_with_no_descriptive_data_hashes_the_rest(self):
+        a = self._rec2(extra=[m.Field_("500", "  ", [("a", "Note one")])])
+        a.fields = [f for f in a.fields if f.tag != "245"]
+        b = self._rec2(extra=[m.Field_("500", "  ", [("a", "Note two")])])
+        b.fields = [f for f in b.fields if f.tag != "245"]
+        m.add_001_from_sirsi_035(a)
+        m.add_001_from_sirsi_035(b)
+        assert self._id(a).startswith("sirsi-") and self._id(a) != self._id(b)
+
+    def test_cli_repairs_every_record_and_logs_the_fallback(self, tmp_path):
         src = tmp_path / "in.mrc"
         src.write_bytes(
             m.assemble_marc(self._rec(("035", "(Sirsi) a445304")))
             + m.assemble_marc(self._rec(("001", "has-001")))
-            + m.assemble_marc(self._rec(("035", "(OCoLC)1")))
+            + m.assemble_marc(self._rec(("035", "(OCoLC)ocm1")))
+            + m.assemble_marc(self._rec2(title="Nothing to go on"))
         )
         out = tmp_path / "out.mrc"
         rc = m.main([str(src), "-o", str(out), "--source-system", "sirsi",
                      "--log", str(tmp_path / "run.log"), "--log-zero"])
-        assert rc == 1
-        assert m.count_records(str(out)) == 2
-        assert b"a445304" in out.read_bytes()
-        assert m.count_records(str(tmp_path / "out_error.mrc")) == 1
+        assert rc == 0
+        assert m.count_records(str(out)) == 4
+        assert not (tmp_path / "out_error.mrc").exists()
+        data = out.read_bytes()
+        assert b"a445304" in data and b"ocm1" in data and b"sirsi-" in data
         log_text = next(tmp_path.glob("run_*.log")).read_text()
         assert "=== NEEDS REVIEW: added_001_from_sirsi_035 ===" in log_text
-        assert "001 was missing; set to 'a445304'" in log_text
-        assert "=== UNFIXABLE: record_identifier_required ===" in log_text
-        assert "no 035 $a contains 'Sirsi'" in log_text
+        assert "001 set to 'a445304' from 035 $a" in log_text
+        assert "fallback 2" in log_text and "fallback 3" in log_text
 
     def test_kitchen_sink_with_sirsi(self, tmp_path):
         src = tmp_path / "kitchen_sink_bib.mrc"
@@ -6677,8 +6752,8 @@ class TestSirsiSourceSystem:
                 "--log", str(tmp_path / "run.log")])
         data = out.read_bytes()
         assert b"a445304" in data and b"i9780801479823" in data
-        assert b"Title with no Sirsi 035." not in data
-        assert b"Title with no Sirsi 035." in (tmp_path / "out_error.mrc").read_bytes()
+        # no Sirsi 035, but it is repaired through a fallback, not diverted
+        assert b"Title with no Sirsi 035." in data
 
 
 class TestSirsiDuplicateIdentifiers:

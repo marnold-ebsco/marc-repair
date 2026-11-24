@@ -376,9 +376,11 @@ _CHECK_DESCRIPTIONS: dict[str, str] = {
     "currently skipped for holdings).",
     "transcode_marc8_failed": "MARC-8-to-UTF-8 transcoding failed for this record's content -- left as "
     "MARC-8, error recorded.",
-    "added_001_from_sirsi_035": "--source-system sirsi: the record had no 001, so one was built from "
-    "its first 035 $a containing 'Sirsi' (any casing), with the label and spaces removed. The "
-    "035 is left in place; check that the value is the Sirsi record number.",
+    "added_001_from_sirsi_035": "--source-system sirsi: the record had no 001, so one was built from, in "
+    "order, its first 035 $a containing 'Sirsi' (any casing; label and spaces removed), its first "
+    "914 $a, an OCLC number or other 035 $a, or, as a last resort, a 'sirsi-' hash of its own "
+    "title/author/imprint data. The source field is left in place; each entry says which was "
+    "used. Check that the value is the Sirsi record number, especially for the fallbacks.",
     "added_default_008": "Record had no 008 -- a fixed generic placeholder was inserted (a blank "
     "32-byte one for a holdings record; with --add-008-date-from-773, a bib record's date is "
     "taken from its 773 $d when that gives exactly one year).",

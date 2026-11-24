@@ -3,6 +3,7 @@ and the non-standard-field tally. Imports the modules before it."""
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import tempfile
@@ -101,27 +102,115 @@ def add_default_008(parsed: ParsedRecord) -> list[str]:
     return []
 
 
+_SIRSI_LABEL_914 = re.compile(r"\(?\s*sirsi\s*\)?", re.IGNORECASE)
+_OCLC_035 = re.compile(r"^\(\s*ocolc\s*\)\s*(o(?:cm|cn|n)?\s*\d+|\d+)\s*$", re.IGNORECASE)
+_PAREN_LABEL = re.compile(r"[()]")
+
+
+def _subfield_values(parsed: ParsedRecord, tag: str, code: str) -> list[str]:
+    return [
+        data for f in parsed.fields
+        if f.tag == tag and f.subfields is not None
+        for c, data in f.subfields if c == code
+    ]
+
+
+def _id_from_914(parsed: ParsedRecord) -> tuple[str, str] | None:
+    """Fallback 1: the first 914 $a with data once the 'Sirsi' label and all
+    spaces are removed (same cleanup as the 035 path). (identifier, raw)."""
+    for data in _subfield_values(parsed, "914", "a"):
+        ident = "".join(_SIRSI_LABEL_914.sub("", data).split())
+        if ident:
+            return ident, data
+    return None
+
+
+def _id_from_other_035(parsed: ParsedRecord) -> tuple[str, str, str] | None:
+    """Fallback 2: an OCLC number from an 035 $a ('(OCoLC)ocm12345' ->
+    'ocm12345', prefix kept), else the first other 035 $a with its
+    '(Source)' parentheses dropped but the source name kept, so it cannot
+    collide with a bare Sirsi id ('(DLC)2001012345' -> 'DLC2001012345').
+    (identifier, raw, kind) with kind 'OCLC number' or 'other 035 $a'."""
+    values = _subfield_values(parsed, "035", "a")
+    for data in values:
+        m = _OCLC_035.match(data.strip())
+        if m:
+            return "".join(m.group(1).split()), data, "OCLC number"
+    for data in values:
+        ident = "".join(_PAREN_LABEL.sub("", data).split())
+        if ident:
+            return ident, data, "other 035 $a"
+    return None
+
+
+def _synthetic_id(parsed: ParsedRecord) -> str:
+    """Last resort: 'sirsi-' + the first 12 hex digits of a SHA-1 over the
+    normalized 245 $a$b, first 1XX, 250 $a, 260/264 $b$c and 300 $a. A record
+    with none of those hashes everything except 001 and the 9XX fields.
+    Deterministic: the same record data always yields the same 001."""
+    def norm(text: str) -> str:
+        text = unicodedata.normalize("NFKD", text).lower()
+        return "".join(ch for ch in text if ch.isalnum())
+
+    wanted = (("245", "ab"), ("250", "a"), ("260", "bc"), ("264", "bc"), ("300", "a"))
+    parts: list[str] = []
+    first_1xx = next((f for f in parsed.fields if f.tag.startswith("1")
+                      and f.subfields is not None), None)
+    if first_1xx is not None:
+        parts.append("1xx:" + norm("".join(d for _, d in first_1xx.subfields)))
+    for tag, codes in wanted:
+        for f in parsed.fields:
+            if f.tag == tag and f.subfields is not None:
+                parts.append(tag + ":" + norm("".join(d for c, d in f.subfields if c in codes)))
+    if not any(p.split(":", 1)[1] for p in parts):
+        parts = []
+        for f in parsed.fields:
+            if f.tag == "001" or f.tag.startswith("9"):
+                continue
+            body = (f.content if f.subfields is None
+                    else "".join(f"{c}{d}" for c, d in f.subfields))
+            parts.append(f"{f.tag}:{f.indicators or ''}:{norm(body or '')}")
+    digest = hashlib.sha1("\n".join(parts).encode("utf-8")).hexdigest()
+    return "sirsi-" + digest[:12]
+
+
 def add_001_from_sirsi_035(parsed: ParsedRecord) -> list[str]:
-    """--source-system sirsi: a record with no 001 (or a blank one) gets
-    one built from its first 035 $a containing 'Sirsi' in any casing, with
-    the label and all spaces removed ('(Sirsi) a445304' -> 'a445304'). The
-    035 itself is left as it was. No-op if a non-blank 001 exists or no
-    usable Sirsi 035 $a is found (the record is then UNFIXABLE, see
-    `missing_identifier_reason`). Logged as "added_001_from_sirsi_035"."""
+    """--source-system sirsi: a record with no 001 (or a blank one) gets one,
+    from the first of these that yields a value (the detail line says which):
+      1. its first 035 $a containing 'Sirsi' in any casing, label and all
+         spaces removed ('(Sirsi) a445304' -> 'a445304');
+      2. its first 914 $a, same cleanup;
+      3. an OCLC number in an 035 $a, else the first other 035 $a (see
+         `_id_from_other_035`);
+      4. a deterministic 'sirsi-<hash>' built from the record's own data
+         (see `_synthetic_id`).
+    The source field itself is left as it was. No-op if a non-blank 001
+    exists, so the record is never UNFIXABLE for a missing Sirsi identifier.
+    All four are logged as "added_001_from_sirsi_035"."""
     existing = next((f for f in parsed.fields if f.tag == "001"), None)
     if existing is not None and (existing.content or "").strip():
         return []
     found = sirsi_id_from_035(parsed)
-    if found is None:
-        return []
-    ident, source, others = found
+    if found is not None:
+        ident, source, others = found
+        detail = f"001 set to {ident!r} from 035 $a"
+        if others:
+            detail += f" (first of {others + 1} Sirsi 035 $a values; the others were ignored)"
+    elif (from_914 := _id_from_914(parsed)) is not None:
+        ident, source = from_914
+        detail = f"001 set to {ident!r} from 914 $a (fallback 1: no Sirsi 035 $a)"
+    elif (from_035 := _id_from_other_035(parsed)) is not None:
+        ident, source, kind = from_035
+        detail = (f"001 set to {ident!r} from 035 $a (fallback 2: {kind}; no Sirsi "
+                  f"035 $a or 914 $a; check it is unique)")
+    else:
+        ident = _synthetic_id(parsed)
+        detail = (f"001 set to {ident!r}, a hash of the record's own data (fallback 3: "
+                  f"no Sirsi 035 $a, 914 $a or other 035 $a)")
     if existing is not None:
         existing.content = ident
     else:
         ensure_field(parsed, "001", None, ident)
-    detail = f"001 was missing; set to {ident!r} from 035 $a {source!r}"
-    if others:
-        detail += f" (first of {others + 1} Sirsi 035 $a values; the others were ignored)"
     return [detail]
 
 

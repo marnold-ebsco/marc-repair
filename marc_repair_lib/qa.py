@@ -511,14 +511,7 @@ def missing_identifier_reason(parsed: ParsedRecord, source_system: str | None) -
         field_001 = next((f for f in parsed.fields if f.tag == "001"), None)
         if field_001 is None or not (field_001.content or "").strip():
             return "001 is missing, although it is required for non-Sierra migrations"
-    elif source_system == "sirsi":
-        field_001 = next((f for f in parsed.fields if f.tag == "001"), None)
-        if (field_001 is None or not (field_001.content or "").strip()) \
-                and sirsi_id_from_035(parsed) is None:
-            return (
-                "001 is missing and no 035 $a contains 'Sirsi', "
-                "so there is no Sirsi identifier to use"
-            )
+    # sirsi: never missing -- add_001_from_sirsi_035 always supplies one
     return None
 
 
