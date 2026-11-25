@@ -23,9 +23,10 @@ tokens and easy to lose behavior). One new switch (group, gating, docs, tests, s
 Already in place: `strip_null_identifiers` (`remove-null-identifiers`, any tag,
 ZERO-length only), `strip_empty_fields`, and `strip_880_missing_6` (treats an empty or
 whitespace `$6` as missing and removes the 880; runs after `strip_null_identifiers` at
-`cli.py` ~2750/2776). Unchecked: whether the second `remove_null_identifiers` call site
-(`cli.py` ~869) is followed by the 880 check; place the new sweep so an 880's `$6` is
-never stripped after the 880 check has passed it.
+`cli.py` ~2750/2776). The other `remove_null_identifiers` call site (`cli.py` ~869) is in
+the holdings repair function, where the 880 check does not run (bib-only switch), so
+that is not a gap. In the bib pipeline, place the new sweep so an 880's `$6` is never
+stripped after the 880 check has passed it.
 
 **2. Required-subfield rules (later, separate task).** Nobody has gone line by line
 through the rules. `required_a_tags.txt` / `holdings_required_a_tags.txt` are hand-
