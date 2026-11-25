@@ -8,6 +8,45 @@ current state and open items.
 
 ## Current state
 
+### OPEN (planned, not started) -- general bare-subfield sweep; then a FOLIO "required subfield" rule table (2026-11-25, research only, nothing built)
+
+**1. Sweep (do first; decisions made by the user 2026-11-25).** A general sweep of every
+BIB record for subfields with no real content. Whitespace-only: REMOVE. Punctuation-only:
+REPORT only (own log category, per the log section taxonomy; FOLIO import is not
+affected by it, and removal can change meaning, e.g. a `$c` of `/`). Bib only to start.
+No exclusion list: a bare/whitespace `$6` or `$8` carries no linkage, so removing it
+loses nothing. Keep the existing specific checks (010, 019/020/022/024/028/035/074,
+852, 245, 02x) as they are and run the sweep AFTER them as a mop-up; write one shared
+classifier (empty / whitespace / punctuation) so they can adopt it later. Do NOT
+refactor them into the sweep now (their docstrings hold live-FOLIO findings; ~150-280k
+tokens and easy to lose behavior). One new switch (group, gating, docs, tests, same switch syntax as the others); estimate 30-60k tokens.
+Already in place: `strip_null_identifiers` (`remove-null-identifiers`, any tag,
+ZERO-length only), `strip_empty_fields`, and `strip_880_missing_6` (treats an empty or
+whitespace `$6` as missing and removes the 880; runs after `strip_null_identifiers` at
+`cli.py` ~2750/2776). Unchecked: whether the second `remove_null_identifiers` call site
+(`cli.py` ~869) is followed by the 880 check; place the new sweep so an 880's `$6` is
+never stripped after the 880 check has passed it.
+
+**2. Required-subfield rules (later, separate task).** Nobody has gone line by line
+through the rules. `required_a_tags.txt` / `holdings_required_a_tags.txt` are hand-
+curated conventions, not the standard (LC marks only R/NR, never "mandatory"), and
+`standard_marc_fields.txt` has tags and titles only. The rules that matter are FOLIO's,
+not LC's. Ways to find them, best first:
+  - FOLIO's mapping rules (`marc_bib_rules.json` in folio-org/mod-source-record-manager;
+    `tools/build_instance_mapped_marc_fields.py` already downloads it, but keeps tag
+    level only). Extract per tag/subfield the target instance property and any
+    conditions; or export the tenant's own rules from the live system.
+  - The target schemas (folio-org/mod-inventory-storage instance / holdings
+    schemas): a property that is required or `minLength`/non-null is where a
+    mapping that yields "" or null rejects the record (the 010 `$a` case:
+    "identifiers[0].value must not be null"). Cross-reference these two to derive "this
+    subfield must be non-empty or the record is rejected".
+  - Empirical test with the live Data Import job profile (how the 010 `$a` rules were
+    found). This is the only authoritative check; use it to confirm the derived table.
+  Then hand-review and annotate (required / required if X), and consider generating the
+  required-`$a` lists from it. Estimate: extraction tool 40-70k tokens; the review is the
+  user's.
+
 ### DONE (awaiting real-data run on EC2) -- Sirsi 002 copied from the 001 (2026-11-24, pushed on `main`: `f7b44b8`, `abb74c3`)
 
 Why: the transform/load drops the last digit of a b/c/o/i/v + 8-digit id (Sierra-style), so for Sirsi the
