@@ -3262,7 +3262,7 @@ def strip_whitespace_only_subfields(parsed: ParsedRecord) -> list[str]:
 def strip_null_identifiers(parsed: ParsedRecord) -> list[str]:
     """Remove any subfield, on any field, that has no data at all (a
     "null identifier") -- e.g. a bare $8 with nothing after it, or an
-    empty $a immediately followed by another subfield (seen in the
+    empty $a (first, last or in the middle of the field; seen in the
     wild in 035 fields as `$a$0<local number>`, where whatever
     produced the file split a single value across two subfields and
     left the first one empty). Used by both `main`'s default bib

@@ -7119,3 +7119,40 @@ class TestWhitespaceOnlySubfieldSweep:
         f245 = next(f for f in m.read_intact_record(
             out.read_bytes().decode("utf-8")).fields if f.tag == "245")
         assert ("b", " ") in f245.subfields
+
+
+class TestStripNullIdentifiersPosition:
+    """A zero-length subfield is removed wherever it sits in the field."""
+
+    @staticmethod
+    def _rec(*fields):
+        return m.ParsedRecord(leader="0" * 24, entries=[], fields=list(fields))
+
+    def test_first_middle_and_last_position(self):
+        cases = [
+            ([("a", ""), ("0", "y")], [("0", "y")]),
+            ([("a", "x"), ("8", ""), ("c", "z")], [("a", "x"), ("c", "z")]),
+            ([("a", "x"), ("8", "")], [("a", "x")]),
+            ([("a", "x"), ("b", "z"), ("c", "")], [("a", "x"), ("b", "z")]),
+        ]
+        for subs, expected in cases:
+            parsed = self._rec(m.Field_("500", "  ", list(subs)))
+            assert len(m.strip_null_identifiers(parsed)) == 1, subs
+            assert parsed.fields[0].subfields == expected
+
+    def test_trailing_bare_subfield_survives_the_file_round_trip(self, tmp_path):
+        parsed = self._rec(
+            m.Field_("001", None, None, content="997"),
+            m.Field_("008", None, None, content="x" * 40),
+            m.Field_("245", "10", [("a", "T")]),
+            m.Field_("500", "  ", [("a", "x"), ("8", "")]),
+        )
+        parsed.leader = _VALID_LEADER
+        src = tmp_path / "bib.mrc"
+        src.write_bytes(m.assemble_marc(parsed))
+        out = tmp_path / "out.mrc"
+        assert m.main([str(src), "-o", str(out), "--log", str(tmp_path / "run.log"),
+                       "--no-remove-whitespace-only-subfields"]) == 0
+        f500 = next(f for f in m.read_intact_record(
+            out.read_bytes().decode("utf-8")).fields if f.tag == "500")
+        assert f500.subfields == [("a", "x")]

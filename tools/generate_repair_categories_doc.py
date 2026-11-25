@@ -222,8 +222,8 @@ BIB_ROWS = [
         "it should have been, always removed)",
     ),
     CategoryRow(
-        "Null identifier (a subfield with no data at all, e.g. a bare $8, "
-        "or an empty $a immediately followed by another subfield -- seen "
+        "Null identifier (a subfield with no data at all, e.g. a bare $8 "
+        "or an empty $a, in any position in the field -- seen "
         "in the wild as `035  $a$0<local number>`), on any field",
         "Subfield removed", "Yes, always", "`removed_null_identifier`",
         "INFORMATIONAL",

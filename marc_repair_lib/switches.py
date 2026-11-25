@@ -58,8 +58,8 @@ SWITCHES: tuple[Switch, ...] = (
        "--no-strip-empty-fields"),
     _s("remove_null_identifiers", "remove-null-identifiers", True, "both",
        "removed_null_identifier",
-       help="remove a subfield that has no data at all (e.g. a bare $8, or an empty $a "
-       "immediately followed by another subfield)"),
+       help="remove a subfield that has no data at all (e.g. a bare $8, or an empty $a), "
+       "in any position in the field"),
     _s("strip_missing_required_a", "remove-fields-missing-required-a", True, "both",
        "field_removed_because_missing_a", "--no-strip-missing-required-a"),
     _s("fix_invalid_tags", "fix-invalid-tags", True, "both", "invalid_tag"),

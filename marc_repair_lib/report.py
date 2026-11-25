@@ -426,8 +426,8 @@ _CHECK_DESCRIPTIONS: dict[str, str] = {
     "encoding byte flipped to match.",
     "fixed_misplaced_subfield_code": "A space was detected between the subfield delimiter character and the "
     "subfield code. Stray space removed.",
-    "removed_null_identifier": "A subfield with no data at all (e.g. a bare $8, or an empty $a immediately "
-    "followed by another subfield) was removed.",
+    "removed_null_identifier": "A subfield with no data at all (e.g. a bare $8, or an empty $a), in any "
+    "position in the field, was removed.",
     "missing_call_number": "An 852 (Location) had no $h (call number) at all -- left untouched; a call "
     "number can legitimately be absent.",
     "leader_byte_defaulted": "A leader byte (record status/type/bib level/encoding level) held a value "
