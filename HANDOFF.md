@@ -8,9 +8,17 @@ current state and open items.
 
 ## Current state
 
-### OPEN (planned, not started) -- general bare-subfield sweep; then a FOLIO "required subfield" rule table (2026-11-25, research only, nothing built)
+### Sweep DONE (uncommitted on `main`, 2026-11-25); FOLIO "required subfield" rule table still OPEN (later, separate task)
 
-**1. Sweep (do first; decisions made by the user 2026-11-25).** A general sweep of every
+**1. Sweep -- BUILT.** Switch `--remove-whitespace-only-subfields` (bib, on, in group
+`structural-salvage`). `subfield_content_kind` (common.py) classifies empty / whitespace /
+punctuation / content; `strip_whitespace_only_subfields` (patching.py) removes whitespace-only
+subfields (category `removed_whitespace_only_subfield`, INFORMATIONAL); runs after the
+010/identifier checks and before `strip_880_missing_6` (`cli.py`). `find_punctuation_only_subfields`
+(qa.py) reports punctuation-only (category `punctuation_only_subfield`, INFORMATIONAL: header
++ count, full list only via `--log-full`), same switch. Tests: `TestWhitespaceOnlySubfieldSweep`; the identifier test that
+turns its own switch off now also passes `--no-remove-whitespace-only-subfields`. pytest 1030
+passed, flake8 clean. Not yet run on real data. Original plan and decisions (user, 2026-11-25): A general sweep of every
 BIB record for subfields with no real content. Whitespace-only: REMOVE. Punctuation-only:
 REPORT only (own log category, per the log section taxonomy; FOLIO import is not
 affected by it, and removal can change meaning, e.g. a `$c` of `/`). Bib only to start.

@@ -125,6 +125,10 @@ SWITCHES: tuple[Switch, ...] = (
        "removed_identifier_whitespace_a",
        help="remove a $a made up entirely of whitespace from an 019, 020, 022, 024, 028, 035 "
        "or 074 (FOLIO rejects the whole record over it, as with 010)"),
+    _s("remove_whitespace_only_subfields", "remove-whitespace-only-subfields", True, "bib",
+       "removed_whitespace_only_subfield punctuation_only_subfield",
+       help="remove any subfield made up entirely of whitespace, on any field, and report "
+       "(without changing) any made up only of punctuation"),
     _s("merge_duplicate_010", "merge-duplicate-010", True, "bib", "deduped_010_lccn",
        help="merge a record's several 010s (or several $a in one 010) into exactly one"),
     _s("remove_880_missing_6", "remove-880-missing-6", True, "bib", "removed_880_missing_6",
@@ -227,6 +231,7 @@ GROUPS: dict[str, tuple[str, ...]] = {
     "structural-salvage": (
         "reattach_orphaned_fields", "fix_invalid_tags", "fix_misplaced_subfield_codes",
         "strip_empty_fields", "remove_null_identifiers",
+        "remove_whitespace_only_subfields",
     ),
     "placeholders": (
         "add_default_245", "add_default_008", "add_missing_852_location", "fix_missing_852c",

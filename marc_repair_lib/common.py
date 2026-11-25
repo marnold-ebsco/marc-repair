@@ -273,3 +273,19 @@ class LogEntry:
         if self.record_id:
             rec += f" ({display_record_id(self.record_id)})"
         return f"\t{rec}\t{self.detail}"
+
+
+def subfield_content_kind(data: str) -> str:
+    """Classify one subfield's data: "empty" (zero length), "whitespace"
+    (only whitespace), "punctuation" (non-whitespace but no letter or digit
+    in any script, e.g. "." or "--" or " / ") or "content" (anything else).
+    Shared by the bare-subfield sweep (`strip_whitespace_only_subfields`,
+    `find_punctuation_only_subfields`) so the three kinds mean the same
+    everywhere."""
+    if not data:
+        return "empty"
+    if not data.strip():
+        return "whitespace"
+    if not any(ch.isalnum() for ch in data):
+        return "punctuation"
+    return "content"

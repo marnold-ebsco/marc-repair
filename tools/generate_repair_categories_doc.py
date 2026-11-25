@@ -333,6 +333,27 @@ BIB_ROWS = [
         "`--no-remove-identifier-whitespace-a`",
     ),
     CategoryRow(
+        "Any other subfield, on any field, made up entirely of whitespace "
+        "(the general sweep, run after the tag-specific checks above)",
+        "Removed only that subfield (the field itself is dropped only if "
+        "nothing else was in it)",
+        "Yes (`--no-remove-whitespace-only-subfields`)",
+        "`removed_whitespace_only_subfield`", "INFORMATIONAL",
+        "No -- INFORMATIONAL categories are never listed in full, "
+        "not even via --log-full",
+        "`--no-remove-whitespace-only-subfields`",
+    ),
+    CategoryRow(
+        "Any subfield, on any field, made up only of punctuation (no "
+        "letter or digit, e.g. \".\" or \"--\")",
+        "Flagged only, no change",
+        "Yes (`--no-remove-whitespace-only-subfields`, same switch)",
+        "`punctuation_only_subfield`", "INFORMATIONAL",
+        "No -- INFORMATIONAL categories are never listed in full, "
+        "unless asked for with --log-full",
+        "`--no-remove-whitespace-only-subfields`",
+    ),
+    CategoryRow(
         "Missing-required-$a field removal (also treats a punctuation-only "
         '$a, e.g. "." or "--", as missing)', "Removed field",
         "Yes (`--no-strip-missing-required-a`)",

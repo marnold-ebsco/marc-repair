@@ -1964,7 +1964,8 @@ class TestStripWhitespaceOnlyIdentifierA:
         parsed.leader = _VALID_LEADER
         src = tmp_path / "bib.mrc"
         src.write_bytes(m.assemble_marc(parsed))
-        for flag, expect_a in (([], False), (["--no-remove-identifier-whitespace-a"], True)):
+        off = ["--no-remove-identifier-whitespace-a", "--no-remove-whitespace-only-subfields"]
+        for flag, expect_a in (([], False), (off, True)):
             out = tmp_path / "out.mrc"
             log = tmp_path / "run.log"
             assert m.main([str(src), "-o", str(out), "--log", str(log), *flag]) == 0
@@ -7030,3 +7031,91 @@ class TestUnmappedMarcFields:
             "--no-check-unmapped-fields",
         )
         assert "unmapped_marc_fields" not in content.split("\n\n", 1)[1]
+
+
+class TestWhitespaceOnlySubfieldSweep:
+    """General bare-subfield sweep: whitespace-only removed, punctuation-only
+    reported, zero-length left to strip_null_identifiers."""
+
+    @staticmethod
+    def _rec(*fields):
+        return m.ParsedRecord(leader="0" * 24, entries=[], fields=list(fields))
+
+    def test_classifier(self):
+        k = m.subfield_content_kind
+        assert [k(""), k("  "), k("\u00a0"), k("."), k(" / "), k("--"), k("a"),
+                k("1"), k("\u4e2d")] == [
+            "empty", "whitespace", "whitespace", "punctuation", "punctuation",
+            "punctuation", "content", "content", "content"]
+
+    def test_removes_whitespace_subfield_on_any_tag_keeps_rest(self):
+        parsed = self._rec(m.Field_("245", "10", [("a", "Title"), ("b", "  "), ("c", "me")]))
+        details = m.strip_whitespace_only_subfields(parsed)
+        assert parsed.fields[0].subfields == [("a", "Title"), ("c", "me")]
+        assert len(details) == 1 and "=245" in details[0] and "$b" in details[0]
+
+    def test_blank_6_and_8_are_removed_too(self):
+        parsed = self._rec(m.Field_("245", "10", [("6", " "), ("8", " "), ("a", "T")]))
+        m.strip_whitespace_only_subfields(parsed)
+        assert parsed.fields[0].subfields == [("a", "T")]
+
+    def test_only_blank_left_drops_the_field(self):
+        parsed = self._rec(m.Field_("500", "  ", [("a", "  ")]))
+        details = m.strip_whitespace_only_subfields(parsed)
+        assert parsed.fields == []
+        assert "field itself was dropped" in details[0]
+
+    def test_leaves_empty_punctuation_and_content_alone(self):
+        parsed = self._rec(
+            m.Field_("500", "  ", [("a", "")]),
+            m.Field_("500", "  ", [("a", ".")]),
+            m.Field_("500", "  ", [("a", "note")]),
+        )
+        assert m.strip_whitespace_only_subfields(parsed) == []
+        assert len(parsed.fields) == 3
+
+    def test_punctuation_is_reported_not_changed(self):
+        parsed = self._rec(m.Field_("245", "10", [("a", "T"), ("c", "/")]),
+                           m.Field_("500", "  ", [("a", "note")]))
+        findings = m.find_punctuation_only_subfields(parsed)
+        assert [c for c, _ in findings] == ["punctuation_only_subfield"]
+        assert "=245" in findings[0][1] and "$c" in findings[0][1]
+        assert parsed.fields[0].subfields == [("a", "T"), ("c", "/")]
+
+    def test_pipeline_blank_6_on_880_removes_the_880(self, tmp_path):
+        parsed = self._rec(
+            m.Field_("001", None, None, content="997"),
+            m.Field_("008", None, None, content="x" * 40),
+            m.Field_("245", "10", [("a", "T"), ("b", " "), ("c", "/")]),
+            m.Field_("880", "10", [("6", " "), ("a", "vernacular")]),
+        )
+        parsed.leader = _VALID_LEADER
+        src = tmp_path / "bib.mrc"
+        src.write_bytes(m.assemble_marc(parsed))
+        out = tmp_path / "out.mrc"
+        log = tmp_path / "run.log"
+        assert m.main([str(src), "-o", str(out), "--log", str(log)]) == 0
+        rec = m.read_intact_record(out.read_bytes().decode("utf-8"))
+        assert not [f for f in rec.fields if f.tag == "880"]
+        f245 = next(f for f in rec.fields if f.tag == "245")
+        assert f245.subfields == [("a", "T"), ("c", "/")]
+        content = _resolve_log(log).read_text(encoding="utf-8")
+        assert "removed_whitespace_only_subfield" in content
+        assert "=== INFORMATIONAL: punctuation_only_subfield ===" in content
+
+    def test_switch_off_leaves_blank_subfield(self, tmp_path):
+        parsed = self._rec(
+            m.Field_("001", None, None, content="997"),
+            m.Field_("008", None, None, content="x" * 40),
+            m.Field_("245", "10", [("a", "T"), ("b", " ")]),
+        )
+        parsed.leader = _VALID_LEADER
+        src = tmp_path / "bib.mrc"
+        src.write_bytes(m.assemble_marc(parsed))
+        out = tmp_path / "out.mrc"
+        log = tmp_path / "run.log"
+        assert m.main([str(src), "-o", str(out), "--log", str(log),
+                       "--no-remove-whitespace-only-subfields"]) == 0
+        f245 = next(f for f in m.read_intact_record(
+            out.read_bytes().decode("utf-8")).fields if f.tag == "245")
+        assert ("b", " ") in f245.subfields

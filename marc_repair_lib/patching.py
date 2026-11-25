@@ -16,6 +16,7 @@ from difflib import SequenceMatcher
 from typing import Iterator
 
 from .common import (
+    subfield_content_kind,
     CONTROL_TAG_LIMIT,
     FIELDTERM,
     Field_,
@@ -3210,6 +3211,52 @@ def strip_empty_fields(parsed: ParsedRecord) -> None:
         f for f in parsed.fields
         if f.is_control() or any(data for code, data in f.subfields)
     ]
+
+
+def strip_whitespace_only_subfields(parsed: ParsedRecord) -> list[str]:
+    """General sweep, bib pipeline: remove every subfield, on any data
+    field, whose data is present but entirely whitespace (zero-length
+    ones are `strip_null_identifiers`' job, run just before this). A
+    subfield with no content carries no information under any code,
+    including $6/$8 (a blank linkage links nothing), so nothing is lost.
+    Runs AFTER the tag-specific checks (010, the other identifier tags,
+    ...) as a mop-up for whatever they did not cover, and BEFORE
+    `strip_880_missing_6` so an 880 whose only $6 was blank is then
+    removed by that check. A field left with no subfield at all is
+    dropped; one left with only empty subfields is left for
+    `strip_empty_fields`. Returns one detail string per field changed
+    (category "removed_whitespace_only_subfield"). Punctuation-only
+    subfields are NOT touched here -- see `find_punctuation_only_subfields`
+    (report only).
+    """
+    details = []
+    kept_fields = []
+    for f in parsed.fields:
+        if f.is_control() or not any(
+                subfield_content_kind(data) == "whitespace" for code, data in f.subfields):
+            kept_fields.append(f)
+            continue
+        codes = [code for code, data in f.subfields
+                 if subfield_content_kind(data) == "whitespace"]
+        before = _log_preview("".join(f"${code}{data}" for code, data in f.subfields))
+        remaining = [(code, data) for code, data in f.subfields
+                     if subfield_content_kind(data) != "whitespace"]
+        what = ", ".join(f"${c}" for c in codes)
+        if remaining:
+            f.subfields = remaining
+            kept_fields.append(f)
+            after = _log_preview("".join(f"${code}{data}" for code, data in remaining))
+            details.append(
+                f"removed ={f.tag}  {f.indicators}{before}\t(whitespace-only {what} removed; "
+                f"now {f.indicators}{after})"
+            )
+        else:
+            details.append(
+                f"removed ={f.tag}  {f.indicators}{before}\t(whitespace-only {what} removed; "
+                "nothing else left in the field, so the field itself was dropped)"
+            )
+    parsed.fields = kept_fields
+    return details
 
 
 def strip_null_identifiers(parsed: ParsedRecord) -> list[str]:

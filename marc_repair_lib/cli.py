@@ -24,6 +24,7 @@ from .common import (
     RepairError,
 )
 from .qa import (
+    find_punctuation_only_subfields,
     LEADER_17_ENCODING_LEVEL_VALID_HOLDINGS,
     SOURCE_SYSTEMS,
     _SOURCE_SYSTEM_IDENTIFIER,
@@ -68,6 +69,7 @@ from .marc8 import (
     transcode_marc8_to_utf8,
 )
 from .patching import (
+    strip_whitespace_only_subfields,
     DEFAULT_852_C_CONTENT,
     DEFAULT_852_LOCATION_CONTENT,
     DEFAULT_HOLDINGS_REQUIRED_A_TAGS_FILE,
@@ -2769,6 +2771,9 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
                 if args.remove_identifier_whitespace_a:
                     for detail in strip_whitespace_only_identifier_a(parsed):
                         log("removed_identifier_whitespace_a", True, i, rec_id, detail)
+                if args.remove_whitespace_only_subfields:
+                    for detail in strip_whitespace_only_subfields(parsed):
+                        log("removed_whitespace_only_subfield", True, i, rec_id, detail)
                 if args.merge_duplicate_010:
                     rec_id = record_identifier(parsed)
                     for detail in dedupe_010_fields(parsed):
@@ -2917,6 +2922,8 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
                     extra_detect_only_findings += find_invalid_041_language(parsed)
                 if args.check_isbn_issn_checksum:
                     extra_detect_only_findings += find_invalid_isbn_issn_checksums(parsed)
+                if args.remove_whitespace_only_subfields:
+                    extra_detect_only_findings += find_punctuation_only_subfields(parsed)
                 for category, detail in (
                     (
                         find_invalid_indicator_values(parsed)
@@ -3136,6 +3143,9 @@ def run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
     }
     if args.remove_identifier_whitespace_a:
         active_categories.add("removed_identifier_whitespace_a")
+    if args.remove_whitespace_only_subfields:
+        active_categories.update(
+            {"removed_whitespace_only_subfield", "punctuation_only_subfield"})
     if args.fix_bad_indicators:
         active_categories.add("padded_indicators")
     if args.reattach_orphaned_fields:

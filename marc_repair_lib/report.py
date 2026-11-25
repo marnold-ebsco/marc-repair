@@ -109,6 +109,8 @@ _INFORMATIONAL = {
     "fixed_marc8_b2_umlaut",
     "removed_010_whitespace_a",
     "removed_identifier_whitespace_a",
+    "removed_whitespace_only_subfield",
+    "punctuation_only_subfield",
     "fixed_008_length",
     "collapsed_oversized_field_escapes",
     "holdings_leader_byte_defaulted",
@@ -287,6 +289,12 @@ _CHECK_DESCRIPTIONS: dict[str, str] = {
     "present but made up entirely of whitespace (e.g. a single space), which FOLIO rejects the "
     "whole record over. Only the $a subfield is removed. Any other subfield ($z, $q, ...) is "
     "retained.",
+    "removed_whitespace_only_subfield": "A subfield (on any field) was present but made up "
+    "entirely of whitespace, so it held no data. Only that subfield is removed; the rest of the "
+    "field is retained, or the field is dropped if nothing else was in it.",
+    "punctuation_only_subfield": "A subfield (on any field) is made up only of punctuation, no "
+    "letters or digits (e.g. \".\" or \"--\"). Reported only, not changed: FOLIO imports it, "
+    "and removing it could change the meaning of the field.",
     "deduped_010_lccn": "A record had more than one 010 (LCCN) field, or a single 010 with more "
     "than one $a -- merged into exactly one 010. Every $a on the record is compared with its "
     "whitespace stripped: if they all normalize the same, the stripped value is kept; if two "
@@ -573,6 +581,8 @@ _CHECK_DATA_LOSS: dict[str, str] = {
     "field_removed_because_missing_a": "POSSIBLE DATA LOSS",
     "removed_010_whitespace_a": "NO DATA LOSS",
     "removed_identifier_whitespace_a": "NO DATA LOSS",
+    "removed_whitespace_only_subfield": "NO DATA LOSS",
+    "punctuation_only_subfield": "NO DATA LOSS",
     "deduped_010_lccn": "NO DATA LOSS",
     "removed_880_missing_6": "DATA LOSS",
     "removed_invalid_subfield": "POSSIBLE DATA LOSS",

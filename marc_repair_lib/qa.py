@@ -7,6 +7,7 @@ from __future__ import annotations
 import re
 
 from .common import (
+    subfield_content_kind,
     LogEntry,
     ParsedRecord,
     RecordId,
@@ -164,6 +165,26 @@ def find_suspicious_fields(parsed: ParsedRecord) -> list[tuple[str, str]]:
                     f"={f.tag} $u has a literally duplicated proxy prefix: {data!r}",
                 ))
     return warnings
+
+
+def find_punctuation_only_subfields(parsed: ParsedRecord) -> list[tuple[str, str]]:
+    """Report (never change) a subfield on any data field whose data is
+    punctuation only -- no letter or digit in any script (e.g. "." or
+    "--" or "/"). Unlike a whitespace-only subfield this is not removed:
+    FOLIO imports it fine, and removing it can change meaning. Companion
+    to `strip_whitespace_only_subfields` (same switch). category:
+    "punctuation_only_subfield"."""
+    findings: list[tuple[str, str]] = []
+    for f in parsed.fields:
+        if f.is_control():
+            continue
+        for code, data in f.subfields:
+            if subfield_content_kind(data) == "punctuation":
+                findings.append((
+                    "punctuation_only_subfield",
+                    f"={f.tag}  {f.indicators}${code} is punctuation only: {data!r}",
+                ))
+    return findings
 
 
 def find_invalid_indicator_values(parsed: ParsedRecord) -> list[tuple[str, str]]:
